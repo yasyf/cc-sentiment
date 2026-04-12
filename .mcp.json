@@ -1,4 +1,5 @@
 {
+  "mcpServers": {
   "tiger": {
     "type": "stdio",
     "command": "tiger",
@@ -8,4 +9,5 @@
     ],
     "env": {}
   }
+}
 }
