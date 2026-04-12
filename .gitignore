@@ -56,3 +56,5 @@ mlx_models/
 # Project
 .serena/
 .context/
+
+.claude/settings.local.json
