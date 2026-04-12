@@ -1,13 +1,13 @@
 {
   "mcpServers": {
-  "tiger": {
-    "type": "stdio",
-    "command": "tiger",
-    "args": [
-      "mcp",
-      "start"
-    ],
-    "env": {}
+    "tiger": {
+      "type": "stdio",
+      "command": "tiger",
+      "args": [
+        "mcp",
+        "start"
+      ],
+      "env": {}
+    }
   }
-}
 }

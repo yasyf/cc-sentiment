@@ -1,3 +1,11 @@
+## Project Configuration
+
+- **Language**: TypeScript
+- **Package Manager**: npm
+- **Add-ons**: none
+
+---
+
 # app/ — Svelte Dashboard
 
 Svelte frontend that consumes the server's data APIs and renders sentiment charts. Heavily cached — prioritizes fast loads over real-time updates.
