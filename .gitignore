@@ -1,0 +1,58 @@
+# macOS
+.DS_Store
+._*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+*.egg
+.Python
+.venv/
+venv/
+.env
+.env.*
+
+# uv
+uv.lock
+
+# pytest / coverage
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# mypy / pyright / ruff
+.mypy_cache/
+.ruff_cache/
+
+# Node / Bun
+node_modules/
+.svelte-kit/
+bun.lockb
+
+# MLX model artifacts
+*.safetensors
+*.gguf
+*.bin
+*.npz
+models/
+mlx_models/
+.mlx_cache/
+
+# Modal
+.modal/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project
+.serena/
+.context/
