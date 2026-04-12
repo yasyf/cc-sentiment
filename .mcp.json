@@ -1,0 +1,11 @@
+{
+  "tiger": {
+    "type": "stdio",
+    "command": "tiger",
+    "args": [
+      "mcp",
+      "start"
+    ],
+    "env": {}
+  }
+}
