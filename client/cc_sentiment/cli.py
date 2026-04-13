@@ -152,7 +152,10 @@ def rescan(engine: str, model_repo: str | None) -> None:
 
     console.print(f"Cleared {prev_sessions} sessions. Re-running full scan...\n")
 
-    all_records = anyio.run(Pipeline.run, state, engine, model_repo)
+    async def do_rescan() -> list[SentimentRecord]:
+        return await Pipeline.run(state, engine, model_repo)
+
+    all_records = anyio.run(do_rescan)
 
     if not all_records:
         console.print("No records produced during rescan.")

@@ -1,77 +1,59 @@
 # cc-sentiment
 
-Capture developer sentiment towards Claude Code over time to detect performance regressions from user mood patterns.
+Quantifying Claude Code frustration over time.
 
-Motivated by [claude-code#42796](https://github.com/anthropics/claude-code/issues/42796) — when Claude Code regresses, developers get frustrated. We want to measure that frustration signal directly, independent of any internal telemetry, and surface it as a public dashboard.
+Motivated by [claude-code#42796](https://github.com/anthropics/claude-code/issues/42796) -- when Claude Code regresses, developers get frustrated. This project measures that frustration signal directly, independent of any internal telemetry, and surfaces it as a public dashboard.
+
+**Dashboard**: [app-anetaco.vercel.app](https://app-anetaco.vercel.app)
+
+## Quick Start
+
+```bash
+pip install cc-sentiment
+
+# One-time setup: detects your GitHub SSH/GPG keys
+cc-sentiment setup
+
+# Scan transcripts and upload sentiment scores
+cc-sentiment scan --upload
+```
+
+Requires macOS with Apple Silicon (for local Gemma 4 inference via MLX).
+
+## How It Works
+
+1. The CLI discovers Claude Code transcripts in `~/.claude/projects/`
+2. Each conversation is split into time buckets and scored 1-5 locally using Gemma 4 on MLX
+3. Scores are signed with your GitHub SSH or GPG key
+4. The server verifies signatures against your public keys on GitHub and stores the data
+5. The dashboard shows sentiment trends, usage patterns, and whether peak hours correlate with worse scores
+
+**Your conversations never leave your machine.** Only numeric scores and timestamps are uploaded.
 
 ## Architecture
 
 ```
 ┌─────────────┐         ┌─────────────┐         ┌─────────────┐
-│   client/   │  POST   │   server/   │  API    │    app/     │
-│  macOS CLI  │────────▶│  Modal API  │◀────────│   Svelte    │
-│  MLX+Gemma4 │ signed  │  timeseries │  cached │  dashboard  │
-└─────────────┘ upload  └─────────────┘  queries└─────────────┘
+│   client/   │  POST   │   server/   │  fetch  │    app/     │
+│  macOS CLI  │────────▶│  Modal API  │◀────────│  SvelteKit  │
+│  MLX+Gemma4 │ signed  │ TimescaleDB │  SSR    │  dashboard  │
+└─────────────┘ upload  └─────────────┘         └─────────────┘
 ```
 
-**`client/`** — macOS Apple Silicon CLI. Discovers Claude Code conversation transcripts in `~/.claude/`, runs them through Gemma 4 locally via MLX for sentiment scoring, signs results with the developer's GitHub SSH key, and uploads to the server.
+## CLI Commands
 
-**`server/`** — Python 3.14 backend on Modal. Accepts signed sentiment uploads, verifies GitHub SSH signatures, stores timeseries data. Exposes data query APIs for the frontend.
-
-**`app/`** — Svelte frontend. Consumes server data APIs and renders sentiment charts (by time of day, by day of week, rolling averages). Heavily cached — prioritizes fast loads over real-time updates.
-
-## How It Works
-
-1. Developer uses Claude Code normally
-2. Client CLI discovers new transcripts in `~/.claude/projects/<slug>/<uuid>.jsonl`
-3. Gemma 4 (local, on Apple Silicon via MLX) scores each conversation's sentiment (1-5 Likert)
-4. Results are signed with the developer's GitHub SSH key
-5. Server verifies signatures against `github.com/<username>.keys`, stores in timeseries DB
-6. App queries server APIs and renders cached dashboard charts
-
-## Open Questions
-
-### Server
-- **Timeseries DB**: SQLite on a Modal Volume (simplest) vs InfluxDB/TimescaleDB/QuestDB (better for time-range queries). Start with SQLite, migrate if needed.
-- **Caching strategy**: How aggressively to cache API responses. New data arrives in batches (when developers run the client), not continuously.
-
-### App
-- **Chart library**: Chart.js, D3, or Layerchart (Svelte-native). Trade off interactivity vs simplicity.
-- **SSR vs SPA**: SvelteKit with prerendering for maximum cacheability, or pure SPA hitting cached API responses.
-
-### Client
-- **Gemma 4 model variant**: `mlx-community/gemma-4-e4b-it-4bit` vs `unsloth/gemma-4-E4B-it-UD-MLX-4bit`. Need to benchmark quality and speed on M-series chips.
-- **Sentiment prompt design**: The classifier prompt is critical — it shifts the entire dataset. Must be versioned and included in uploaded records.
-- **Transcript parsing**: Claude Code JSONL includes tool calls, errors, user messages. Which signals matter? User messages are primary; error frequency and assistant apologies are secondary.
-
-## API
-
-### `POST /upload`
-Signed payload with sentiment scores. Server verifies GitHub SSH signature before ingesting.
-
-```json
-{
-  "github_username": "octocat",
-  "signature": "<ssh-sig base64>",
-  "records": [
-    {
-      "timestamp": "2026-04-12T10:30:00Z",
-      "conversation_id": "uuid",
-      "sentiment_score": 4,
-      "prompt_version": "v1",
-      "model_id": "gemma-4-e4b-it-4bit",
-      "client_version": "0.1.0"
-    }
-  ]
-}
-```
-
-### `GET /data`
-Query timeseries data for the dashboard. Supports time range, aggregation interval, and grouping dimensions. Response is heavily cached.
+| Command | Description |
+|---------|-------------|
+| `cc-sentiment setup` | Configure GitHub username and signing key |
+| `cc-sentiment scan --upload` | Score new transcripts and upload |
+| `cc-sentiment scan` | Score transcripts without uploading |
+| `cc-sentiment upload` | Upload previously scored results |
+| `cc-sentiment rescan` | Clear state and re-score everything |
+| `cc-sentiment benchmark` | Benchmark inference engines |
 
 ## Development
 
-See `AGENTS.md` for shared conventions. Each component has its own:
-- `server/AGENTS.md` — Python style, Modal patterns, API design
-- `app/AGENTS.md` — Svelte, charting, caching
-- `client/AGENTS.md` — macOS CLI, MLX inference, SSH signing
+See `AGENTS.md` for conventions. Each component has its own:
+- `server/AGENTS.md` -- Modal backend, TimescaleDB, GPG/SSH verification
+- `app/AGENTS.md` -- SvelteKit, Chart.js, Vercel
+- `client/AGENTS.md` -- macOS CLI, MLX inference, signing

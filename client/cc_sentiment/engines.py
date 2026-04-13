@@ -334,7 +334,11 @@ class OMLXEngine:
     def _shutdown(self) -> None:
         if self.process and self.process.poll() is None:
             self.process.terminate()
-            self.process.wait(timeout=10)
+            try:
+                self.process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=5)
         if self._next_server:
             self._next_server[0].terminate()
             try:

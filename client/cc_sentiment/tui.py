@@ -541,8 +541,8 @@ class ScanApp(App[None]):
         self._start_time = time.monotonic()
         self.run_scan()
 
-    @work(thread=True)
-    def run_scan(self) -> None:
+    @work()
+    async def run_scan(self) -> None:
         import time
 
         import anyio
@@ -550,42 +550,39 @@ class ScanApp(App[None]):
         from cc_sentiment.pipeline import Pipeline
         from cc_sentiment.upload import Uploader
 
-        self.call_from_thread(self._update_status, "Discovering transcripts...")
+        self._update_status("Discovering transcripts...")
 
-        new_transcripts = Pipeline.discover_new_transcripts(self.state)
+        new_transcripts = await anyio.to_thread.run_sync(Pipeline.discover_new_transcripts, self.state)
         if self.limit is not None:
             new_transcripts = new_transcripts[:self.limit]
 
         if not new_transcripts:
-            self.call_from_thread(self._update_status, "No new transcripts found.")
+            self._update_status("No new transcripts found.")
             return
 
-        self.call_from_thread(self._set_total, len(new_transcripts))
-        self.call_from_thread(self._update_status, f"Loading {self.engine} engine...")
+        self._set_total(len(new_transcripts))
+        self._update_status(f"Loading {self.engine} engine...")
 
-        def on_records(records: list[SentimentRecord]) -> None:
-            self.call_from_thread(self._add_records, records)
-
-        all_records = anyio.from_thread.run(
-            Pipeline.run,
+        all_records = await Pipeline.run(
             self.state, self.engine, self.model_repo,
-            new_transcripts, on_records,
+            new_transcripts, self._add_records,
         )
 
         if self.do_upload and all_records:
-            self.call_from_thread(self._update_status, f"Uploading {len(all_records)} records...")
+            self._update_status(f"Uploading {len(all_records)} records...")
             try:
                 uploader = Uploader()
-                anyio.from_thread.run(uploader.upload, all_records, self.state)
-                self.call_from_thread(self._set_uploaded, len(all_records))
-                self.call_from_thread(self._update_status, f"[green]Done. {len(all_records)} records uploaded.[/]")
+                pending = Uploader.records_from_state(self.state)
+                await uploader.upload(pending, self.state)
+                self._set_uploaded(len(pending))
+                self._update_status(f"[green]Done. {len(pending)} records uploaded.[/]")
             except Exception as e:
-                self.call_from_thread(self._update_status, f"[red]Upload failed: {e}[/]")
+                self._update_status(f"[red]Upload failed: {e}[/]")
         elif all_records:
             elapsed = time.monotonic() - self._start_time
-            self.call_from_thread(self._update_status, f"[green]Done. {len(all_records)} records scored in {elapsed:.0f}s.[/]")
+            self._update_status(f"[green]Done. {len(all_records)} records scored in {elapsed:.0f}s.[/]")
         else:
-            self.call_from_thread(self._update_status, "No records produced.")
+            self._update_status("No records produced.")
 
     def _set_total(self, total: int) -> None:
         self.total = total

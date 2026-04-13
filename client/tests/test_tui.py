@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from textual.widgets import Button, ContentSwitcher, DataTable, Input, Label, RadioSet
 
-from cc_sentiment.models import AppState, GPGConfig, SSHConfig
+from cc_sentiment.models import AppState, GPGConfig, ProcessedSession, SentimentRecord, SessionId, SSHConfig
 from cc_sentiment.signing import GPGKeyInfo, SSHKeyInfo
-from cc_sentiment.tui import SetupApp
+from cc_sentiment.tui import ScanApp, SetupApp
 
 
 async def test_mounts_all_steps():
@@ -238,3 +239,71 @@ async def test_skip_upload_saves_config(tmp_path: Path):
             assert pilot.app.query_one(ContentSwitcher).current == "step-done"
             loaded = AppState.model_validate_json(state_file.read_text())
             assert isinstance(loaded.config, SSHConfig)
+
+
+def _make_record(score: int = 3) -> SentimentRecord:
+    return SentimentRecord(
+        time=datetime.now(timezone.utc),
+        conversation_id=SessionId("sess-1"),
+        bucket_index=0,
+        sentiment_score=score,
+    )
+
+
+async def test_scan_app_runs_pipeline_and_uploads(tmp_path: Path):
+    state_file = tmp_path / "state.json"
+    records = [_make_record(3), _make_record(4)]
+
+    state = AppState(config=GPGConfig(github_username="testuser", fpr="ABCD1234"))
+
+    mock_pipeline_run = AsyncMock(return_value=records)
+    mock_upload = AsyncMock()
+
+    with patch.object(AppState, "state_path", return_value=state_file), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[
+             (Path("/fake/transcript.jsonl"), 1234.0),
+         ]), \
+         patch("cc_sentiment.pipeline.Pipeline.run", mock_pipeline_run), \
+         patch("cc_sentiment.upload.Uploader.records_from_state", return_value=records), \
+         patch("cc_sentiment.upload.Uploader.upload", mock_upload):
+
+        app = ScanApp(state=state, engine="omlx", model_repo=None, limit=None, do_upload=True)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=1.0)
+
+            mock_pipeline_run.assert_awaited_once()
+            mock_upload.assert_awaited_once()
+            assert "uploaded" in app.status_text.lower() or "done" in app.status_text.lower()
+
+
+async def test_scan_app_completes_without_upload(tmp_path: Path):
+    state_file = tmp_path / "state.json"
+    records = [_make_record(2)]
+
+    state = AppState()
+
+    mock_pipeline_run = AsyncMock(return_value=records)
+
+    with patch.object(AppState, "state_path", return_value=state_file), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[
+             (Path("/fake/transcript.jsonl"), 1234.0),
+         ]), \
+         patch("cc_sentiment.pipeline.Pipeline.run", mock_pipeline_run):
+
+        app = ScanApp(state=state, engine="omlx", model_repo=None, limit=None, do_upload=False)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=1.0)
+
+            mock_pipeline_run.assert_awaited_once()
+            assert "done" in app.status_text.lower()
+
+
+async def test_scan_app_handles_no_transcripts():
+    state = AppState()
+
+    with patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
+        app = ScanApp(state=state, engine="omlx", model_repo=None, limit=None, do_upload=False)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.5)
+
+            assert "no new" in app.status_text.lower()

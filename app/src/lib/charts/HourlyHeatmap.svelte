@@ -1,108 +1,111 @@
 <script lang="ts">
+	import { Chart as ChartComponent } from 'svelte5-chartjs';
+	import { Chart, BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend, BarController, LineController } from 'chart.js';
 	import type { HourlyPoint } from '$lib/types.js';
 
-	const { data }: { data: HourlyPoint[] } = $props();
+	Chart.register(BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend, BarController, LineController);
 
-	const WIDTH = 600;
-	const HEIGHT = 240;
-	const PADDING = { top: 20, right: 20, bottom: 30, left: 40 };
-	const INNER_W = WIDTH - PADDING.left - PADDING.right;
-	const INNER_H = HEIGHT - PADDING.top - PADDING.bottom;
-
-	function scoreColor(score: number): string {
-		if (score < 1.5) return 'var(--color-sentiment-1)';
-		if (score < 2.5) return 'var(--color-sentiment-2)';
-		if (score < 3.5) return 'var(--color-sentiment-3)';
-		if (score < 4.5) return 'var(--color-sentiment-4)';
-		return 'var(--color-sentiment-5)';
-	}
+	const { data: raw }: { data: HourlyPoint[] } = $props();
 
 	const allHours = $derived.by(() => {
-		const byHour = new Map(data.map((d) => [d.hour, d]));
+		const byHour = new Map(raw.map((d) => [d.hour, d]));
 		return Array.from({ length: 24 }, (_, i) => byHour.get(i) ?? { hour: i, avg_score: 0, count: 0 });
 	});
 
-	const maxCount = $derived(Math.max(1, ...data.map((d) => d.count)));
-
-	function barWidth(): number {
-		return INNER_W / 24 - 2;
+	function fmtHour(h: number): string {
+		if (h === 0) return '12a';
+		if (h < 12) return `${h}a`;
+		if (h === 12) return '12p';
+		return `${h - 12}p`;
 	}
 
-	function barX(hour: number): number {
-		return PADDING.left + (hour / 24) * INNER_W + 1;
+	function scoreColor(v: number): string {
+		if (v === 0) return 'transparent';
+		if (v < 2) return '#ef4444';
+		if (v < 2.5) return '#f97316';
+		if (v < 3.5) return '#eab308';
+		if (v < 4.5) return '#22c55e';
+		return '#06b6d4';
 	}
 
-	function barHeight(count: number): number {
-		return (count / maxCount) * INNER_H;
-	}
+	const chartData = $derived({
+		labels: allHours.map((d) => fmtHour(d.hour)),
+		datasets: [
+			{
+				type: 'bar' as const,
+				label: 'Records',
+				data: allHours.map((d) => d.count),
+				backgroundColor: allHours.map(() => 'rgba(99, 102, 241, 0.25)'),
+				hoverBackgroundColor: allHours.map(() => 'rgba(99, 102, 241, 0.45)'),
+				borderRadius: 3,
+				yAxisID: 'volume',
+				order: 2
+			},
+			{
+				type: 'line' as const,
+				label: 'Avg Score',
+				data: allHours.map((d) => (d.count > 0 ? d.avg_score : null)),
+				borderColor: '#818cf8',
+				pointBackgroundColor: allHours.map((d) => scoreColor(d.avg_score)),
+				pointBorderColor: 'transparent',
+				pointRadius: allHours.map((d) => (d.count > 0 ? 4 : 0)),
+				pointHoverRadius: 6,
+				borderWidth: 2,
+				tension: 0.3,
+				spanGaps: true,
+				yAxisID: 'score',
+				order: 1
+			}
+		]
+	});
 
-	const HOUR_LABELS: Record<number, string> = {
-		0: '12a',
-		6: '6a',
-		12: '12p',
-		18: '6p'
+	const chartOptions = {
+		responsive: true,
+		maintainAspectRatio: false,
+		interaction: { mode: 'index' as const, intersect: false },
+		scales: {
+			x: {
+				grid: { color: 'rgba(255,255,255,0.04)' },
+				ticks: { color: '#52525b', font: { size: 10 }, maxRotation: 0 },
+				border: { display: false }
+			},
+			volume: {
+				position: 'left' as const,
+				beginAtZero: true,
+				grid: { color: 'rgba(255,255,255,0.04)' },
+				ticks: { color: '#52525b', font: { size: 10 } },
+				border: { display: false },
+				title: { display: true, text: 'records', color: '#52525b', font: { size: 10 } }
+			},
+			score: {
+				position: 'right' as const,
+				min: 1,
+				max: 5,
+				grid: { drawOnChartArea: false },
+				ticks: { color: '#52525b', font: { size: 10 }, stepSize: 1 },
+				border: { display: false },
+				title: { display: true, text: 'score', color: '#52525b', font: { size: 10 } }
+			}
+		},
+		plugins: {
+			legend: {
+				display: true,
+				position: 'bottom' as const,
+				labels: { color: '#71717a', font: { size: 10 }, boxWidth: 12, padding: 16 }
+			},
+			tooltip: {
+				backgroundColor: '#12121a',
+				borderColor: '#27272a',
+				borderWidth: 1,
+				titleColor: '#e4e4e7',
+				bodyColor: '#71717a',
+				padding: 10,
+				cornerRadius: 8
+			}
+		}
 	};
-
-	let hoveredHour = $state<number | null>(null);
 </script>
 
-{#if data.length === 0}
-	<div class="flex h-72 items-center justify-center text-text-dim">No hourly data yet</div>
-{:else}
-	<svg
-		viewBox="0 0 {WIDTH} {HEIGHT}"
-		class="h-72 w-full"
-		role="img"
-		aria-label="Sentiment by hour of day"
-	>
-		{#each [1, 2, 3, 4, 5] as tick}
-			<line
-				x1={PADDING.left}
-				y1={PADDING.top + INNER_H - ((tick - 1) / 4) * INNER_H}
-				x2={WIDTH - PADDING.right}
-				y2={PADDING.top + INNER_H - ((tick - 1) / 4) * INNER_H}
-				stroke="var(--color-border)"
-				stroke-dasharray="3,3"
-				opacity="0.3"
-			/>
-		{/each}
-
-		{#each allHours as point}
-			{@const bw = barWidth()}
-			{@const bh = barHeight(point.count)}
-			{@const x = barX(point.hour)}
-			{@const y = PADDING.top + INNER_H - bh}
-
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
-			<rect
-				{x}
-				{y}
-				width={bw}
-				height={Math.max(bh, point.count > 0 ? 2 : 0)}
-				rx="2"
-				fill={point.count > 0 ? scoreColor(point.avg_score) : 'transparent'}
-				opacity={hoveredHour === null || hoveredHour === point.hour ? 0.9 : 0.3}
-				class="transition-opacity duration-150"
-				onmouseenter={() => (hoveredHour = point.hour)}
-				onmouseleave={() => (hoveredHour = null)}
-			/>
-		{/each}
-
-		{#each Object.entries(HOUR_LABELS) as [hour, label]}
-			<text x={barX(Number(hour)) + barWidth() / 2} y={HEIGHT - 6} text-anchor="middle" fill="var(--color-text-dim)" font-size="10">
-				{label}
-			</text>
-		{/each}
-
-		{#if hoveredHour !== null}
-			{@const p = allHours.find((d) => d.hour === hoveredHour)}
-			{#if p && p.count > 0}
-				{@const x = barX(p.hour) + barWidth() / 2}
-				<rect x={x - 60} y="2" width="120" height="18" rx="4" fill="var(--color-bg-card)" stroke="var(--color-border)" />
-				<text x={x} y="14" text-anchor="middle" fill="var(--color-text)" font-size="11">
-					{p.hour}:00 - avg {p.avg_score.toFixed(1)} ({p.count})
-				</text>
-			{/if}
-		{/if}
-	</svg>
-{/if}
+<div class="h-56 w-full">
+	<ChartComponent type="bar" data={chartData} options={chartOptions} />
+</div>
