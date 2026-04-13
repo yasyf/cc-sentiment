@@ -37,20 +37,29 @@ def detect_git_username() -> str | None:
 
 
 def auto_setup(state: AppState) -> bool:
-    if not (username := detect_git_username()):
-        return False
+    username = detect_git_username()
 
-    if backend := KeyDiscovery.match_ssh_key(username):
-        state.config = SSHConfig(github_username=username, key_path=backend.private_key_path)
-        state.save()
-        console.print(f"[green]Auto-configured:[/] {username} with SSH key {backend.private_key_path}")
-        return True
+    if username:
+        if backend := KeyDiscovery.match_ssh_key(username):
+            state.config = SSHConfig(github_username=username, key_path=backend.private_key_path)
+            state.save()
+            console.print(f"[green]Auto-configured:[/] {username} with SSH key {backend.private_key_path}")
+            return True
 
-    if backend := KeyDiscovery.match_gpg_key(username):
-        state.config = GPGConfig(github_username=username, fpr=backend.fpr)
-        state.save()
-        console.print(f"[green]Auto-configured:[/] {username} with GPG key {backend.fpr[-8:]}")
-        return True
+        if backend := KeyDiscovery.match_gpg_key(username):
+            state.config = GPGConfig(github_username=username, fpr=backend.fpr)
+            state.save()
+            console.print(f"[green]Auto-configured:[/] {username} with GPG key {backend.fpr[-8:]}")
+            return True
+
+    for info in KeyDiscovery.find_gpg_keys():
+        if KeyDiscovery.fetch_openpgp_key(info.fpr):
+            identity = username or info.fpr
+            state.config = GPGConfig(github_username=identity, fpr=info.fpr)
+            state.save()
+            label = username or f"GPG {info.fpr[-8:]}"
+            console.print(f"[green]Auto-configured:[/] {label} with GPG key on keys.openpgp.org")
+            return True
 
     return False
 

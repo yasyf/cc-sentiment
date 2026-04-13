@@ -53,12 +53,13 @@ CHIP_SPEED = {"M1": 1.5, "M2": 2.0, "M3": 2.5, "M4": 2.8, "M5": 3.2}
 class SetupApp(App[None]):
     CSS = """
     Screen { align: center middle; }
-    #wizard { width: 80; height: auto; max-height: 40; border: heavy $accent; padding: 1 2; }
+    #wizard { width: 80; height: auto; max-height: 44; border: heavy $accent; padding: 1 2; }
     #wizard Label { margin: 1 0 0 0; }
     #wizard .step-title { text-style: bold; color: $text; margin: 0 0 1 0; }
     #wizard Input { margin: 0 0 1 0; }
     #wizard Button { margin: 1 0 0 0; }
     #wizard .status { color: $text-muted; margin: 0 0 1 0; }
+    #wizard .faq { color: $text-muted; margin: 1 0 0 0; }
     #wizard .error { color: $error; }
     #wizard .success { color: $success; }
     #wizard DataTable { height: auto; max-height: 10; margin: 0 0 1 0; }
@@ -85,31 +86,52 @@ class SetupApp(App[None]):
     def compose_username_step(self) -> ComposeResult:
         with Vertical(id="step-username"):
             yield Label("Who are you?", classes="step-title")
-            yield Label("Your GitHub username is used to sign uploads so we can verify they're from you.", classes="status")
+            yield Label(
+                "We verify uploads using your public keys on GitHub. "
+                "No account creation needed -- just your username.",
+                classes="status",
+            )
             yield Input(placeholder="GitHub username", id="username-input")
             yield Label("", id="username-status", classes="status")
             yield Button("Next", id="username-next", variant="primary")
+            yield Button("I don't use GitHub", id="username-skip", variant="default")
 
     def compose_discovery_step(self) -> ComposeResult:
         with Vertical(id="step-discovery"):
             yield Label("Pick a signing key", classes="step-title")
-            yield Label("Looking for SSH and GPG keys on your machine...", id="discovery-status", classes="status")
+            yield Label(
+                "Checking which SSH and GPG keys you already have...",
+                id="discovery-status", classes="status",
+            )
             yield DataTable(id="key-table")
             yield RadioSet(id="key-select")
             yield Label("", id="no-keys-msg", classes="status")
+            yield Label(
+                "[dim]Why? Your key proves the data came from you. "
+                "We never read or upload your private key -- only "
+                "the signature it produces.[/]",
+                classes="faq",
+            )
             yield Button("Next", id="discovery-next", variant="primary", disabled=True)
 
     def compose_remote_step(self) -> ComposeResult:
         with Vertical(id="step-remote"):
             yield Label("Verifying your key", classes="step-title")
-            yield Label("Checking that this key is linked to your GitHub account...", id="remote-status", classes="status")
+            yield Label(
+                "Checking that this key is linked to your GitHub account...",
+                id="remote-status", classes="status",
+            )
             yield Static("", id="remote-checks")
             yield Button("Next", id="remote-next", variant="primary", disabled=True)
 
     def compose_upload_step(self) -> ComposeResult:
         with Vertical(id="step-upload"):
             yield Label("Register your key", classes="step-title")
-            yield Label("We couldn't find this key on GitHub yet. We can add it for you.", id="upload-status", classes="status")
+            yield Label(
+                "Your key needs to be on a public keyserver so the "
+                "server can verify your uploads.",
+                id="upload-status", classes="status",
+            )
             yield RadioSet(id="upload-options")
             yield Label("", id="upload-key-text", classes="key-text")
             yield Label("", id="upload-result", classes="status")
@@ -120,6 +142,11 @@ class SetupApp(App[None]):
         with Vertical(id="step-done"):
             yield Label("You're all set", classes="step-title")
             yield Label("", id="done-summary", classes="success")
+            yield Label(
+                "[dim]What gets uploaded: a 1-5 score and timestamp per conversation. "
+                "What stays on your machine: all conversation text and code.[/]",
+                classes="faq",
+            )
             yield Button("Start scanning", id="done-btn", variant="primary")
 
     def on_mount(self) -> None:
@@ -160,6 +187,11 @@ class SetupApp(App[None]):
         self.username = username
         self.validate_and_discover()
 
+    @on(Button.Pressed, "#username-skip")
+    def on_username_skip(self) -> None:
+        self.username = ""
+        self._switch_to_discovery()
+
     @work(thread=True)
     def validate_and_discover(self) -> None:
         status = self.query_one("#username-status", Label)
@@ -192,7 +224,11 @@ class SetupApp(App[None]):
         status = self.query_one("#discovery-status", Label)
         no_keys = self.query_one("#no-keys-msg", Label)
 
-        all_keys: list[SSHKeyInfo | GPGKeyInfo] = [*ssh_keys, *gpg_keys]
+        if self.username:
+            all_keys: list[SSHKeyInfo | GPGKeyInfo] = [*ssh_keys, *gpg_keys]
+        else:
+            all_keys = list(gpg_keys)
+
         self._discovered_keys = all_keys
 
         if not all_keys:
@@ -201,6 +237,9 @@ class SetupApp(App[None]):
                 no_keys.update("No worries -- we'll generate a GPG key for you automatically. Press Next.")
                 self.query_one("#discovery-next", Button).disabled = False
                 self._generate_gpg = True
+            elif not self.username:
+                no_keys.update("[red]No GPG keys found. Install gpg (brew install gnupg) or go back and enter a GitHub username to use SSH.[/]")
+                self._generate_gpg = False
             else:
                 no_keys.update("[red]No signing keys found. Install gpg (brew install gnupg) or create an SSH key first.[/]")
                 self._generate_gpg = False
@@ -209,7 +248,7 @@ class SetupApp(App[None]):
         self._generate_gpg = False
         table.display = True
         radio.display = True
-        status.update(f"Found {len(all_keys)} key{'s' if len(all_keys) != 1 else ''} on your machine:")
+        status.update(f"Found {len(all_keys)} existing key{'s' if len(all_keys) != 1 else ''}:")
 
         radio_children = []
         for key in all_keys:
@@ -239,7 +278,7 @@ class SetupApp(App[None]):
     @work(thread=True)
     def generate_gpg_key(self) -> None:
         status = self.query_one("#discovery-status", Label)
-        self.call_from_thread(status.update, "Generating GPG key...")
+        self.call_from_thread(status.update, "Creating a new GPG key for you...")
 
         email = self.username + "@users.noreply.github.com"
         batch_input = f"""%no-protection
@@ -283,6 +322,7 @@ Expire-Date: 0
         key = self.selected_key
         results: list[str] = []
         found = False
+        self._key_on_openpgp = False
 
         match key:
             case SSHKeyInfo(path=p):
@@ -299,28 +339,34 @@ Expire-Date: 0
                     results.append("  [yellow]?[/] GitHub SSH keys — error")
 
             case GPGKeyInfo(fpr=f):
-                self.call_from_thread(checks_widget.update, "  [dim]...[/] GitHub GPG keys\n  [dim]...[/] keys.openpgp.org")
+                checks = []
+                if self.username:
+                    checks.append("  [dim]...[/] GitHub GPG keys")
+                checks.append("  [dim]...[/] keys.openpgp.org")
+                self.call_from_thread(checks_widget.update, "\n".join(checks))
 
-                try:
-                    armor = KeyDiscovery.fetch_github_gpg_keys(self.username)
-                    if armor:
-                        import gnupg
-                        imported = gnupg.GPG().import_keys(armor)
-                        if f in set(imported.fingerprints):
-                            results.append("  [green]✓[/] GitHub GPG keys — matched")
-                            found = True
+                if self.username:
+                    try:
+                        armor = KeyDiscovery.fetch_github_gpg_keys(self.username)
+                        if armor:
+                            import gnupg
+                            imported = gnupg.GPG().import_keys(armor)
+                            if f in set(imported.fingerprints):
+                                results.append("  [green]✓[/] GitHub GPG keys — matched")
+                                found = True
+                            else:
+                                results.append("  [red]✗[/] GitHub GPG keys — not found")
                         else:
-                            results.append("  [red]✗[/] GitHub GPG keys — not found")
-                    else:
-                        results.append("  [red]✗[/] GitHub GPG keys — none registered")
-                except httpx.HTTPError:
-                    results.append("  [yellow]?[/] GitHub GPG keys — error")
+                            results.append("  [red]✗[/] GitHub GPG keys — none registered")
+                    except httpx.HTTPError:
+                        results.append("  [yellow]?[/] GitHub GPG keys — error")
 
                 try:
                     openpgp_key = KeyDiscovery.fetch_openpgp_key(f)
                     if openpgp_key:
                         results.append("  [green]✓[/] keys.openpgp.org — found")
                         found = True
+                        self._key_on_openpgp = True
                     else:
                         results.append("  [red]✗[/] keys.openpgp.org — not found")
                 except httpx.HTTPError:
@@ -329,11 +375,12 @@ Expire-Date: 0
         self.call_from_thread(checks_widget.update, "\n".join(results))
 
         if found:
-            self.call_from_thread(status.update, "[green]Key is registered on GitHub. You're good to go.[/]")
+            self.call_from_thread(status.update, "[green]Key verified. You're good to go.[/]")
             self.call_from_thread(self._enable_remote_next)
             self._key_on_remote = True
         else:
-            self.call_from_thread(status.update, "This key isn't on GitHub yet. We can fix that in the next step.")
+            msg = "Key not found on any keyserver. We can register it in the next step."
+            self.call_from_thread(status.update, msg)
             self.call_from_thread(self._enable_remote_next)
             self._key_on_remote = False
 
@@ -358,23 +405,22 @@ Expire-Date: 0
 
         match key:
             case SSHKeyInfo():
-                label = "Upload SSH key to GitHub"
-                rb = RadioButton(f"{label} {'(requires gh CLI)' if not has_gh else ''}")
+                rb = RadioButton(f"Add to GitHub automatically{'' if has_gh else ' (needs gh CLI)'}")
                 rb.disabled = not has_gh
                 options.append(rb)
                 self._upload_actions.append("github-ssh")
 
             case GPGKeyInfo():
-                label = "Upload GPG key to GitHub"
-                rb = RadioButton(f"{label} {'(requires gh CLI)' if not has_gh else ''}")
-                rb.disabled = not has_gh
-                options.append(rb)
-                self._upload_actions.append("github-gpg")
+                if self.username:
+                    rb = RadioButton(f"Add to GitHub automatically{'' if has_gh else ' (needs gh CLI)'}")
+                    rb.disabled = not has_gh
+                    options.append(rb)
+                    self._upload_actions.append("github-gpg")
 
-                options.append(RadioButton("Upload to keys.openpgp.org"))
+                options.append(RadioButton("Publish to keys.openpgp.org"))
                 self._upload_actions.append("openpgp")
 
-        options.append(RadioButton("Manual setup (show key + instructions)"))
+        options.append(RadioButton("Show key so I can add it myself"))
         self._upload_actions.append("manual")
 
         radio.mount_all(options)
@@ -464,7 +510,7 @@ Expire-Date: 0
                         url = "https://github.com/settings/ssh/new"
                     case GPGKeyInfo():
                         url = "https://github.com/settings/gpg/new"
-                self.call_from_thread(result_label.update, f"Add your key at: {url}")
+                self.call_from_thread(result_label.update, f"Add your public key at:\n{url}")
                 self.call_from_thread(self._finish_after_upload)
 
     def _finish_after_upload(self) -> None:
@@ -473,21 +519,23 @@ Expire-Date: 0
     def _save_and_finish(self) -> None:
         state = AppState.load()
         key = self.selected_key
+        identity = self.username
 
         match key:
             case SSHKeyInfo(path=p):
-                state.config = SSHConfig(github_username=self.username, key_path=p)
+                state.config = SSHConfig(github_username=identity, key_path=p)
             case GPGKeyInfo(fpr=f):
-                state.config = GPGConfig(github_username=self.username, fpr=f)
+                state.config = GPGConfig(github_username=identity or f, fpr=f)
 
         state.save()
 
         summary = self.query_one("#done-summary", Label)
         match key:
             case SSHKeyInfo(path=p):
-                summary.update(f"Signed in as [b]{self.username}[/] using SSH key [dim]{p.name}[/]")
+                summary.update(f"Signed in as [b]{identity}[/] using SSH key [dim]{p.name}[/]")
             case GPGKeyInfo(fpr=f):
-                summary.update(f"Signed in as [b]{self.username}[/] using GPG key [dim]{f[-8:]}[/]")
+                label = identity or f"GPG {f[-8:]}"
+                summary.update(f"Signed in as [b]{label}[/]")
 
         self.query_one(ContentSwitcher).current = "step-done"
 

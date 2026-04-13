@@ -62,12 +62,12 @@ class TestFetchSSHKeys:
 
 class TestUsernameValidation:
     @pytest.mark.asyncio
-    async def test_newlines_rejected(self) -> None:
+    async def test_newlines_rejected_for_ssh(self) -> None:
         with pytest.raises(ValueError, match="Invalid GitHub username"):
             await Verifier().verify_signature("bad\nuser", "{}", "-----BEGIN SSH SIGNATURE-----\nsig")
 
     @pytest.mark.asyncio
-    async def test_spaces_rejected(self) -> None:
+    async def test_spaces_rejected_for_ssh(self) -> None:
         with pytest.raises(ValueError, match="Invalid GitHub username"):
             await Verifier().verify_signature("bad user", "{}", "-----BEGIN SSH SIGNATURE-----\nsig")
 
@@ -117,7 +117,8 @@ class TestGPGVerification:
         verifier = Verifier()
         verifier.fetch_gpg_keys = AsyncMock(return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----\nkey")
 
-        with patch.object(verifier, "_check_gpg_signature", return_value=True):
+        with patch.object(verifier, "_check_gpg_signature", return_value=True), \
+             patch.object(verifier, "_extract_gpg_key_id", return_value=None):
             result = await verifier.verify_signature(
                 "octocat", '{"test":1}', "-----BEGIN PGP SIGNATURE-----\nsig"
             )
@@ -125,24 +126,64 @@ class TestGPGVerification:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_gpg_failure(self) -> None:
+    async def test_gpg_failure_falls_back_to_openpgp(self) -> None:
         verifier = Verifier()
         verifier.fetch_gpg_keys = AsyncMock(return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----\nkey")
+        verifier.fetch_openpgp_key_by_keyid = AsyncMock(return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----\nopenpgp-key")
 
-        with patch.object(verifier, "_check_gpg_signature", return_value=False):
+        call_count = 0
+        def check_sig(armor, payload, sig):
+            nonlocal call_count
+            call_count += 1
+            return call_count == 2
+
+        with patch.object(verifier, "_check_gpg_signature", side_effect=check_sig), \
+             patch.object(verifier, "_extract_gpg_key_id", return_value="ABCDEF1234567890"):
             result = await verifier.verify_signature(
                 "octocat", '{"test":1}', "-----BEGIN PGP SIGNATURE-----\nsig"
             )
 
-        assert result is False
+        assert result is True
+        verifier.fetch_openpgp_key_by_keyid.assert_called_once_with("ABCDEF1234567890")
+
+    @pytest.mark.asyncio
+    async def test_gpg_fingerprint_identity_checks_openpgp(self) -> None:
+        verifier = Verifier()
+        verifier.fetch_openpgp_key_by_fpr = AsyncMock(return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----\nkey")
+
+        with patch.object(verifier, "_check_gpg_signature", return_value=True), \
+             patch.object(verifier, "_extract_gpg_key_id", return_value=None):
+            result = await verifier.verify_gpg(
+                "ABCDEF1234567890ABCDEF1234567890ABCDEF12", '{"test":1}', "sig"
+            )
+
+        assert result is True
+        verifier.fetch_openpgp_key_by_fpr.assert_called_once_with("ABCDEF1234567890ABCDEF1234567890ABCDEF12")
 
     @pytest.mark.asyncio
     async def test_no_gpg_keys_returns_false(self) -> None:
         verifier = Verifier()
         verifier.fetch_gpg_keys = AsyncMock(return_value="")
 
-        result = await verifier.verify_gpg("octocat", "{}", "sig")
+        with patch.object(verifier, "_extract_gpg_key_id", return_value=None):
+            result = await verifier.verify_gpg("octocat", "{}", "sig")
+
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_gpg_allows_non_github_username(self) -> None:
+        verifier = Verifier()
+        verifier.fetch_openpgp_key_by_fpr = AsyncMock(return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----\nkey")
+
+        with patch.object(verifier, "_check_gpg_signature", return_value=True), \
+             patch.object(verifier, "_extract_gpg_key_id", return_value=None):
+            result = await verifier.verify_signature(
+                "F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A",
+                '{"test":1}',
+                "-----BEGIN PGP SIGNATURE-----\nsig",
+            )
+
+        assert result is True
 
 
 class TestSSHKeyCache:
