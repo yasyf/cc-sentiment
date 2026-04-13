@@ -5,14 +5,15 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from cc_sentiment.models import (
     AppState,
-    ClientConfig,
+    GPGConfig,
     SentimentRecord,
     SessionId,
+    SSHConfig,
     UploadPayload,
 )
-from cc_sentiment.signing import PayloadSigner
+from cc_sentiment.signing import GPGBackend, PayloadSigner, SigningBackend, SSHBackend
 
-DEFAULT_SERVER_URL = "https://cc-sentiment.modal.run"
+DEFAULT_SERVER_URL = "https://anetaco--cc-sentiment-api-serve.modal.run"
 
 TEST_PAYLOAD = "cc-sentiment-verify"
 
@@ -34,6 +35,14 @@ class Uploader:
         self.server_url = server_url
 
     @staticmethod
+    def backend_from_config(config: SSHConfig | GPGConfig) -> SigningBackend:
+        match config:
+            case SSHConfig(key_path=p):
+                return SSHBackend(private_key_path=p)
+            case GPGConfig(fpr=f):
+                return GPGBackend(fpr=f)
+
+    @staticmethod
     def records_from_state(state: AppState) -> list[SentimentRecord]:
         return [
             record
@@ -43,13 +52,14 @@ class Uploader:
         ]
 
     @_retry
-    async def verify_credentials(self, config: ClientConfig) -> None:
+    async def verify_credentials(self, config: SSHConfig | GPGConfig) -> None:
+        backend = self.backend_from_config(config)
         async with httpx.AsyncClient() as client:
             (await client.post(
                 f"{self.server_url}/verify",
                 json={
                     "github_username": config.github_username,
-                    "signature": PayloadSigner.sign(TEST_PAYLOAD, config.key_path),
+                    "signature": PayloadSigner.sign(TEST_PAYLOAD, backend),
                     "test_payload": TEST_PAYLOAD,
                 },
                 timeout=15.0,
@@ -59,9 +69,10 @@ class Uploader:
     async def upload(self, records: list[SentimentRecord], state: AppState) -> None:
         assert state.config is not None, "Client not configured. Run 'cc-sentiment setup' first."
 
+        backend = self.backend_from_config(state.config)
         payload = UploadPayload(
             github_username=state.config.github_username,
-            signature=PayloadSigner.sign_records(records, state.config.key_path),
+            signature=PayloadSigner.sign_records(records, backend),
             records=tuple(records),
         )
 

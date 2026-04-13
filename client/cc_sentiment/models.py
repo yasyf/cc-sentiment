@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import NewType
+from typing import Annotated, Literal, NewType
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag
 
 SessionId = NewType("SessionId", str)
 BucketIndex = NewType("BucketIndex", int)
@@ -49,9 +49,22 @@ class UploadPayload(BaseModel, frozen=True):
     records: tuple[SentimentRecord, ...]
 
 
-class ClientConfig(BaseModel, frozen=True):
+class SSHConfig(BaseModel, frozen=True):
+    key_type: Literal["ssh"] = "ssh"
     github_username: str
     key_path: Path
+
+
+class GPGConfig(BaseModel, frozen=True):
+    key_type: Literal["gpg"] = "gpg"
+    github_username: str
+    fpr: str
+
+
+ClientConfig = Annotated[
+    Annotated[SSHConfig, Tag("ssh")] | Annotated[GPGConfig, Tag("gpg")],
+    Discriminator(lambda v: v.get("key_type", "ssh") if isinstance(v, dict) else v.key_type),
+]
 
 
 class ProcessedFile(BaseModel, frozen=True):

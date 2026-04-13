@@ -9,7 +9,7 @@ import pytest
 from cc_sentiment_server.verify import Verifier
 
 
-class TestFetchGithubKeys:
+class TestFetchSSHKeys:
     @pytest.mark.asyncio
     async def test_returns_keys(self) -> None:
         mock_response = MagicMock()
@@ -23,7 +23,7 @@ class TestFetchGithubKeys:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with patch("cc_sentiment_server.verify.httpx.AsyncClient", return_value=mock_client):
-            keys = await Verifier().fetch_github_keys("octocat")
+            keys = await Verifier().fetch_ssh_keys("octocat")
 
         mock_client.get.assert_called_once_with("https://github.com/octocat.keys", timeout=10.0)
         assert keys == ["ssh-ed25519 AAAA1 user@host", "ssh-rsa AAAA2 user@host"]
@@ -41,7 +41,7 @@ class TestFetchGithubKeys:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with patch("cc_sentiment_server.verify.httpx.AsyncClient", return_value=mock_client):
-            keys = await Verifier().fetch_github_keys("octocat")
+            keys = await Verifier().fetch_ssh_keys("octocat")
 
         assert len(keys) == 2
 
@@ -57,107 +57,141 @@ class TestFetchGithubKeys:
 
         with patch("cc_sentiment_server.verify.httpx.AsyncClient", return_value=mock_client):
             with pytest.raises(ValueError, match="GitHub user not found"):
-                await Verifier().fetch_github_keys("nonexistent-xyz")
+                await Verifier().fetch_ssh_keys("nonexistent-xyz")
 
 
 class TestUsernameValidation:
     @pytest.mark.asyncio
     async def test_newlines_rejected(self) -> None:
         with pytest.raises(ValueError, match="Invalid GitHub username"):
-            await Verifier().verify_signature("bad\nuser", "{}", "sig")
+            await Verifier().verify_signature("bad\nuser", "{}", "-----BEGIN SSH SIGNATURE-----\nsig")
 
     @pytest.mark.asyncio
     async def test_spaces_rejected(self) -> None:
         with pytest.raises(ValueError, match="Invalid GitHub username"):
-            await Verifier().verify_signature("bad user", "{}", "sig")
+            await Verifier().verify_signature("bad user", "{}", "-----BEGIN SSH SIGNATURE-----\nsig")
 
     @pytest.mark.asyncio
-    async def test_valid_usernames_accepted(self) -> None:
-        verifier = Verifier()
-        verifier.fetch_github_keys = AsyncMock(return_value=[])
-        await verifier.verify_signature("octocat", "{}", "sig")
-        await verifier.verify_signature("user-name", "{}", "sig")
-        await verifier.verify_signature("user123", "{}", "sig")
+    async def test_unknown_signature_format(self) -> None:
+        with pytest.raises(ValueError, match="Unknown signature format"):
+            await Verifier().verify_signature("octocat", "{}", "garbage-sig")
 
 
-class TestVerifySignature:
+class TestSSHVerification:
     @pytest.mark.asyncio
     async def test_success_with_matching_key(self) -> None:
         verifier = Verifier()
-        verifier.fetch_github_keys = AsyncMock(return_value=["ssh-ed25519 AAAA1 user@host"])
+        verifier.fetch_ssh_keys = AsyncMock(return_value=["ssh-ed25519 AAAA1 user@host"])
 
-        with patch.object(verifier, "_verify_with_key_sync", return_value=True):
-            result = await verifier.verify_signature("octocat", '{"test":1}', "sig")
+        with patch.object(verifier, "_verify_with_ssh_key", return_value=True):
+            result = await verifier.verify_signature(
+                "octocat", '{"test":1}', "-----BEGIN SSH SIGNATURE-----\nsig"
+            )
 
         assert result is True
 
     @pytest.mark.asyncio
     async def test_failure_with_no_matching_key(self) -> None:
         verifier = Verifier()
-        verifier.fetch_github_keys = AsyncMock(return_value=["ssh-ed25519 AAAA1 user@host"])
+        verifier.fetch_ssh_keys = AsyncMock(return_value=["ssh-ed25519 AAAA1 user@host"])
 
-        with patch.object(verifier, "_verify_with_key_sync", return_value=False):
-            result = await verifier.verify_signature("octocat", '{"test":1}', "bad-sig")
+        with patch.object(verifier, "_verify_with_ssh_key", return_value=False):
+            result = await verifier.verify_signature(
+                "octocat", '{"test":1}', "-----BEGIN SSH SIGNATURE-----\nbad"
+            )
 
         assert result is False
 
     @pytest.mark.asyncio
     async def test_empty_keys_returns_false(self) -> None:
         verifier = Verifier()
-        verifier.fetch_github_keys = AsyncMock(return_value=[])
+        verifier.fetch_ssh_keys = AsyncMock(return_value=[])
 
-        result = await verifier.verify_signature("octocat", "{}", "sig")
-
+        result = await verifier.verify_ssh("octocat", "{}", "sig")
         assert result is False
 
 
-class TestKeyCache:
+class TestGPGVerification:
+    @pytest.mark.asyncio
+    async def test_dispatches_to_gpg(self) -> None:
+        verifier = Verifier()
+        verifier.fetch_gpg_keys = AsyncMock(return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----\nkey")
+
+        with patch.object(verifier, "_check_gpg_signature", return_value=True):
+            result = await verifier.verify_signature(
+                "octocat", '{"test":1}', "-----BEGIN PGP SIGNATURE-----\nsig"
+            )
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_gpg_failure(self) -> None:
+        verifier = Verifier()
+        verifier.fetch_gpg_keys = AsyncMock(return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----\nkey")
+
+        with patch.object(verifier, "_check_gpg_signature", return_value=False):
+            result = await verifier.verify_signature(
+                "octocat", '{"test":1}', "-----BEGIN PGP SIGNATURE-----\nsig"
+            )
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_no_gpg_keys_returns_false(self) -> None:
+        verifier = Verifier()
+        verifier.fetch_gpg_keys = AsyncMock(return_value="")
+
+        result = await verifier.verify_gpg("octocat", "{}", "sig")
+        assert result is False
+
+
+class TestSSHKeyCache:
     @pytest.mark.asyncio
     async def test_populates_on_miss(self) -> None:
         cache: dict = {}
         verifier = Verifier(key_cache=cache)
-        verifier.fetch_github_keys = AsyncMock(return_value=["ssh-ed25519 KEY1 user@host"])
+        verifier.fetch_ssh_keys = AsyncMock(return_value=["ssh-ed25519 KEY1 user@host"])
 
-        with patch.object(verifier, "_verify_with_key_sync", return_value=True):
-            await verifier.verify_signature("octocat", "{}", "sig")
+        with patch.object(verifier, "_verify_with_ssh_key", return_value=True):
+            await verifier.verify_ssh("octocat", "{}", "sig")
 
-        assert cache["octocat"] == ["ssh-ed25519 KEY1 user@host"]
+        assert cache["ssh:octocat"] == ["ssh-ed25519 KEY1 user@host"]
 
     @pytest.mark.asyncio
     async def test_uses_cached_keys(self) -> None:
-        cache = {"octocat": ["ssh-ed25519 CACHED user@host"]}
+        cache = {"ssh:octocat": ["ssh-ed25519 CACHED user@host"]}
         verifier = Verifier(key_cache=cache)
-        verifier.fetch_github_keys = AsyncMock()
+        verifier.fetch_ssh_keys = AsyncMock()
 
-        with patch.object(verifier, "_verify_with_key_sync", return_value=True):
-            await verifier.verify_signature("octocat", "{}", "sig")
+        with patch.object(verifier, "_verify_with_ssh_key", return_value=True):
+            await verifier.verify_ssh("octocat", "{}", "sig")
 
-        verifier.fetch_github_keys.assert_not_called()
+        verifier.fetch_ssh_keys.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_refetches_on_mismatch(self) -> None:
-        cache = {"octocat": ["ssh-ed25519 OLD user@host"]}
+        cache = {"ssh:octocat": ["ssh-ed25519 OLD user@host"]}
         verifier = Verifier(key_cache=cache)
 
-        def verify_sync(username, key, payload, sig):
+        def verify_key(username, key, payload, sig):
             return key == "ssh-ed25519 NEW user@host"
 
-        verifier.fetch_github_keys = AsyncMock(return_value=["ssh-ed25519 NEW user@host"])
+        verifier.fetch_ssh_keys = AsyncMock(return_value=["ssh-ed25519 NEW user@host"])
 
-        with patch.object(verifier, "_verify_with_key_sync", side_effect=verify_sync):
-            result = await verifier.verify_signature("octocat", "{}", "sig")
+        with patch.object(verifier, "_verify_with_ssh_key", side_effect=verify_key):
+            result = await verifier.verify_ssh("octocat", "{}", "sig")
 
         assert result is True
-        verifier.fetch_github_keys.assert_called_once()
-        assert cache["octocat"] == ["ssh-ed25519 NEW user@host"]
+        verifier.fetch_ssh_keys.assert_called_once()
+        assert cache["ssh:octocat"] == ["ssh-ed25519 NEW user@host"]
 
 
-class TestVerifyWithKeySync:
+class TestVerifyWithSSHKey:
     def test_no_resource_warning(self) -> None:
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always", ResourceWarning)
             with patch("cc_sentiment_server.verify.subprocess.run", return_value=MagicMock(returncode=0)):
-                Verifier._verify_with_key_sync(
+                Verifier._verify_with_ssh_key(
                     "octocat", "ssh-ed25519 AAAA key", '{"data":"test"}', "sig",
                 )
             gc.collect()
@@ -167,7 +201,7 @@ class TestVerifyWithKeySync:
 
     def test_passes_correct_args_to_ssh_keygen(self) -> None:
         with patch("cc_sentiment_server.verify.subprocess.run", return_value=MagicMock(returncode=0)) as mock_run:
-            Verifier._verify_with_key_sync("octocat", "ssh-ed25519 AAAA key", "{}", "sig")
+            Verifier._verify_with_ssh_key("octocat", "ssh-ed25519 AAAA key", "{}", "sig")
 
         args = mock_run.call_args[0][0]
         assert args[0] == "ssh-keygen"
@@ -177,7 +211,7 @@ class TestVerifyWithKeySync:
 
     def test_no_shell_true(self) -> None:
         with patch("cc_sentiment_server.verify.subprocess.run", return_value=MagicMock(returncode=0)) as mock_run:
-            Verifier._verify_with_key_sync("octocat", "ssh-ed25519 AAAA key", "{}", "sig")
+            Verifier._verify_with_ssh_key("octocat", "ssh-ed25519 AAAA key", "{}", "sig")
 
         kwargs = mock_run.call_args.kwargs
         assert "shell" not in kwargs or not kwargs["shell"]

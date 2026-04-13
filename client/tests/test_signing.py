@@ -13,98 +13,86 @@ from cc_sentiment.models import (
     SentimentScore,
     SessionId,
 )
-from cc_sentiment.signing import KeyDiscovery, NoGitHubKeysError, PayloadSigner
+from cc_sentiment.signing import (
+    GPGKeyInfo,
+    KeyDiscovery,
+    PayloadSigner,
+    SSHBackend,
+    SSHKeyInfo,
+)
 
 
 class TestKeyDiscovery:
-    def test_find_private_key_ed25519(self) -> None:
+    def test_find_ssh_keys_ed25519(self) -> None:
         with patch("cc_sentiment.signing.SSH_DIR") as mock_ssh_dir:
             ed25519_path = MagicMock(spec=Path)
             ed25519_path.exists.return_value = True
-            mock_ssh_dir.__truediv__ = MagicMock(return_value=ed25519_path)
-            key = KeyDiscovery.find_private_key()
-            assert key == ed25519_path
+            pub_path = MagicMock()
+            pub_path.read_text.return_value = "ssh-ed25519 AAAA user@host"
+            ed25519_path.with_suffix.return_value = pub_path
+            ed25519_path.suffix = ""
 
-    def test_find_private_key_missing(self) -> None:
+            rsa_path = MagicMock(spec=Path)
+            rsa_path.exists.return_value = False
+
+            mock_ssh_dir.__truediv__ = lambda self, name: ed25519_path if name == "id_ed25519" else rsa_path
+            keys = KeyDiscovery.find_ssh_keys()
+            assert len(keys) == 1
+            assert keys[0].algorithm == "ssh-ed25519"
+
+    def test_find_ssh_keys_missing(self) -> None:
         with patch("cc_sentiment.signing.SSH_DIR", Path("/nonexistent")):
-            with pytest.raises(FileNotFoundError):
-                KeyDiscovery.find_private_key()
+            keys = KeyDiscovery.find_ssh_keys()
+            assert keys == ()
 
     @patch("cc_sentiment.signing.httpx.get")
-    def test_fetch_github_keys(self, mock_get: MagicMock) -> None:
+    def test_fetch_github_ssh_keys(self, mock_get: MagicMock) -> None:
         mock_response = MagicMock()
         mock_response.text = "ssh-ed25519 AAAA key1\nssh-rsa BBBB key2\n"
         mock_response.raise_for_status = MagicMock()
         mock_get.return_value = mock_response
 
-        keys = KeyDiscovery.fetch_github_keys("testuser")
+        keys = KeyDiscovery.fetch_github_ssh_keys("testuser")
         assert len(keys) == 2
         assert keys[0] == "ssh-ed25519 AAAA key1"
-        mock_get.assert_called_once_with(
-            "https://github.com/testuser.keys", timeout=10.0
-        )
 
     @patch("cc_sentiment.signing.httpx.get")
-    @patch.object(
-        KeyDiscovery, "read_public_key", return_value="ssh-ed25519 AAAA localkey"
-    )
-    @patch.object(
-        KeyDiscovery, "find_private_key", return_value=Path("/home/.ssh/id_ed25519")
-    )
-    def test_match_github_key_success(
-        self,
-        mock_find: MagicMock,
-        mock_read: MagicMock,
-        mock_get: MagicMock,
-    ) -> None:
-        mock_response = MagicMock()
-        mock_response.text = "ssh-ed25519 AAAA key1\nssh-rsa BBBB key2\n"
-        mock_response.raise_for_status = MagicMock()
-        mock_get.return_value = mock_response
-
-        key_path = KeyDiscovery.match_github_key("testuser")
-        assert key_path == Path("/home/.ssh/id_ed25519")
-
-    @patch("cc_sentiment.signing.httpx.get")
-    @patch.object(
-        KeyDiscovery, "read_public_key", return_value="ssh-ed25519 CCCC nomatch"
-    )
-    @patch.object(
-        KeyDiscovery, "find_private_key", return_value=Path("/home/.ssh/id_ed25519")
-    )
-    def test_match_github_key_no_match(
-        self,
-        mock_find: MagicMock,
-        mock_read: MagicMock,
-        mock_get: MagicMock,
-    ) -> None:
-        mock_response = MagicMock()
-        mock_response.text = "ssh-ed25519 AAAA key1\n"
-        mock_response.raise_for_status = MagicMock()
-        mock_get.return_value = mock_response
-
-        with pytest.raises(ValueError, match="No local SSH key matches"):
-            KeyDiscovery.match_github_key("testuser")
-
-    @patch("cc_sentiment.signing.httpx.get")
-    @patch.object(
-        KeyDiscovery, "find_private_key", return_value=Path("/home/.ssh/id_ed25519")
-    )
-    def test_match_github_key_no_remote_keys(
-        self,
-        mock_find: MagicMock,
-        mock_get: MagicMock,
-    ) -> None:
+    def test_fetch_github_ssh_keys_empty(self, mock_get: MagicMock) -> None:
         mock_response = MagicMock()
         mock_response.text = ""
         mock_response.raise_for_status = MagicMock()
         mock_get.return_value = mock_response
 
-        with pytest.raises(NoGitHubKeysError) as exc_info:
-            KeyDiscovery.match_github_key("testuser")
+        keys = KeyDiscovery.fetch_github_ssh_keys("testuser")
+        assert keys == ()
 
-        assert exc_info.value.username == "testuser"
-        assert exc_info.value.local_key_path == Path("/home/.ssh/id_ed25519")
+    @patch.object(KeyDiscovery, "fetch_github_ssh_keys", return_value=("ssh-ed25519 AAAA key1",))
+    @patch.object(KeyDiscovery, "find_ssh_keys")
+    def test_match_ssh_key_success(self, mock_find: MagicMock, mock_fetch: MagicMock) -> None:
+        mock_find.return_value = (SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment=""),)
+        with patch.object(SSHBackend, "fingerprint", return_value="ssh-ed25519 AAAA"):
+            result = KeyDiscovery.match_ssh_key("testuser")
+
+        assert result is not None
+        assert result.private_key_path == Path("/home/.ssh/id_ed25519")
+
+    @patch.object(KeyDiscovery, "fetch_github_ssh_keys", return_value=("ssh-ed25519 AAAA key1",))
+    @patch.object(KeyDiscovery, "find_ssh_keys")
+    def test_match_ssh_key_no_match(self, mock_find: MagicMock, mock_fetch: MagicMock) -> None:
+        mock_find.return_value = (SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment=""),)
+        with patch.object(SSHBackend, "fingerprint", return_value="ssh-ed25519 CCCC"):
+            result = KeyDiscovery.match_ssh_key("testuser")
+
+        assert result is None
+
+    @patch.object(KeyDiscovery, "fetch_github_ssh_keys", return_value=())
+    def test_match_ssh_key_no_remote_keys(self, mock_fetch: MagicMock) -> None:
+        result = KeyDiscovery.match_ssh_key("testuser")
+        assert result is None
+
+    def test_has_tool(self) -> None:
+        assert KeyDiscovery.has_tool("python3") is True
+        assert KeyDiscovery.has_tool("nonexistent_tool_xyz") is False
 
 
 class TestPayloadSigner:
@@ -153,3 +141,10 @@ class TestPayloadSigner:
         result = PayloadSigner.canonical_json(records)
         assert ": " not in result
         assert ", " not in result
+
+    def test_sign_delegates_to_backend(self) -> None:
+        backend = MagicMock()
+        backend.sign.return_value = "fake-signature"
+        result = PayloadSigner.sign("test-data", backend)
+        assert result == "fake-signature"
+        backend.sign.assert_called_once_with("test-data")

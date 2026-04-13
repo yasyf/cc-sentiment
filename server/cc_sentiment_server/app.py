@@ -130,8 +130,8 @@ app = modal.App("cc-sentiment")
 
 image = (
     modal.Image.debian_slim(python_version="3.14")
-    .pip_install("psycopg[binary]", "psycopg_pool", "pydantic", "httpx", "fastapi[standard]", "slowapi")
-    .apt_install("openssh-client")
+    .pip_install("psycopg[binary]", "psycopg_pool", "pydantic", "httpx", "fastapi[standard]", "slowapi", "python-gnupg")
+    .apt_install("openssh-client", "gnupg")
     .add_local_python_source("cc_sentiment_server")
 )
 

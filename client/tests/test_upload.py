@@ -10,11 +10,11 @@ import pytest
 from cc_sentiment.models import (
     AppState,
     BucketIndex,
-    ClientConfig,
     ProcessedSession,
     SentimentRecord,
     SentimentScore,
     SessionId,
+    SSHConfig,
 )
 from cc_sentiment.upload import Uploader
 
@@ -85,7 +85,7 @@ class TestUpload:
     def test_marks_sessions_uploaded_after_success(self) -> None:
         record = make_record()
         state = AppState(
-            config=ClientConfig(
+            config=SSHConfig(
                 github_username="testuser",
                 key_path=Path("/home/.ssh/id_ed25519"),
             ),

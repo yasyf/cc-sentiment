@@ -11,14 +11,15 @@ from cc_sentiment.models import (
     AppState,
     BucketIndex,
     CLIENT_VERSION,
-    ClientConfig,
     DEFAULT_MODEL,
+    GPGConfig,
     PROMPT_VERSION,
     ProcessedFile,
     ProcessedSession,
     SentimentRecord,
     SentimentScore,
     SessionId,
+    SSHConfig,
 )
 
 
@@ -92,15 +93,48 @@ class TestProcessedFile:
 
 
 class TestClientConfig:
-    def test_path_serialization(self) -> None:
-        config = ClientConfig(
+    def test_ssh_config_serialization(self) -> None:
+        config = SSHConfig(
             github_username="testuser",
             key_path=Path("/home/.ssh/id_ed25519"),
         )
         data = config.model_dump(mode="json")
-        restored = ClientConfig.model_validate(data)
+        assert data["key_type"] == "ssh"
+        restored = SSHConfig.model_validate(data)
         assert restored.key_path == Path("/home/.ssh/id_ed25519")
         assert restored.github_username == "testuser"
+
+    def test_gpg_config_serialization(self) -> None:
+        config = GPGConfig(
+            github_username="testuser",
+            fpr="F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A",
+        )
+        data = config.model_dump(mode="json")
+        assert data["key_type"] == "gpg"
+        restored = GPGConfig.model_validate(data)
+        assert restored.fpr == "F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A"
+
+    def test_state_roundtrip_with_ssh_config(self, tmp_path: Path) -> None:
+        state_file = tmp_path / "state.json"
+        state = AppState(
+            config=SSHConfig(github_username="testuser", key_path=Path("/home/.ssh/id_ed25519")),
+        )
+        with patch.object(AppState, "state_path", return_value=state_file):
+            state.save()
+            loaded = AppState.load()
+        assert isinstance(loaded.config, SSHConfig)
+        assert loaded.config.key_path == Path("/home/.ssh/id_ed25519")
+
+    def test_state_roundtrip_with_gpg_config(self, tmp_path: Path) -> None:
+        state_file = tmp_path / "state.json"
+        state = AppState(
+            config=GPGConfig(github_username="testuser", fpr="ABCDEF1234567890"),
+        )
+        with patch.object(AppState, "state_path", return_value=state_file):
+            state.save()
+            loaded = AppState.load()
+        assert isinstance(loaded.config, GPGConfig)
+        assert loaded.config.fpr == "ABCDEF1234567890"
 
 
 class TestNewTypes:
