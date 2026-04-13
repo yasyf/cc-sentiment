@@ -52,7 +52,7 @@
 						const val = ctx.parsed.y ?? 0;
 						const total = sorted.reduce((s, d) => s + d.count, 0);
 						const pct = total > 0 ? ((val / total) * 100).toFixed(1) : '0';
-						return `${val} records (${pct}%)`;
+						return `${val} sessions (${pct}%)`;
 					}
 				}
 			}

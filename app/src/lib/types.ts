@@ -27,5 +27,7 @@ export interface DataResponse {
 	weekday: WeekdayPoint[];
 	distribution: DistributionPoint[];
 	total_records: number;
+	total_sessions: number;
+	total_contributors: number;
 	last_updated: string;
 }

@@ -107,6 +107,8 @@ class TestQueryAll:
         assert result.weekday == []
         assert result.distribution == []
         assert result.total_records == 0
+        assert result.total_sessions == 0
+        assert result.total_contributors == 0
         assert result.last_updated is not None
 
     @pytest.mark.asyncio
@@ -121,6 +123,8 @@ class TestQueryAll:
         result = await db.query_all(days=7)
 
         assert result.total_records == 2
+        assert result.total_sessions == 1
+        assert result.total_contributors == 1
         assert len(result.distribution) >= 1
         assert len(result.hourly) >= 1
         assert len(result.weekday) >= 1

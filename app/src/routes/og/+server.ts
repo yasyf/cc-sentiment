@@ -58,7 +58,7 @@ export const GET: RequestHandler = async ({ fetch }) => {
 								type: 'span',
 								props: {
 									style: { fontSize: '18px', color: '#a1a1aa' },
-									children: `${data.total_records.toLocaleString()} records`,
+									children: `${data.total_sessions.toLocaleString()} sessions from ${data.total_contributors} contributors`,
 								},
 							},
 						],
@@ -76,7 +76,7 @@ export const GET: RequestHandler = async ({ fetch }) => {
 									children: [
 										{
 											type: 'span',
-											props: { style: { fontSize: '14px', color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.05em' }, children: 'Overall Score' },
+											props: { style: { fontSize: '14px', color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.05em' }, children: 'Sentiment' },
 										},
 										{
 											type: 'span',
@@ -96,7 +96,7 @@ export const GET: RequestHandler = async ({ fetch }) => {
 									children: [
 										{
 											type: 'span',
-											props: { style: { fontSize: '14px', color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.05em' }, children: 'Most Frustrated' },
+											props: { style: { fontSize: '14px', color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.05em' }, children: 'Worst Hour' },
 										},
 										{
 											type: 'span',
@@ -116,7 +116,7 @@ export const GET: RequestHandler = async ({ fetch }) => {
 					type: 'div',
 					props: {
 						style: { marginTop: '40px', fontSize: '16px', color: '#71717a', maxWidth: '600px' },
-						children: 'Crowdsourced sentiment analysis of Claude Code sessions. Does heavy usage correlate with worse developer experience?',
+						children: 'How frustrated are developers with Claude Code? Live sentiment from real sessions, scored on-device.',
 					},
 				},
 			],

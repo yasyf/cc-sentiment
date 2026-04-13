@@ -16,7 +16,7 @@
 		datasets: [
 			{
 				type: 'bar' as const,
-				label: 'Records',
+				label: 'Sessions',
 				data: sorted.map((d) => d.count),
 				backgroundColor: ACCENT_BAR,
 				hoverBackgroundColor: ACCENT_BAR_HOVER,

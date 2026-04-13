@@ -84,16 +84,16 @@ class SetupApp(App[None]):
 
     def compose_username_step(self) -> ComposeResult:
         with Vertical(id="step-username"):
-            yield Label("Step 1: GitHub Username", classes="step-title")
-            yield Label("We'll use your GitHub identity to sign uploads.", classes="status")
+            yield Label("Who are you?", classes="step-title")
+            yield Label("Your GitHub username is used to sign uploads so we can verify they're from you.", classes="status")
             yield Input(placeholder="GitHub username", id="username-input")
             yield Label("", id="username-status", classes="status")
             yield Button("Next", id="username-next", variant="primary")
 
     def compose_discovery_step(self) -> ComposeResult:
         with Vertical(id="step-discovery"):
-            yield Label("Step 2: Signing Key", classes="step-title")
-            yield Label("Scanning for SSH and GPG keys...", id="discovery-status", classes="status")
+            yield Label("Pick a signing key", classes="step-title")
+            yield Label("Looking for SSH and GPG keys on your machine...", id="discovery-status", classes="status")
             yield DataTable(id="key-table")
             yield RadioSet(id="key-select")
             yield Label("", id="no-keys-msg", classes="status")
@@ -101,29 +101,30 @@ class SetupApp(App[None]):
 
     def compose_remote_step(self) -> ComposeResult:
         with Vertical(id="step-remote"):
-            yield Label("Step 3: Verify Key on Remote", classes="step-title")
-            yield Label("Checking if your key is registered...", id="remote-status", classes="status")
+            yield Label("Verifying your key", classes="step-title")
+            yield Label("Checking that this key is linked to your GitHub account...", id="remote-status", classes="status")
             yield Static("", id="remote-checks")
             yield Button("Next", id="remote-next", variant="primary", disabled=True)
 
     def compose_upload_step(self) -> ComposeResult:
         with Vertical(id="step-upload"):
-            yield Label("Step 4: Register Key", classes="step-title")
-            yield Label("Your key isn't registered on any keyserver yet.", id="upload-status", classes="status")
+            yield Label("Register your key", classes="step-title")
+            yield Label("We couldn't find this key on GitHub yet. We can add it for you.", id="upload-status", classes="status")
             yield RadioSet(id="upload-options")
             yield Label("", id="upload-key-text", classes="key-text")
             yield Label("", id="upload-result", classes="status")
-            yield Button("Upload", id="upload-go", variant="primary", disabled=True)
-            yield Button("Skip (manual setup)", id="upload-skip", variant="default")
+            yield Button("Upload key", id="upload-go", variant="primary", disabled=True)
+            yield Button("I'll do it manually", id="upload-skip", variant="default")
 
     def compose_done_step(self) -> ComposeResult:
         with Vertical(id="step-done"):
-            yield Label("Setup Complete", classes="step-title")
+            yield Label("You're all set", classes="step-title")
             yield Label("", id="done-summary", classes="success")
-            yield Button("Done", id="done-btn", variant="primary")
+            yield Button("Start scanning", id="done-btn", variant="primary")
 
     def on_mount(self) -> None:
-        self.title = "cc-sentiment setup"
+        self.title = "cc-sentiment"
+        self.sub_title = "setup"
         self.detect_username()
         table = self.query_one("#key-table", DataTable)
         table.add_columns("Type", "Fingerprint", "Email")
@@ -197,18 +198,18 @@ class SetupApp(App[None]):
         if not all_keys:
             status.update("No signing keys found.")
             if KeyDiscovery.has_tool("gpg"):
-                no_keys.update("We can generate a GPG key for you. Press Next to continue.")
+                no_keys.update("No worries -- we'll generate a GPG key for you automatically. Press Next.")
                 self.query_one("#discovery-next", Button).disabled = False
                 self._generate_gpg = True
             else:
-                no_keys.update("[red]No keys found and gpg is not installed. Install gpg or add an SSH key.[/]")
+                no_keys.update("[red]No signing keys found. Install gpg (brew install gnupg) or create an SSH key first.[/]")
                 self._generate_gpg = False
             return
 
         self._generate_gpg = False
         table.display = True
         radio.display = True
-        status.update(f"Found {len(all_keys)} signing key(s):")
+        status.update(f"Found {len(all_keys)} key{'s' if len(all_keys) != 1 else ''} on your machine:")
 
         radio_children = []
         for key in all_keys:
@@ -328,11 +329,11 @@ Expire-Date: 0
         self.call_from_thread(checks_widget.update, "\n".join(results))
 
         if found:
-            self.call_from_thread(status.update, "[green]Key found on remote. Ready to go.[/]")
+            self.call_from_thread(status.update, "[green]Key is registered on GitHub. You're good to go.[/]")
             self.call_from_thread(self._enable_remote_next)
             self._key_on_remote = True
         else:
-            self.call_from_thread(status.update, "Key not found on any keyserver.")
+            self.call_from_thread(status.update, "This key isn't on GitHub yet. We can fix that in the next step.")
             self.call_from_thread(self._enable_remote_next)
             self._key_on_remote = False
 
@@ -484,9 +485,9 @@ Expire-Date: 0
         summary = self.query_one("#done-summary", Label)
         match key:
             case SSHKeyInfo(path=p):
-                summary.update(f"Configured: {self.username} with SSH key {p}")
+                summary.update(f"Signed in as [b]{self.username}[/] using SSH key [dim]{p.name}[/]")
             case GPGKeyInfo(fpr=f):
-                summary.update(f"Configured: {self.username} with GPG key {f[-8:]}")
+                summary.update(f"Signed in as [b]{self.username}[/] using GPG key [dim]{f[-8:]}[/]")
 
         self.query_one(ContentSwitcher).current = "step-done"
 

@@ -133,6 +133,14 @@ TOTAL_COUNT_SQL = """
 SELECT COUNT(*)::int AS total FROM sentiment
 """
 
+TOTAL_SESSIONS_SQL = """
+SELECT COUNT(DISTINCT conversation_id)::int FROM sentiment
+"""
+
+TOTAL_CONTRIBUTORS_SQL = """
+SELECT COUNT(DISTINCT github_username)::int FROM sentiment
+"""
+
 LAST_UPDATED_SQL = """
 SELECT MAX(ingested_at) FROM sentiment
 """
@@ -192,6 +200,8 @@ class Database:
                 for row in await (await conn.execute(DISTRIBUTION_SQL)).fetchall()
             ]
             total = (await (await conn.execute(TOTAL_COUNT_SQL)).fetchone())[0]
+            total_sessions = (await (await conn.execute(TOTAL_SESSIONS_SQL)).fetchone())[0]
+            total_contributors = (await (await conn.execute(TOTAL_CONTRIBUTORS_SQL)).fetchone())[0]
             last_updated = (await (await conn.execute(LAST_UPDATED_SQL)).fetchone())[0]
 
         return DataResponse(
@@ -200,5 +210,7 @@ class Database:
             weekday=weekday,
             distribution=distribution,
             total_records=total,
+            total_sessions=total_sessions,
+            total_contributors=total_contributors,
             last_updated=last_updated or datetime.now(timezone.utc),
         )

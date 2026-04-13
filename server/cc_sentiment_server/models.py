@@ -98,4 +98,6 @@ class DataResponse(BaseModel):
     weekday: list[WeekdayPoint]
     distribution: list[DistributionPoint]
     total_records: int
+    total_sessions: int
+    total_contributors: int
     last_updated: datetime

@@ -55,10 +55,10 @@
 </script>
 
 <svelte:head>
-	<title>cc-sentiment -- Claude Code sentiment trends</title>
-	<meta name="description" content="Crowdsourced sentiment analysis of Claude Code sessions. {data.total_records} records from real developers. See how frustration correlates with peak usage hours." />
+	<title>cc-sentiment</title>
+	<meta name="description" content="How frustrated are developers with Claude Code? Live sentiment data from {data.total_sessions.toLocaleString()} sessions scored locally with on-device ML." />
 	<meta property="og:title" content="cc-sentiment" />
-	<meta property="og:description" content="Overall score: {overallAvg.toFixed(1)}/5 across {data.total_records.toLocaleString()} records. Peak frustration at {worstSentimentHour?.label ?? 'N/A'}." />
+	<meta property="og:description" content="Overall: {overallAvg.toFixed(1)}/5 across {data.total_sessions.toLocaleString()} sessions. Worst hour: {worstSentimentHour?.label ?? 'N/A'}." />
 	<meta property="og:type" content="website" />
 	<meta property="og:image" content="/og" />
 	<meta name="twitter:card" content="summary_large_image" />
@@ -71,7 +71,7 @@
 				<h1 class="text-lg font-semibold tracking-tight text-text">cc-sentiment</h1>
 			</div>
 			<nav class="flex items-center gap-5 text-sm text-text-muted">
-				<a href="/docs" class="hover:text-text transition-colors">Get Started</a>
+				<a href="/docs" class="hover:text-text transition-colors">Contribute</a>
 				<a href="https://github.com/yasyf/cc-sentiment" class="hover:text-text transition-colors" target="_blank" rel="noopener">GitHub</a>
 			</nav>
 		</div>
@@ -80,12 +80,12 @@
 	<div class="mx-auto max-w-5xl px-6 py-10">
 		<div class="mb-10">
 			<h2 class="text-3xl font-semibold tracking-tight text-text">
-				Does heavy usage correlate with worse sentiment?
+				How frustrated are you with Claude Code?
 			</h2>
 			<p class="mt-2 max-w-2xl text-text-muted">
-				Crowdsourced from real Claude Code sessions. Transcripts are scored locally, only
-				numeric results are uploaded. Inspired by
-				<a href="https://github.com/anthropics/claude-code/issues/42796" class="text-accent hover:text-accent-hover transition-colors">claude-code#42796</a>.
+				After <a href="https://github.com/anthropics/claude-code/issues/42796" class="text-accent hover:text-accent-hover transition-colors">#42796</a>
+				documented a measurable quality regression, we wanted to track it. This dashboard
+				aggregates sentiment scores from real sessions, scored on-device. Your transcripts never leave your machine.
 			</p>
 		</div>
 
@@ -93,42 +93,38 @@
 			<div class="flex h-64 flex-col items-center justify-center rounded-lg border border-border">
 				<p class="text-text-muted">No data yet</p>
 				<p class="mt-2 text-sm text-text-dim">
-					Run <code class="rounded bg-bg-code px-1.5 py-0.5 font-mono text-xs">cc-sentiment scan --upload</code> to contribute
+					<a href="/docs" class="text-accent hover:text-accent-hover">Contribute your data</a> to get started
 				</p>
 			</div>
 		{:else}
 			<div class="mb-10 grid grid-cols-2 gap-4 sm:grid-cols-4">
 				<div class="rounded-lg border border-border bg-bg-card p-4">
-					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Overall</p>
-					<p class="mt-2 text-3xl font-semibold tabular-nums {sentimentLabel.color}">{overallAvg.toFixed(1)}</p>
-					<p class="mt-0.5 text-xs text-text-muted">{sentimentLabel.text} &middot; {data.total_records.toLocaleString()} records</p>
+					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Sentiment</p>
+					<p class="mt-2 text-3xl font-semibold tabular-nums {sentimentLabel.color}">{overallAvg.toFixed(1)}<span class="text-base text-text-dim">/5</span></p>
+					<p class="mt-0.5 text-xs text-text-muted">{sentimentLabel.text}</p>
 				</div>
 
 				<div class="rounded-lg border border-border bg-bg-card p-4">
-					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Peak Usage</p>
-					{#if peakUsageHour}
-						<p class="mt-2 text-3xl font-semibold tabular-nums text-text">{peakUsageHour.label}</p>
-						<p class="mt-0.5 text-xs text-text-muted">{peakUsageHour.count} records &middot; {peakUsageHour.score.toFixed(1)} avg</p>
-					{:else}
-						<p class="mt-2 text-3xl font-semibold text-text-dim">--</p>
-					{/if}
+					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Sessions scored</p>
+					<p class="mt-2 text-3xl font-semibold tabular-nums text-text">{data.total_sessions.toLocaleString()}</p>
+					<p class="mt-0.5 text-xs text-text-muted">{data.total_contributors} contributor{data.total_contributors === 1 ? '' : 's'}</p>
 				</div>
 
 				<div class="rounded-lg border border-border bg-bg-card p-4">
-					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Most Frustrated</p>
+					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Worst hour</p>
 					{#if worstSentimentHour}
 						<p class="mt-2 text-3xl font-semibold tabular-nums text-sentiment-1">{worstSentimentHour.label}</p>
-						<p class="mt-0.5 text-xs text-text-muted">{worstSentimentHour.score.toFixed(2)} avg &middot; {worstSentimentHour.count} records</p>
+						<p class="mt-0.5 text-xs text-text-muted">{worstSentimentHour.score.toFixed(2)} avg</p>
 					{:else}
 						<p class="mt-2 text-3xl font-semibold text-text-dim">--</p>
 					{/if}
 				</div>
 
 				<div class="rounded-lg border border-border bg-bg-card p-4">
-					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Busiest Day</p>
+					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Busiest day</p>
 					{#if busiestDay}
 						<p class="mt-2 text-3xl font-semibold tabular-nums text-text">{busiestDay.label}</p>
-						<p class="mt-0.5 text-xs text-text-muted">{busiestDay.count} records &middot; {busiestDay.score.toFixed(1)} avg</p>
+						<p class="mt-0.5 text-xs text-text-muted">{busiestDay.count} sessions</p>
 					{:else}
 						<p class="mt-2 text-3xl font-semibold text-text-dim">--</p>
 					{/if}
@@ -137,15 +133,14 @@
 
 			<div class="space-y-8">
 				<section>
-					<h3 class="mb-1 text-sm font-medium text-text-secondary">Sentiment Over Time</h3>
+					<h3 class="mb-1 text-sm font-medium text-text-secondary">Sentiment over time</h3>
 					<div class="rounded-lg border border-border bg-bg-card p-5">
 						<SentimentTimeline data={data.timeline} />
 					</div>
 				</section>
 
 				<section>
-					<h3 class="mb-0.5 text-sm font-medium text-text-secondary">Usage Volume vs Sentiment by Hour</h3>
-					<p class="mb-2 text-xs text-text-dim">Do the busiest hours also produce the worst scores?</p>
+					<h3 class="mb-1 text-sm font-medium text-text-secondary">By hour of day</h3>
 					<div class="rounded-lg border border-border bg-bg-card p-5">
 						<HourlyHeatmap data={data.hourly} />
 					</div>
@@ -153,14 +148,14 @@
 
 				<div class="grid grid-cols-1 gap-8 lg:grid-cols-2">
 					<section>
-						<h3 class="mb-1 text-sm font-medium text-text-secondary">Score Distribution</h3>
+						<h3 class="mb-1 text-sm font-medium text-text-secondary">Score distribution</h3>
 						<div class="rounded-lg border border-border bg-bg-card p-5">
 							<DistributionHistogram data={data.distribution} />
 						</div>
 					</section>
 
 					<section>
-						<h3 class="mb-1 text-sm font-medium text-text-secondary">Volume & Sentiment by Weekday</h3>
+						<h3 class="mb-1 text-sm font-medium text-text-secondary">By weekday</h3>
 						<div class="rounded-lg border border-border bg-bg-card p-5">
 							<WeekdayBar data={data.weekday} />
 						</div>
@@ -171,8 +166,9 @@
 	</div>
 
 	<footer class="border-t border-border">
-		<div class="mx-auto max-w-5xl px-6 py-6 text-center text-xs text-text-dim">
-			Updated {lastUpdated}
+		<div class="mx-auto flex max-w-5xl items-center justify-between px-6 py-6 text-xs text-text-dim">
+			<span>Updated {lastUpdated}</span>
+			<a href="/docs" class="text-accent hover:text-accent-hover transition-colors">Contribute your data</a>
 		</div>
 	</footer>
 </div>

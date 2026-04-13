@@ -10,6 +10,8 @@ const DataResponseSchema = z.object({
 	weekday: z.array(z.object({ dow: z.number(), avg_score: z.number(), count: z.number() })),
 	distribution: z.array(z.object({ score: z.number(), count: z.number() })),
 	total_records: z.number(),
+	total_sessions: z.number(),
+	total_contributors: z.number(),
 	last_updated: z.string()
 });
 

@@ -18,12 +18,13 @@
 			borderColor: ACCENT,
 			backgroundColor: ACCENT_LIGHT,
 			fill: true,
-			tension: 0.35,
+			tension: 0.2,
 			pointRadius: 2,
 			pointHoverRadius: 5,
 			pointBackgroundColor: ACCENT,
 			pointBorderColor: 'transparent',
-			borderWidth: 1.5
+			borderWidth: 1.5,
+			cubicInterpolationMode: 'monotone' as const
 		}]
 	});
 
@@ -52,7 +53,7 @@
 				...TOOLTIP,
 				callbacks: {
 					label: (ctx: { parsed: { y: number | null }; dataIndex: number }) =>
-						`${(ctx.parsed.y ?? 0).toFixed(2)} avg  ·  ${sorted[ctx.dataIndex]?.count ?? 0} records`
+						`${(ctx.parsed.y ?? 0).toFixed(2)} avg  ·  ${sorted[ctx.dataIndex]?.count ?? 0} sessions`
 				}
 			}
 		}

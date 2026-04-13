@@ -200,7 +200,7 @@ class TestData:
 
         assert response.status_code == 200
         body = response.json()
-        for key in ("timeline", "hourly", "weekday", "distribution", "total_records", "last_updated"):
+        for key in ("timeline", "hourly", "weekday", "distribution", "total_records", "total_sessions", "total_contributors", "last_updated"):
             assert key in body
 
     @pytest.mark.asyncio
