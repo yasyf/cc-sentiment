@@ -3,8 +3,9 @@ from __future__ import annotations
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import anyio
 import pytest
 
 from cc_sentiment.models import (
@@ -69,16 +70,27 @@ class TestProcessTranscript:
         empty_file = tmp_path / "empty.jsonl"
         empty_file.write_text("")
         classifier = MagicMock()
-        result = Pipeline.process_transcript(empty_file, classifier)
+        classifier.score = AsyncMock(return_value=[])
+        classifier.close = AsyncMock()
+
+        async def run() -> list[SentimentRecord]:
+            return await Pipeline.process_transcript(empty_file, classifier)
+
+        result = anyio.run(run)
         assert result == []
-        classifier.score_buckets.assert_not_called()
+        classifier.score.assert_not_called()
 
     def test_correct_record_count(self) -> None:
         classifier = MagicMock()
-        classifier.score_buckets.return_value = [SentimentScore(3)] * 5
-        result = Pipeline.process_transcript(FIXTURE_PATH, classifier)
+        classifier.score = AsyncMock(return_value=[SentimentScore(3)] * 5)
+        classifier.close = AsyncMock()
+
+        async def run() -> list[SentimentRecord]:
+            return await Pipeline.process_transcript(FIXTURE_PATH, classifier)
+
+        result = anyio.run(run)
         assert len(result) == 5
-        classifier.score_buckets.assert_called_once()
+        classifier.score.assert_called_once()
 
 
 class TestPipelineStateUpdate:
@@ -86,12 +98,17 @@ class TestPipelineStateUpdate:
         state = AppState()
         record = make_record()
 
-        mock_sentiment = MagicMock()
-        with patch.dict(sys.modules, {"cc_sentiment.sentiment": mock_sentiment}), \
+        mock_classifier = MagicMock()
+        mock_classifier.score = AsyncMock(return_value=[])
+        mock_classifier.close = AsyncMock()
+
+        mock_sentiment_mod = MagicMock()
+        mock_sentiment_mod.SentimentClassifier.return_value = mock_classifier
+
+        with patch.dict(sys.modules, {"cc_sentiment.sentiment": mock_sentiment_mod}), \
              patch.object(Pipeline, "discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 100.0)]), \
-             patch.object(Pipeline, "process_transcript", return_value=[record]), \
+             patch.object(Pipeline, "process_transcript", new_callable=AsyncMock, return_value=[record]), \
              patch.object(AppState, "save"):
-            import anyio
 
             async def do_run() -> list[SentimentRecord]:
                 return await Pipeline.run(state, engine="mlx")

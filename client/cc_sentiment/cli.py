@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import platform
 import subprocess
 import time
 from collections import Counter
@@ -265,26 +264,12 @@ def scan(do_upload: bool, engine: str, model_repo: str | None, limit: int | None
 
     uploader = Uploader() if do_upload else None
     stats = LiveStats(len(new_transcripts))
-    upload_queue: list[SentimentRecord] = []
 
     async def do_scan_live() -> list[SentimentRecord]:
         def on_records(records: list[SentimentRecord]) -> None:
             stats.records.extend(records)
             stats.scored += 1
-            if uploader:
-                upload_queue.extend(records)
             live.update(stats.render())
-
-            if uploader and len(upload_queue) >= 50:
-                batch = list(upload_queue)
-                upload_queue.clear()
-                try:
-                    anyio.from_thread.run(uploader.upload, batch, state)
-                    stats.uploaded += len(batch)
-                except Exception as e:
-                    console.print(f"[yellow]Upload failed (will retry): {e}[/]")
-                    upload_queue.extend(batch)
-                live.update(stats.render())
 
         return await Pipeline.run(
             state, engine, model_repo=model_repo,
@@ -294,14 +279,12 @@ def scan(do_upload: bool, engine: str, model_repo: str | None, limit: int | None
     with Live(stats.render(), console=console, refresh_per_second=4) as live:
         all_records = anyio.run(do_scan_live)
 
-    if uploader and upload_queue:
-        remaining = list(upload_queue)
-        upload_queue.clear()
+    if uploader and all_records:
         try:
-            anyio.run(uploader.upload, remaining, state)
-            stats.uploaded += len(remaining)
+            anyio.run(uploader.upload, all_records, state)
+            stats.uploaded += len(all_records)
         except Exception as e:
-            console.print(f"[yellow]Final upload failed: {e}[/]")
+            console.print(f"[yellow]Upload failed: {e}[/]")
 
     if not all_records:
         console.print("No buckets scored.")
@@ -318,14 +301,24 @@ def scan(do_upload: bool, engine: str, model_repo: str | None, limit: int | None
 @click.option("--runs", default=1, help="Timed runs per engine")
 @click.option("--engines", default="mlx", help="Comma-separated engines")
 @click.option("--model", "model_repo", default=None)
-def benchmark(transcripts: int, runs: int, engines: str, model_repo: str | None) -> None:
-    from cc_sentiment.benchmark import run_benchmark
+@click.option("--scaling", is_flag=True, help="Run scaling test across bucket sizes")
+@click.option("--accuracy", is_flag=True, help="Run accuracy test against labeled dataset")
+def benchmark(
+    transcripts: int, runs: int, engines: str,
+    model_repo: str | None, scaling: bool, accuracy: bool,
+) -> None:
+    from cc_sentiment.benchmark import run_accuracy_test, run_benchmark
+
+    if accuracy:
+        run_accuracy_test(engines.split(",")[0].strip(), model_repo)
+        return
 
     run_benchmark(
         max_transcripts=transcripts,
         runs=runs,
         engines=[e.strip() for e in engines.split(",")],
         model_repo=model_repo,
+        scaling_test=scaling,
     )
 
 

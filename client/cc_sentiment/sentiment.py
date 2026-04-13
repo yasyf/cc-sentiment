@@ -3,7 +3,9 @@ from __future__ import annotations
 import platform
 import sys
 from pathlib import Path
-from typing import Callable
+from collections.abc import Callable
+
+from anyio import to_thread
 
 from cc_sentiment.engines import (
     SYSTEM_PROMPT,
@@ -68,7 +70,6 @@ class SentimentClassifier:
 
         cache = make_prompt_cache(self.model)
 
-        # Process system prompt through model by generating 1 dummy token
         dummy_user = self.tokenizer.apply_chat_template(
             [
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -92,8 +93,11 @@ class SentimentClassifier:
         from mlx_lm.models.cache import load_prompt_cache
         return [load_prompt_cache(str(PROMPT_CACHE_FILE)) for _ in range(n)]
 
-    def score_buckets(
-        self, buckets: list[ConversationBucket], batch_size: int = 8,
+    def _score_sync(
+        self,
+        buckets: list[ConversationBucket],
+        batch_size: int = 8,
+        on_progress: Callable[[int], None] | None = None,
     ) -> list[SentimentScore]:
         from mlx_lm import batch_generate
 
@@ -131,5 +135,23 @@ class SentimentClassifier:
             )
             for (idx, _), text in zip(chunk, result.texts):
                 scores[idx] = extract_score(text)
+            if on_progress:
+                on_progress(len(chunk))
 
         return scores
+
+    async def score(
+        self,
+        buckets: list[ConversationBucket],
+        on_progress: Callable[[int], None] | None = None,
+    ) -> list[SentimentScore]:
+        return await to_thread.run_sync(
+            lambda: self._score_sync(buckets, on_progress=on_progress)
+        )
+
+    def peak_memory_gb(self) -> float:
+        import resource
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 ** 3)
+
+    async def close(self) -> None:
+        pass

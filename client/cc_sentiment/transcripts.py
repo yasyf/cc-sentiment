@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import json
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
+
+import orjson
 
 from cc_sentiment.models import (
     BucketIndex,
@@ -32,7 +33,7 @@ class TranscriptDiscovery:
 class TranscriptParser:
     @staticmethod
     def parse_line(line: str) -> TranscriptMessage | None:
-        data = json.loads(line)
+        data = orjson.loads(line)
 
         match data["type"]:
             case "queue-operation":

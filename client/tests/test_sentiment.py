@@ -94,7 +94,7 @@ class TestConversationFormatting:
 
 
 class TestClassifierIntegration:
-    def test_score_buckets(self) -> None:
+    def test_score_sync(self) -> None:
         from cc_sentiment.sentiment import SentimentClassifier
 
         mock_model = MagicMock()
@@ -122,7 +122,7 @@ class TestClassifierIntegration:
             classifier._load_prompt_caches = MagicMock(return_value=[None])
 
             bucket = make_bucket([("user", "this works perfectly!")])
-            scores = classifier.score_buckets([bucket])
+            scores = classifier._score_sync([bucket])
 
         assert scores == [SentimentScore(4)]
         mock_mlx_lm.batch_generate.assert_called_once()

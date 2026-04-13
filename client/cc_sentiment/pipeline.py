@@ -3,8 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-import anyio
-
 from cc_sentiment.engines import InferenceEngine
 from cc_sentiment.models import (
     AppState,
@@ -34,7 +32,7 @@ class Pipeline:
         ]
 
     @staticmethod
-    def process_transcript(
+    async def process_transcript(
         path: Path,
         classifier: InferenceEngine,
     ) -> list[SentimentRecord]:
@@ -43,7 +41,7 @@ class Pipeline:
             return []
 
         buckets = ConversationBucketer.bucket_messages(messages)
-        scores = classifier.score_buckets(buckets)
+        scores = await classifier.score(buckets)
 
         return [
             SentimentRecord(
@@ -90,6 +88,7 @@ class Pipeline:
             case "omlx":
                 from cc_sentiment.engines import OMLXEngine
                 classifier = OMLXEngine(model_repo=model_repo)
+                await classifier.warm_system_prompt()
             case _:
                 raise ValueError(f"Unknown engine: {engine}")
 
@@ -99,14 +98,15 @@ class Pipeline:
 
         all_records: list[SentimentRecord] = []
 
-        for path, mtime in transcripts:
-            records = await anyio.to_thread.run_sync(
-                lambda p=path: cls.process_transcript(p, classifier)
-            )
-            all_records.extend(records)
-            cls.save_records(state, path, mtime, records)
+        try:
+            for path, mtime in transcripts:
+                records = await cls.process_transcript(path, classifier)
+                all_records.extend(records)
+                cls.save_records(state, path, mtime, records)
 
-            if on_records and records:
-                on_records(records)
+                if on_records and records:
+                    on_records(records)
+        finally:
+            await classifier.close()
 
         return all_records
