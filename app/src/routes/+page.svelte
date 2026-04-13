@@ -63,6 +63,8 @@
 				<p class="mt-1 text-sm text-text-dim">AI coding assistant sentiment analysis</p>
 			</div>
 			<div class="flex items-center gap-4 text-sm text-text-muted">
+				<a href="/docs" class="text-accent hover:text-accent-hover transition-colors">API Docs</a>
+				<span class="text-text-dim">&middot;</span>
 				<span>{data.total_records.toLocaleString()} records</span>
 				<span class="text-text-dim">&middot;</span>
 				<span>Updated {lastUpdated}</span>
