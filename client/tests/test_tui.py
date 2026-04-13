@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from textual.widgets import Button, ContentSwitcher, DataTable, Input, Label, RadioSet
+from textual.widgets import Button, ContentSwitcher, DataTable, Input, RadioSet
 
-from cc_sentiment.models import AppState, BucketIndex, ContributorId, GPGConfig, ProcessedSession, SentimentRecord, SentimentScore, SessionId, SSHConfig
+from cc_sentiment.models import AppState, ContributorId, GPGConfig, SentimentRecord, SSHConfig
 from cc_sentiment.signing import GPGKeyInfo, SSHKeyInfo
 from cc_sentiment.tui import ScanApp, SetupApp
+from tests.helpers import make_record
 
 
 async def test_mounts_all_steps():
@@ -243,12 +243,7 @@ async def test_skip_upload_saves_config(tmp_path: Path):
 
 
 def _make_record(score: int = 3, bucket_index: int = 0) -> SentimentRecord:
-    return SentimentRecord(
-        time=datetime.now(timezone.utc),
-        conversation_id=SessionId("sess-1"),
-        bucket_index=BucketIndex(bucket_index),
-        sentiment_score=SentimentScore(score),
-    )
+    return make_record(session_id="sess-1", score=score, bucket_index=bucket_index)
 
 
 async def test_scan_app_runs_pipeline_and_uploads(tmp_path: Path):

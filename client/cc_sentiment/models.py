@@ -25,6 +25,50 @@ class TranscriptMessage(BaseModel, frozen=True):
     timestamp: datetime
     session_id: SessionId
     uuid: str
+    tool_names: tuple[str, ...]
+    thinking_chars: int
+    cc_version: str
+
+
+class BucketMetrics(BaseModel, frozen=True):
+    tool_counts: dict[str, int]
+    read_edit_ratio: float | None
+    turn_count: int
+    thinking_present: bool
+    thinking_chars: int
+    cc_version: str
+
+    @staticmethod
+    def from_messages(messages: tuple[TranscriptMessage, ...]) -> BucketMetrics:
+        tool_counts: dict[str, int] = {}
+        total_thinking_chars = 0
+        thinking_present = False
+        turn_count = 0
+        cc_version = ""
+
+        for msg in messages:
+            if msg.role == "user":
+                turn_count += 1
+                if msg.cc_version:
+                    cc_version = msg.cc_version
+            for name in msg.tool_names:
+                tool_counts[name] = tool_counts.get(name, 0) + 1
+            if msg.thinking_chars > 0:
+                thinking_present = True
+                total_thinking_chars += msg.thinking_chars
+
+        read_ops = sum(tool_counts.get(t, 0) for t in ("Read", "Grep", "Glob"))
+        write_ops = sum(tool_counts.get(t, 0) for t in ("Edit", "Write"))
+        read_edit_ratio = read_ops / write_ops if write_ops > 0 else None
+
+        return BucketMetrics(
+            tool_counts=tool_counts,
+            read_edit_ratio=read_edit_ratio,
+            turn_count=turn_count,
+            thinking_present=thinking_present,
+            thinking_chars=total_thinking_chars,
+            cc_version=cc_version,
+        )
 
 
 class ConversationBucket(BaseModel, frozen=True):
@@ -32,6 +76,10 @@ class ConversationBucket(BaseModel, frozen=True):
     bucket_index: BucketIndex
     bucket_start: datetime
     messages: tuple[TranscriptMessage, ...]
+
+    @property
+    def metrics(self) -> BucketMetrics:
+        return BucketMetrics.from_messages(self.messages)
 
 
 class SentimentRecord(BaseModel, frozen=True):
@@ -44,6 +92,11 @@ class SentimentRecord(BaseModel, frozen=True):
     prompt_version: PromptVersion = PROMPT_VERSION
     inference_model: str = Field(default=DEFAULT_MODEL, validation_alias="model_id", serialization_alias="model_id")
     client_version: str = CLIENT_VERSION
+    read_edit_ratio: float | None
+    turn_count: int
+    thinking_present: bool
+    thinking_chars: int
+    cc_version: str
 
 
 class UploadPayload(BaseModel, frozen=True):

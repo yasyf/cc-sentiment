@@ -2,6 +2,7 @@ export interface TimelinePoint {
 	time: string;
 	avg_score: number;
 	count: number;
+	avg_read_edit_ratio: number | null;
 }
 
 export interface HourlyPoint {
@@ -21,6 +22,22 @@ export interface DistributionPoint {
 	count: number;
 }
 
+export interface TrendComparison {
+	sentiment_current: number;
+	sentiment_previous: number;
+	sessions_current: number;
+	sessions_previous: number;
+	read_edit_current: number | null;
+	read_edit_previous: number | null;
+}
+
+export interface ModelBreakdown {
+	model_id: string;
+	avg_score: number;
+	count: number;
+	avg_read_edit_ratio: number | null;
+}
+
 export interface DataResponse {
 	timeline: TimelinePoint[];
 	hourly: HourlyPoint[];
@@ -30,4 +47,7 @@ export interface DataResponse {
 	total_sessions: number;
 	total_contributors: number;
 	last_updated: string;
+	trend: TrendComparison;
+	model_breakdown: ModelBreakdown[];
+	avg_read_edit_ratio: number | null;
 }

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,19 +21,7 @@ from cc_sentiment.models import (
     SessionId,
     SSHConfig,
 )
-
-
-def make_record(
-    session_id: str = "session-1",
-    bucket_index: int = 0,
-    score: int = 4,
-) -> SentimentRecord:
-    return SentimentRecord(
-        time=datetime(2026, 4, 10, 7, 35, 0, tzinfo=timezone.utc),
-        conversation_id=SessionId(session_id),
-        bucket_index=BucketIndex(bucket_index),
-        sentiment_score=SentimentScore(score),
-    )
+from tests.helpers import make_record
 
 
 class TestAppState:

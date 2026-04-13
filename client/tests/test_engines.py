@@ -14,20 +14,25 @@ from cc_sentiment.models import (
 )
 
 
+def make_message(role: str, content: str) -> TranscriptMessage:
+    return TranscriptMessage(
+        role=role,
+        content=content,
+        timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        session_id=SessionId("test"),
+        uuid="u1",
+        tool_names=(),
+        thinking_chars=0,
+        cc_version="2.1.92" if role == "user" else "",
+    )
+
+
 def make_bucket(user_text: str) -> ConversationBucket:
     return ConversationBucket(
         session_id=SessionId("test"),
         bucket_index=BucketIndex(0),
         bucket_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        messages=(
-            TranscriptMessage(
-                role="user",
-                content=user_text,
-                timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
-                session_id=SessionId("test"),
-                uuid="u1",
-            ),
-        ),
+        messages=(make_message("user", user_text),),
     )
 
 
@@ -79,14 +84,6 @@ class TestFrustrationDetection:
             session_id=SessionId("test"),
             bucket_index=BucketIndex(0),
             bucket_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            messages=(
-                TranscriptMessage(
-                    role="assistant",
-                    content="wtf this sucks",
-                    timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
-                    session_id=SessionId("test"),
-                    uuid="u1",
-                ),
-            ),
+            messages=(make_message("assistant", "wtf this sucks"),),
         )
         assert not check_frustration(bucket)

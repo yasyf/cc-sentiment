@@ -15,6 +15,8 @@ __all__ = [
     "HourlyPoint",
     "WeekdayPoint",
     "DistributionPoint",
+    "TrendComparison",
+    "ModelBreakdown",
     "DataResponse",
 ]
 
@@ -29,6 +31,11 @@ class SentimentRecord(BaseModel):
     prompt_version: str = Field(min_length=1)
     model_id: str = Field(min_length=1)
     client_version: str = Field(min_length=1)
+    read_edit_ratio: float | None
+    turn_count: int = Field(ge=0)
+    thinking_present: bool
+    thinking_chars: int = Field(ge=0)
+    cc_version: str
 
 
 class UploadPayload(BaseModel):
@@ -68,6 +75,7 @@ class TimelinePoint(BaseModel):
     time: datetime
     avg_score: float
     count: int
+    avg_read_edit_ratio: float | None
 
 
 class HourlyPoint(BaseModel):
@@ -93,6 +101,26 @@ class DistributionPoint(BaseModel):
     count: int
 
 
+class TrendComparison(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    sentiment_current: float
+    sentiment_previous: float
+    sessions_current: int
+    sessions_previous: int
+    read_edit_current: float | None
+    read_edit_previous: float | None
+
+
+class ModelBreakdown(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    model_id: str
+    avg_score: float
+    count: int
+    avg_read_edit_ratio: float | None
+
+
 class DataResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -104,3 +132,6 @@ class DataResponse(BaseModel):
     total_sessions: int
     total_contributors: int
     last_updated: datetime
+    trend: TrendComparison
+    model_breakdown: list[ModelBreakdown]
+    avg_read_edit_ratio: float | None

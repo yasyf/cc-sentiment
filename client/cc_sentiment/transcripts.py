@@ -61,14 +61,28 @@ class TranscriptParser:
                     timestamp=datetime.fromisoformat(data["timestamp"]),
                     session_id=SessionId(data["sessionId"]),
                     uuid=data["uuid"],
+                    tool_names=(),
+                    thinking_chars=0,
+                    cc_version=data.get("version", ""),
                 )
             case "assistant":
+                blocks = data["message"]["content"]
                 text_blocks = [
                     block["text"]
-                    for block in data["message"]["content"]
+                    for block in blocks
                     if isinstance(block, dict) and block.get("type") == "text"
                 ]
-                if not text_blocks:
+                tool_names = tuple(
+                    block["name"]
+                    for block in blocks
+                    if isinstance(block, dict) and block.get("type") == "tool_use"
+                )
+                thinking_chars = sum(
+                    len(block.get("thinking", ""))
+                    for block in blocks
+                    if isinstance(block, dict) and block.get("type") == "thinking"
+                )
+                if not text_blocks and not tool_names:
                     return None
                 combined = " ".join(text_blocks)
                 truncated = (
@@ -82,6 +96,9 @@ class TranscriptParser:
                     timestamp=datetime.fromisoformat(data["timestamp"]),
                     session_id=SessionId(data["sessionId"]),
                     uuid=data["uuid"],
+                    tool_names=tool_names,
+                    thinking_chars=thinking_chars,
+                    cc_version="",
                 )
             case _:
                 return None

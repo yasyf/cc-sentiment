@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { Chart as ChartComponent } from 'svelte5-chartjs';
 	import { Chart, BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend, BarController, LineController } from 'chart.js';
+	import annotationPlugin from 'chartjs-plugin-annotation';
 	import type { ChartOptions } from 'chart.js';
 	import type { HourlyPoint } from '$lib/types.js';
 	import { ACCENT_BAR, ACCENT_BAR_HOVER, GRID, TICK, TOOLTIP, sentimentColor } from '$lib/chart-theme.js';
 
-	Chart.register(BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend, BarController, LineController);
+	Chart.register(BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend, BarController, LineController, annotationPlugin);
 
 	const { data: raw }: { data: HourlyPoint[] } = $props();
 
@@ -21,12 +22,51 @@
 		return `${h - 12}p`;
 	}
 
-	// Peak frustration windows from claude-code#42796 analysis (PST/PT)
-	// 5pm PT = worst hour, 7pm PT = second worst, late night = recovery
-	// We show these as UTC annotations: 5pm PT = 0:00 UTC, 7pm PT = 2:00 UTC
-	// But since our users could be any timezone, we mark approximate US work hours
-	// 9am-6pm PT = 16:00-01:00 UTC -- these are the "expected high usage" hours
-	const peakHoursPT = new Set([17, 19]); // 5pm, 7pm PT -- worst per the issue
+	const currentUTCHour = new Date().getUTCHours();
+
+	// Peak US hours: 9am-6pm PT = 16:00-01:00 UTC
+	// Worst window per #42796: 5-7pm PT = 0:00-2:00 UTC
+	const peakAnnotations = {
+		peakBroad: {
+			type: 'box' as const,
+			xMin: '4p',
+			xMax: '1a',
+			backgroundColor: 'rgba(220, 38, 38, 0.03)',
+			borderWidth: 0,
+			label: {
+				display: true,
+				content: 'Peak US hours (PT)',
+				position: { x: 'start' as const, y: 'start' as const },
+				font: { size: 9 },
+				color: '#a1a1aa',
+				padding: 2
+			}
+		},
+		peakWorst: {
+			type: 'box' as const,
+			xMin: '12a',
+			xMax: '2a',
+			backgroundColor: 'rgba(220, 38, 38, 0.06)',
+			borderWidth: 0,
+		},
+		currentHour: {
+			type: 'line' as const,
+			xMin: fmtHour(currentUTCHour),
+			xMax: fmtHour(currentUTCHour),
+			borderColor: 'rgba(99, 102, 241, 0.5)',
+			borderWidth: 2,
+			borderDash: [3, 3],
+			label: {
+				display: true,
+				content: 'now',
+				position: 'end' as const,
+				font: { size: 9, weight: 'bold' as const },
+				color: '#6366f1',
+				backgroundColor: 'rgba(255,255,255,0.9)',
+				padding: 2
+			}
+		}
+	};
 
 	const chartData = $derived({
 		labels: allHours.map((d) => fmtHour(d.hour)),
@@ -93,7 +133,8 @@
 				position: 'bottom' as const,
 				labels: { color: '#71717a', font: { size: 10 }, boxWidth: 10, padding: 20, usePointStyle: true }
 			},
-			tooltip: TOOLTIP
+			tooltip: TOOLTIP,
+			annotation: { annotations: peakAnnotations }
 		}
 	};
 </script>
@@ -101,6 +142,3 @@
 <div class="h-52 w-full">
 	<ChartComponent type="bar" data={chartData} options={chartOptions} />
 </div>
-<p class="mt-2 text-[11px] text-text-dim">
-	Times are UTC. Per <a href="https://github.com/anthropics/claude-code/issues/42796" class="text-accent hover:text-accent-hover">the analysis</a>, sentiment is worst at 5pm and 7pm PT (peak US load).
-</p>

@@ -59,6 +59,11 @@ class Pipeline:
                 conversation_id=bucket.session_id,
                 bucket_index=bucket.bucket_index,
                 sentiment_score=score,
+                read_edit_ratio=(m := bucket.metrics).read_edit_ratio,
+                turn_count=m.turn_count,
+                thinking_present=m.thinking_present,
+                thinking_chars=m.thinking_chars,
+                cc_version=m.cc_version,
             )
             for bucket, score in zip(new_buckets, scores)
         ]

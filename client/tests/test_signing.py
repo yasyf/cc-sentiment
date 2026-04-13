@@ -1,25 +1,16 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from cc_sentiment.models import (
-    BucketIndex,
-    SentimentRecord,
-    SentimentScore,
-    SessionId,
-)
 from cc_sentiment.signing import (
-    GPGKeyInfo,
     KeyDiscovery,
     PayloadSigner,
     SSHBackend,
     SSHKeyInfo,
 )
+from tests.helpers import make_record
 
 
 class TestKeyDiscovery:
@@ -97,47 +88,20 @@ class TestKeyDiscovery:
 
 class TestPayloadSigner:
     def test_canonical_json_deterministic(self) -> None:
-        records = [
-            SentimentRecord(
-                time=datetime(2026, 4, 10, 7, 35, 0, tzinfo=timezone.utc),
-                conversation_id=SessionId("session-1"),
-                bucket_index=BucketIndex(0),
-                sentiment_score=SentimentScore(4),
-            ),
-            SentimentRecord(
-                time=datetime(2026, 4, 10, 7, 40, 0, tzinfo=timezone.utc),
-                conversation_id=SessionId("session-1"),
-                bucket_index=BucketIndex(1),
-                sentiment_score=SentimentScore(3),
-            ),
-        ]
+        records = [make_record(), make_record(bucket_index=1, score=3)]
         result = PayloadSigner.canonical_json(records)
         parsed = json.loads(result)
         assert len(parsed) == 2
 
     def test_canonical_json_sorted_keys(self) -> None:
-        records = [
-            SentimentRecord(
-                time=datetime(2026, 4, 10, 7, 35, 0, tzinfo=timezone.utc),
-                conversation_id=SessionId("session-1"),
-                bucket_index=BucketIndex(0),
-                sentiment_score=SentimentScore(4),
-            ),
-        ]
+        records = [make_record()]
         result = PayloadSigner.canonical_json(records)
         parsed = json.loads(result)
         keys = list(parsed[0].keys())
         assert keys == sorted(keys)
 
     def test_canonical_json_no_whitespace(self) -> None:
-        records = [
-            SentimentRecord(
-                time=datetime(2026, 4, 10, 7, 35, 0, tzinfo=timezone.utc),
-                conversation_id=SessionId("session-1"),
-                bucket_index=BucketIndex(0),
-                sentiment_score=SentimentScore(4),
-            ),
-        ]
+        records = [make_record()]
         result = PayloadSigner.canonical_json(records)
         assert ": " not in result
         assert ", " not in result

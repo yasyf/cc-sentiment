@@ -10,23 +10,27 @@ export const GET: RequestHandler = async ({ fetch }) => {
 		? (data.distribution.reduce((s, d) => s + d.score * d.count, 0) / total).toFixed(1)
 		: '?';
 
-	const label =
-		Number(avg) < 1.5 ? 'Frustrated' :
-		Number(avg) < 2.5 ? 'Annoyed' :
-		Number(avg) < 3.5 ? 'Neutral' :
-		Number(avg) < 4.5 ? 'Satisfied' : 'Delighted';
+	const numAvg = Number(avg);
 
-	const significant = data.hourly.filter((h) => h.count >= 5);
-	const worst = significant.length > 0
-		? significant.toSorted((a, b) => a.avg_score - b.avg_score)[0]
-		: null;
+	const verdict =
+		numAvg < 2.0 ? 'Claude Code is in trouble.' :
+		numAvg < 2.5 ? 'Claude Code is struggling.' :
+		numAvg < 3.5 ? 'Claude Code is... okay.' :
+		numAvg < 4.0 ? 'Claude Code is doing well.' :
+		'Claude Code is thriving.';
 
-	function fmtHour(h: number): string {
-		if (h === 0) return '12 AM';
-		if (h < 12) return `${h} AM`;
-		if (h === 12) return '12 PM';
-		return `${h - 12} PM`;
-	}
+	const verdictColor =
+		numAvg < 2.0 ? '#dc2626' :
+		numAvg < 2.5 ? '#ea580c' :
+		numAvg < 3.5 ? '#ca8a04' :
+		numAvg < 4.0 ? '#16a34a' :
+		'#059669';
+
+	const sentimentDelta = data.trend.sentiment_current - data.trend.sentiment_previous;
+	const trendAbs = Math.abs(sentimentDelta);
+	const trendText = trendAbs < 0.1
+		? 'holding steady'
+		: sentimentDelta > 0 ? `up ${trendAbs.toFixed(1)} vs last week` : `down ${trendAbs.toFixed(1)} vs last week`;
 
 	const html = {
 		type: 'div',
@@ -50,15 +54,8 @@ export const GET: RequestHandler = async ({ fetch }) => {
 							{
 								type: 'span',
 								props: {
-									style: { fontSize: '32px', fontWeight: 600, color: '#18181b' },
+									style: { fontSize: '28px', fontWeight: 600, color: '#18181b' },
 									children: 'cc-sentiment',
-								},
-							},
-							{
-								type: 'span',
-								props: {
-									style: { fontSize: '18px', color: '#a1a1aa' },
-									children: `${data.total_sessions.toLocaleString()} sessions from ${data.total_contributors} contributors`,
 								},
 							},
 						],
@@ -67,7 +64,14 @@ export const GET: RequestHandler = async ({ fetch }) => {
 				{
 					type: 'div',
 					props: {
-						style: { display: 'flex', gap: '48px', marginTop: '40px' },
+						style: { marginTop: '32px', fontSize: '52px', fontWeight: 700, color: verdictColor, lineHeight: 1.1 },
+						children: verdict,
+					},
+				},
+				{
+					type: 'div',
+					props: {
+						style: { display: 'flex', gap: '40px', marginTop: '36px' },
 						children: [
 							{
 								type: 'div',
@@ -80,43 +84,43 @@ export const GET: RequestHandler = async ({ fetch }) => {
 										},
 										{
 											type: 'span',
-											props: { style: { fontSize: '64px', fontWeight: 600, color: '#6366f1', lineHeight: 1.1 }, children: avg },
+											props: { style: { fontSize: '56px', fontWeight: 600, color: verdictColor, lineHeight: 1.1 }, children: `${avg}/5` },
 										},
 										{
 											type: 'span',
-											props: { style: { fontSize: '16px', color: '#71717a' }, children: label },
+											props: { style: { fontSize: '16px', color: '#71717a' }, children: trendText },
 										},
 									],
 								},
 							},
-							...(worst ? [{
+							{
 								type: 'div',
 								props: {
 									style: { display: 'flex', flexDirection: 'column' },
 									children: [
 										{
 											type: 'span',
-											props: { style: { fontSize: '14px', color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.05em' }, children: 'Worst Hour' },
+											props: { style: { fontSize: '14px', color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.05em' }, children: 'This week' },
 										},
 										{
 											type: 'span',
-											props: { style: { fontSize: '64px', fontWeight: 600, color: '#dc2626', lineHeight: 1.1 }, children: fmtHour(worst.hour) },
+											props: { style: { fontSize: '56px', fontWeight: 600, color: '#18181b', lineHeight: 1.1 }, children: data.total_sessions.toLocaleString() },
 										},
 										{
 											type: 'span',
-											props: { style: { fontSize: '16px', color: '#71717a' }, children: `${worst.avg_score.toFixed(2)} avg` },
+											props: { style: { fontSize: '16px', color: '#71717a' }, children: `sessions from ${data.total_contributors} contributors` },
 										},
 									],
 								},
-							}] : []),
+							},
 						],
 					},
 				},
 				{
 					type: 'div',
 					props: {
-						style: { marginTop: '40px', fontSize: '16px', color: '#71717a', maxWidth: '600px' },
-						children: 'How frustrated are developers with Claude Code? Live sentiment from real sessions, scored on-device.',
+						style: { marginTop: '32px', fontSize: '16px', color: '#a1a1aa', maxWidth: '600px' },
+						children: 'Live sentiment from real Claude Code sessions, scored on-device.',
 					},
 				},
 			],

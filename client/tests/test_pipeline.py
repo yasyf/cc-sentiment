@@ -1,39 +1,24 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import anyio
-import pytest
 
 from cc_sentiment.models import (
     AppState,
     BucketIndex,
     BucketKey,
     ProcessedFile,
-    ProcessedSession,
     SentimentRecord,
     SentimentScore,
     SessionId,
 )
 from cc_sentiment.pipeline import Pipeline
+from tests.helpers import make_record
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "sample_transcript.jsonl"
-
-
-def make_record(
-    session_id: str = "session-1",
-    bucket_index: int = 0,
-    score: int = 4,
-) -> SentimentRecord:
-    return SentimentRecord(
-        time=datetime(2026, 4, 10, 7, 35, 0, tzinfo=timezone.utc),
-        conversation_id=SessionId(session_id),
-        bucket_index=BucketIndex(bucket_index),
-        sentiment_score=SentimentScore(score),
-    )
 
 
 class TestDiscoverNewTranscripts:
