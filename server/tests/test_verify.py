@@ -1,159 +1,183 @@
 from __future__ import annotations
 
 import gc
-import json
 import warnings
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from models import SentimentRecord
-from verify import Verifier
+from cc_sentiment_server.verify import Verifier
 
 
 class TestFetchGithubKeys:
-    def test_returns_keys(self) -> None:
+    @pytest.mark.asyncio
+    async def test_returns_keys(self) -> None:
         mock_response = MagicMock()
         mock_response.text = "ssh-ed25519 AAAA1 user@host\nssh-rsa AAAA2 user@host\n"
+        mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
 
-        with patch("verify.httpx.get", return_value=mock_response) as mock_get:
-            keys = Verifier().fetch_github_keys("octocat")
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        mock_get.assert_called_once_with("https://github.com/octocat.keys", timeout=10.0)
+        with patch("cc_sentiment_server.verify.httpx.AsyncClient", return_value=mock_client):
+            keys = await Verifier().fetch_github_keys("octocat")
+
+        mock_client.get.assert_called_once_with("https://github.com/octocat.keys", timeout=10.0)
         assert keys == ["ssh-ed25519 AAAA1 user@host", "ssh-rsa AAAA2 user@host"]
 
-    def test_filters_empty_lines(self) -> None:
+    @pytest.mark.asyncio
+    async def test_filters_empty_lines(self) -> None:
         mock_response = MagicMock()
         mock_response.text = "ssh-ed25519 AAAA1 user@host\n\n\nssh-rsa AAAA2 user@host\n"
+        mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
 
-        with patch("verify.httpx.get", return_value=mock_response):
-            keys = Verifier().fetch_github_keys("octocat")
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("cc_sentiment_server.verify.httpx.AsyncClient", return_value=mock_client):
+            keys = await Verifier().fetch_github_keys("octocat")
 
         assert len(keys) == 2
 
+    @pytest.mark.asyncio
+    async def test_404_raises_value_error(self) -> None:
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("cc_sentiment_server.verify.httpx.AsyncClient", return_value=mock_client):
+            with pytest.raises(ValueError, match="GitHub user not found"):
+                await Verifier().fetch_github_keys("nonexistent-xyz")
+
 
 class TestUsernameValidation:
-    def test_newlines_raise_value_error(self) -> None:
+    @pytest.mark.asyncio
+    async def test_newlines_rejected(self) -> None:
         with pytest.raises(ValueError, match="Invalid GitHub username"):
-            Verifier().verify_signature("bad\nuser", "{}", "sig")
+            await Verifier().verify_signature("bad\nuser", "{}", "sig")
 
-    def test_spaces_raise_value_error(self) -> None:
+    @pytest.mark.asyncio
+    async def test_spaces_rejected(self) -> None:
         with pytest.raises(ValueError, match="Invalid GitHub username"):
-            Verifier().verify_signature("bad user", "{}", "sig")
+            await Verifier().verify_signature("bad user", "{}", "sig")
+
+    @pytest.mark.asyncio
+    async def test_valid_usernames_accepted(self) -> None:
+        verifier = Verifier()
+        verifier.fetch_github_keys = AsyncMock(return_value=[])
+        await verifier.verify_signature("octocat", "{}", "sig")
+        await verifier.verify_signature("user-name", "{}", "sig")
+        await verifier.verify_signature("user123", "{}", "sig")
 
 
 class TestVerifySignature:
-    def test_success_with_matching_key(self) -> None:
-        mock_response = MagicMock()
-        mock_response.text = "ssh-ed25519 AAAA1 user@host\n"
-        mock_response.raise_for_status = MagicMock()
+    @pytest.mark.asyncio
+    async def test_success_with_matching_key(self) -> None:
+        verifier = Verifier()
+        verifier.fetch_github_keys = AsyncMock(return_value=["ssh-ed25519 AAAA1 user@host"])
 
-        mock_result = MagicMock()
-        mock_result.returncode = 0
+        with patch.object(verifier, "_verify_with_key_sync", return_value=True):
+            result = await verifier.verify_signature("octocat", '{"test":1}', "sig")
 
-        with (
-            patch("verify.httpx.get", return_value=mock_response),
-            patch("verify.subprocess.run", return_value=mock_result) as mock_run,
-        ):
-            assert Verifier().verify_signature("octocat", '{"data":"test"}', "sig-content")
+        assert result is True
 
-        args = mock_run.call_args[0][0]
-        assert args[0] == "ssh-keygen"
-        assert "-Y" in args
-        assert "verify" in args
+    @pytest.mark.asyncio
+    async def test_failure_with_no_matching_key(self) -> None:
+        verifier = Verifier()
+        verifier.fetch_github_keys = AsyncMock(return_value=["ssh-ed25519 AAAA1 user@host"])
 
-    def test_failure_with_no_matching_key(self) -> None:
-        mock_response = MagicMock()
-        mock_response.text = "ssh-ed25519 AAAA1 user@host\nssh-rsa AAAA2 user@host\n"
-        mock_response.raise_for_status = MagicMock()
+        with patch.object(verifier, "_verify_with_key_sync", return_value=False):
+            result = await verifier.verify_signature("octocat", '{"test":1}', "bad-sig")
 
-        mock_result = MagicMock()
-        mock_result.returncode = 1
+        assert result is False
 
-        with (
-            patch("verify.httpx.get", return_value=mock_response),
-            patch("verify.subprocess.run", return_value=mock_result),
-        ):
-            assert not Verifier().verify_signature("octocat", '{"data":"test"}', "bad-sig")
+    @pytest.mark.asyncio
+    async def test_empty_keys_returns_false(self) -> None:
+        verifier = Verifier()
+        verifier.fetch_github_keys = AsyncMock(return_value=[])
 
-    def test_no_shell_true(self) -> None:
-        mock_response = MagicMock()
-        mock_response.text = "ssh-ed25519 AAAA1 user@host\n"
-        mock_response.raise_for_status = MagicMock()
+        result = await verifier.verify_signature("octocat", "{}", "sig")
 
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-
-        with (
-            patch("verify.httpx.get", return_value=mock_response),
-            patch("verify.subprocess.run", return_value=mock_result) as mock_run,
-        ):
-            Verifier().verify_signature("octocat", "{}", "sig")
-
-        assert "shell" not in mock_run.call_args.kwargs or not mock_run.call_args.kwargs["shell"]
-
-    def test_empty_keys_returns_false(self) -> None:
-        mock_response = MagicMock()
-        mock_response.text = ""
-        mock_response.raise_for_status = MagicMock()
-
-        with patch("verify.httpx.get", return_value=mock_response):
-            assert not Verifier().verify_signature("octocat", "{}", "sig")
+        assert result is False
 
 
-class TestVerifyWithKey:
+class TestKeyCache:
+    @pytest.mark.asyncio
+    async def test_populates_on_miss(self) -> None:
+        cache: dict = {}
+        verifier = Verifier(key_cache=cache)
+        verifier.fetch_github_keys = AsyncMock(return_value=["ssh-ed25519 KEY1 user@host"])
+
+        with patch.object(verifier, "_verify_with_key_sync", return_value=True):
+            await verifier.verify_signature("octocat", "{}", "sig")
+
+        assert cache["octocat"] == ["ssh-ed25519 KEY1 user@host"]
+
+    @pytest.mark.asyncio
+    async def test_uses_cached_keys(self) -> None:
+        cache = {"octocat": ["ssh-ed25519 CACHED user@host"]}
+        verifier = Verifier(key_cache=cache)
+        verifier.fetch_github_keys = AsyncMock()
+
+        with patch.object(verifier, "_verify_with_key_sync", return_value=True):
+            await verifier.verify_signature("octocat", "{}", "sig")
+
+        verifier.fetch_github_keys.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_refetches_on_mismatch(self) -> None:
+        cache = {"octocat": ["ssh-ed25519 OLD user@host"]}
+        verifier = Verifier(key_cache=cache)
+
+        def verify_sync(username, key, payload, sig):
+            return key == "ssh-ed25519 NEW user@host"
+
+        verifier.fetch_github_keys = AsyncMock(return_value=["ssh-ed25519 NEW user@host"])
+
+        with patch.object(verifier, "_verify_with_key_sync", side_effect=verify_sync):
+            result = await verifier.verify_signature("octocat", "{}", "sig")
+
+        assert result is True
+        verifier.fetch_github_keys.assert_called_once()
+        assert cache["octocat"] == ["ssh-ed25519 NEW user@host"]
+
+
+class TestVerifyWithKeySync:
     def test_no_resource_warning(self) -> None:
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always", ResourceWarning)
-            with patch("verify.subprocess.run", return_value=mock_result):
-                Verifier().verify_with_key("octocat", "ssh-ed25519 AAAA key", '{"data":"test"}', "sig")
+            with patch("cc_sentiment_server.verify.subprocess.run", return_value=MagicMock(returncode=0)):
+                Verifier._verify_with_key_sync(
+                    "octocat", "ssh-ed25519 AAAA key", '{"data":"test"}', "sig",
+                )
             gc.collect()
 
         resource_warnings = [x for x in w if issubclass(x.category, ResourceWarning)]
         assert len(resource_warnings) == 0
 
+    def test_passes_correct_args_to_ssh_keygen(self) -> None:
+        with patch("cc_sentiment_server.verify.subprocess.run", return_value=MagicMock(returncode=0)) as mock_run:
+            Verifier._verify_with_key_sync("octocat", "ssh-ed25519 AAAA key", "{}", "sig")
 
-class TestCanonicalJson:
-    def test_deterministic_output(self) -> None:
-        records = [
-            SentimentRecord(
-                time=datetime(2026, 4, 12, 10, 30, tzinfo=timezone.utc),
-                conversation_id="abc-123",
-                bucket_index=0,
-                sentiment_score=4,
-                prompt_version="v1",
-                model_id="gemma-4-e4b-it-4bit",
-                client_version="0.1.0",
-            ),
-            SentimentRecord(
-                time=datetime(2026, 4, 12, 11, 0, tzinfo=timezone.utc),
-                conversation_id="abc-123",
-                bucket_index=1,
-                sentiment_score=3,
-                prompt_version="v1",
-                model_id="gemma-4-e4b-it-4bit",
-                client_version="0.1.0",
-            ),
-        ]
-        canonical = json.dumps(
-            [r.model_dump(mode="json") for r in records],
-            sort_keys=True,
-            separators=(",", ":"),
-        )
+        args = mock_run.call_args[0][0]
+        assert args[0] == "ssh-keygen"
+        assert args[1:3] == ["-Y", "verify"]
+        assert args[args.index("-I") + 1] == "octocat"
+        assert args[args.index("-n") + 1] == "cc-sentiment"
 
-        assert '"bucket_index":0' in canonical
-        assert '"bucket_index":1' in canonical
-        assert " " not in canonical
+    def test_no_shell_true(self) -> None:
+        with patch("cc_sentiment_server.verify.subprocess.run", return_value=MagicMock(returncode=0)) as mock_run:
+            Verifier._verify_with_key_sync("octocat", "ssh-ed25519 AAAA key", "{}", "sig")
 
-        canonical_again = json.dumps(
-            [r.model_dump(mode="json") for r in records],
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        assert canonical == canonical_again
+        kwargs = mock_run.call_args.kwargs
+        assert "shell" not in kwargs or not kwargs["shell"]

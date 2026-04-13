@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import httpx
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from cc_sentiment.models import (
     AppState,
@@ -16,6 +17,22 @@ DEFAULT_SERVER_URL = "https://cc-sentiment.modal.run"
 TEST_PAYLOAD = "cc-sentiment-verify"
 
 
+def is_retryable(exc: BaseException) -> bool:
+    if isinstance(exc, (httpx.ConnectError, httpx.TimeoutException)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in (429, 502, 503, 504):
+        return True
+    return False
+
+
+_retry = retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, max=8),
+    retry=retry_if_exception(is_retryable),
+    reraise=True,
+)
+
+
 class Uploader:
     def __init__(self, server_url: str = DEFAULT_SERVER_URL) -> None:
         self.server_url = server_url
@@ -29,6 +46,7 @@ class Uploader:
             for record in session.records
         ]
 
+    @_retry
     async def verify_credentials(self, config: ClientConfig) -> None:
         signature = PayloadSigner.sign(TEST_PAYLOAD, config.key_path)
         async with httpx.AsyncClient() as client:
@@ -43,6 +61,7 @@ class Uploader:
             )
             response.raise_for_status()
 
+    @_retry
     async def upload(
         self,
         records: list[SentimentRecord],

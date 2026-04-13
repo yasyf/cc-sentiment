@@ -1,21 +1,14 @@
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
-modal_mock = MagicMock()
-modal_mock.App.return_value.cls.return_value = lambda cls: cls
-sys.modules.setdefault("modal", modal_mock)
-
-from starlette.applications import Starlette
-from starlette.routing import Route
-from starlette.testclient import TestClient
-
-from app import API
-from models import DataResponse
+from cc_sentiment_server.app import DictCache, create_app
+from cc_sentiment_server.db import Database
+from cc_sentiment_server.models import SentimentRecord
 
 
 VALID_RECORD: dict = {
@@ -35,92 +28,120 @@ VALID_PAYLOAD: dict = {
 }
 
 
-def make_empty_data_response() -> DataResponse:
-    return DataResponse(
-        timeline=[],
-        hourly=[],
-        weekday=[],
-        distribution=[],
-        total_records=0,
-        last_updated=datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc),
+@pytest.fixture
+def verifier() -> AsyncMock:
+    v = AsyncMock()
+    v.verify_signature.return_value = True
+    return v
+
+
+@pytest.fixture
+async def client(db: Database, verifier: AsyncMock) -> httpx.AsyncClient:
+    app = create_app(
+        db=db,
+        verifier=verifier,
+        data_cache=DictCache(),
+        allowed_origins=["http://localhost:3000"],
     )
-
-
-def make_test_client(db: MagicMock | None = None, verifier: MagicMock | None = None) -> TestClient:
-    api = API()
-    api.db = db or MagicMock()
-    api.verifier = verifier or MagicMock()
-    routes = [
-        Route("/verify", api.handle_verify, methods=["POST"]),
-        Route("/upload", api.handle_upload, methods=["POST"]),
-        Route("/data", api.handle_data, methods=["GET"]),
-    ]
-    return TestClient(Starlette(routes=routes))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
 
 
 class TestUpload:
-    def test_valid_payload_returns_200(self) -> None:
-        verifier = MagicMock()
-        verifier.verify_signature.return_value = True
-        db = MagicMock()
-        client = make_test_client(db=db, verifier=verifier)
-
-        response = client.post("/upload", json=VALID_PAYLOAD)
+    @pytest.mark.asyncio
+    async def test_valid_payload(self, client: httpx.AsyncClient, db: Database) -> None:
+        response = await client.post("/upload", json=VALID_PAYLOAD)
 
         assert response.status_code == 200
-        body = response.json()
-        assert body["status"] == "ok"
-        assert body["ingested"] == 1
-        db.ingest.assert_called_once()
+        assert response.json() == {"status": "ok", "ingested": 1}
 
-    def test_invalid_signature_returns_401(self) -> None:
-        verifier = MagicMock()
+        async with db.pool.connection() as conn:
+            row = await (await conn.execute("SELECT count(*) FROM sentiment")).fetchone()
+        assert row[0] == 1
+
+    @pytest.mark.asyncio
+    async def test_invalid_signature(self, client: httpx.AsyncClient, verifier: AsyncMock) -> None:
         verifier.verify_signature.return_value = False
-        client = make_test_client(verifier=verifier)
 
-        response = client.post("/upload", json=VALID_PAYLOAD)
+        response = await client.post("/upload", json=VALID_PAYLOAD)
 
         assert response.status_code == 401
-        assert "Signature verification failed" in response.json()["error"]
+        assert "Signature verification failed" in response.json()["detail"]
 
-    def test_malformed_json_returns_400(self) -> None:
-        client = make_test_client()
-
-        response = client.post(
+    @pytest.mark.asyncio
+    async def test_malformed_json(self, client: httpx.AsyncClient) -> None:
+        response = await client.post(
             "/upload",
             content=b"not json{{{",
             headers={"content-type": "application/json"},
         )
+        assert response.status_code == 422
 
-        assert response.status_code == 400
-        assert "Invalid JSON" in response.json()["error"]
+    @pytest.mark.asyncio
+    async def test_missing_required_fields(self, client: httpx.AsyncClient) -> None:
+        response = await client.post("/upload", json={"github_username": "octocat"})
+        assert response.status_code == 422
 
-    def test_invalid_pydantic_payload_returns_400(self) -> None:
-        client = make_test_client()
+    @pytest.mark.asyncio
+    async def test_sentiment_score_out_of_range(self, client: httpx.AsyncClient) -> None:
+        bad = {**VALID_RECORD, "sentiment_score": 6}
+        response = await client.post("/upload", json={**VALID_PAYLOAD, "records": [bad]})
+        assert response.status_code == 422
 
-        response = client.post("/upload", json={"github_username": "octocat"})
+    @pytest.mark.asyncio
+    async def test_sentiment_score_zero(self, client: httpx.AsyncClient) -> None:
+        bad = {**VALID_RECORD, "sentiment_score": 0}
+        response = await client.post("/upload", json={**VALID_PAYLOAD, "records": [bad]})
+        assert response.status_code == 422
 
-        assert response.status_code == 400
+    @pytest.mark.asyncio
+    async def test_negative_bucket_index(self, client: httpx.AsyncClient) -> None:
+        bad = {**VALID_RECORD, "bucket_index": -1}
+        response = await client.post("/upload", json={**VALID_PAYLOAD, "records": [bad]})
+        assert response.status_code == 422
 
-    def test_invalid_username_returns_400(self) -> None:
-        verifier = MagicMock()
-        verifier.verify_signature.side_effect = ValueError("Invalid GitHub username: 'bad\\nuser'")
-        client = make_test_client(verifier=verifier)
+    @pytest.mark.asyncio
+    async def test_empty_records_list(self, client: httpx.AsyncClient) -> None:
+        response = await client.post("/upload", json={**VALID_PAYLOAD, "records": []})
+        assert response.status_code == 422
 
-        payload = {**VALID_PAYLOAD, "github_username": "bad\nuser"}
-        response = client.post("/upload", json=payload)
+    @pytest.mark.asyncio
+    async def test_empty_conversation_id(self, client: httpx.AsyncClient) -> None:
+        bad = {**VALID_RECORD, "conversation_id": ""}
+        response = await client.post("/upload", json={**VALID_PAYLOAD, "records": [bad]})
+        assert response.status_code == 422
 
-        assert response.status_code == 400
-        assert "Invalid GitHub username" in response.json()["error"]
+    @pytest.mark.asyncio
+    async def test_multiple_records(self, client: httpx.AsyncClient, db: Database) -> None:
+        records = [
+            {**VALID_RECORD, "bucket_index": i, "sentiment_score": min(i + 1, 5)}
+            for i in range(5)
+        ]
+        response = await client.post("/upload", json={**VALID_PAYLOAD, "records": records})
+
+        assert response.status_code == 200
+        assert response.json()["ingested"] == 5
+
+        async with db.pool.connection() as conn:
+            row = await (await conn.execute("SELECT count(*) FROM sentiment")).fetchone()
+        assert row[0] == 5
+
+    @pytest.mark.asyncio
+    async def test_upload_then_query(self, client: httpx.AsyncClient) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        record = {**VALID_RECORD, "time": now}
+        await client.post("/upload", json={**VALID_PAYLOAD, "records": [record]})
+
+        response = await client.get("/data")
+        assert response.status_code == 200
+        assert response.json()["total_records"] == 1
 
 
-class TestVerify:
-    def test_valid_signature_returns_200(self) -> None:
-        verifier = MagicMock()
-        verifier.verify_signature.return_value = True
-        client = make_test_client(verifier=verifier)
-
-        response = client.post("/verify", json={
+class TestVerifyEndpoint:
+    @pytest.mark.asyncio
+    async def test_valid_signature(self, client: httpx.AsyncClient) -> None:
+        response = await client.post("/verify", json={
             "github_username": "octocat",
             "signature": "sig-content",
             "test_payload": "cc-sentiment-verify",
@@ -129,12 +150,11 @@ class TestVerify:
         assert response.status_code == 200
         assert response.json()["status"] == "ok"
 
-    def test_invalid_signature_returns_401(self) -> None:
-        verifier = MagicMock()
+    @pytest.mark.asyncio
+    async def test_invalid_signature(self, client: httpx.AsyncClient, verifier: AsyncMock) -> None:
         verifier.verify_signature.return_value = False
-        client = make_test_client(verifier=verifier)
 
-        response = client.post("/verify", json={
+        response = await client.post("/verify", json={
             "github_username": "octocat",
             "signature": "bad-sig",
             "test_payload": "cc-sentiment-verify",
@@ -142,46 +162,84 @@ class TestVerify:
 
         assert response.status_code == 401
 
-    def test_missing_fields_returns_400(self) -> None:
-        client = make_test_client()
+    @pytest.mark.asyncio
+    async def test_missing_fields(self, client: httpx.AsyncClient) -> None:
+        response = await client.post("/verify", json={"github_username": "octocat"})
+        assert response.status_code == 422
 
-        response = client.post("/verify", json={"github_username": "octocat"})
+    @pytest.mark.asyncio
+    async def test_empty_username(self, client: httpx.AsyncClient) -> None:
+        response = await client.post("/verify", json={
+            "github_username": "",
+            "signature": "sig",
+            "test_payload": "payload",
+        })
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_value_error_returns_400(self, client: httpx.AsyncClient, verifier: AsyncMock) -> None:
+        verifier.verify_signature.side_effect = ValueError("Invalid GitHub username")
+
+        response = await client.post("/verify", json={
+            "github_username": "octocat",
+            "signature": "sig",
+            "test_payload": "payload",
+        })
 
         assert response.status_code == 400
+        assert "Invalid GitHub username" in response.json()["detail"]
 
 
 class TestData:
-    def test_returns_correct_shape(self) -> None:
-        db = MagicMock()
-        db.query_all.return_value = make_empty_data_response()
-        client = make_test_client(db=db)
-
-        response = client.get("/data")
+    @pytest.mark.asyncio
+    async def test_returns_correct_shape(self, client: httpx.AsyncClient) -> None:
+        response = await client.get("/data")
 
         assert response.status_code == 200
-        data = response.json()
-        assert "timeline" in data
-        assert "hourly" in data
-        assert "weekday" in data
-        assert "distribution" in data
-        assert "total_records" in data
-        assert "last_updated" in data
+        body = response.json()
+        for key in ("timeline", "hourly", "weekday", "distribution", "total_records", "last_updated"):
+            assert key in body
 
-    def test_includes_cache_control_header(self) -> None:
-        db = MagicMock()
-        db.query_all.return_value = make_empty_data_response()
-        client = make_test_client(db=db)
-
-        response = client.get("/data")
-
+    @pytest.mark.asyncio
+    async def test_cache_control_header(self, client: httpx.AsyncClient) -> None:
+        response = await client.get("/data")
         assert response.headers["cache-control"] == "public, max-age=3600"
 
-    def test_days_param(self) -> None:
-        db = MagicMock()
-        db.query_all.return_value = make_empty_data_response()
-        client = make_test_client(db=db)
-
-        response = client.get("/data?days=30")
-
+    @pytest.mark.asyncio
+    async def test_days_param(self, client: httpx.AsyncClient) -> None:
+        response = await client.get("/data?days=30")
         assert response.status_code == 200
-        db.query_all.assert_called_once_with(30)
+
+    @pytest.mark.asyncio
+    async def test_days_too_low(self, client: httpx.AsyncClient) -> None:
+        assert (await client.get("/data?days=0")).status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_days_too_high(self, client: httpx.AsyncClient) -> None:
+        assert (await client.get("/data?days=999")).status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_days_not_integer(self, client: httpx.AsyncClient) -> None:
+        assert (await client.get("/data?days=abc")).status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_caches_response(self, client: httpx.AsyncClient, db: Database) -> None:
+        now = datetime.now(timezone.utc)
+        records = [SentimentRecord(
+            time=now, conversation_id="c1", bucket_index=0,
+            sentiment_score=3, prompt_version="v1",
+            model_id="test", client_version="0.1.0",
+        )]
+        await db.ingest(records, "octocat")
+
+        r1 = await client.get("/data")
+        assert r1.json()["total_records"] == 1
+
+        await db.ingest([SentimentRecord(
+            time=now, conversation_id="c2", bucket_index=0,
+            sentiment_score=4, prompt_version="v1",
+            model_id="test", client_version="0.1.0",
+        )], "octocat")
+
+        r2 = await client.get("/data")
+        assert r2.json()["total_records"] == 1  # still cached

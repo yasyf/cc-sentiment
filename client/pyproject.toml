@@ -10,6 +10,7 @@ dependencies = [
     "pydantic>=2.7",
     "anyio>=4.4",
     "rich>=13.0",
+    "tenacity>=8.0",
     "omlx @ git+https://github.com/jundot/omlx.git",
 ]
 

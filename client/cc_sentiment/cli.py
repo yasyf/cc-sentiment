@@ -223,7 +223,8 @@ def setup() -> None:
 @click.option("--upload", "do_upload", is_flag=True, help="Upload results after scan")
 @click.option("--engine", type=click.Choice(["mlx", "omlx"]), default="omlx")
 @click.option("--model", "model_repo", default=None, help="HuggingFace model repo")
-def scan(do_upload: bool, engine: str, model_repo: str | None) -> None:
+@click.option("--limit", default=None, type=int, help="Max transcripts to process")
+def scan(do_upload: bool, engine: str, model_repo: str | None, limit: int | None) -> None:
     from cc_sentiment.pipeline import Pipeline
     from cc_sentiment.upload import Uploader
 
@@ -238,6 +239,8 @@ def scan(do_upload: bool, engine: str, model_repo: str | None) -> None:
         verify_credentials(state)
 
     new_transcripts = Pipeline.discover_new_transcripts(state)
+    if limit is not None:
+        new_transcripts = new_transcripts[:limit]
     if not new_transcripts:
         if first_run:
             console.print(
