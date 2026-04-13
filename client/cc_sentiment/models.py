@@ -12,9 +12,8 @@ SentimentScore = NewType("SentimentScore", int)
 PromptVersion = NewType("PromptVersion", str)
 
 PROMPT_VERSION = PromptVersion("v1")
-MODEL_ID = "gemma-4-e4b-it-4bit"
+DEFAULT_MODEL = "unsloth/gemma-4-E2B-it-UD-MLX-4bit"
 CLIENT_VERSION = "0.1.0"
-DEFAULT_MODEL_REPO = "unsloth/gemma-4-E4B-it-UD-MLX-4bit"
 
 
 class TranscriptMessage(BaseModel, frozen=True):
@@ -40,7 +39,7 @@ class SentimentRecord(BaseModel, frozen=True):
     bucket_index: BucketIndex
     sentiment_score: SentimentScore
     prompt_version: PromptVersion = PROMPT_VERSION
-    inference_model: str = Field(default=MODEL_ID, validation_alias="model_id", serialization_alias="model_id")
+    inference_model: str = Field(default=DEFAULT_MODEL, validation_alias="model_id", serialization_alias="model_id")
     client_version: str = CLIENT_VERSION
 
 

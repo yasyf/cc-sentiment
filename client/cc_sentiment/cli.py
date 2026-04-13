@@ -12,7 +12,11 @@ from rich.console import Console
 from rich.live import Live
 from rich.table import Table
 
+from cc_sentiment.benchmark import run_accuracy_test, run_benchmark
 from cc_sentiment.models import AppState, ClientConfig, SentimentRecord
+from cc_sentiment.pipeline import Pipeline
+from cc_sentiment.signing import KeyDiscovery, NoGitHubKeysError
+from cc_sentiment.upload import Uploader
 
 SCORE_COLORS: dict[int, str] = {1: "red", 2: "red", 3: "yellow", 4: "green", 5: "green"}
 SCORE_LABELS: dict[int, str] = {
@@ -137,8 +141,6 @@ def detect_git_username() -> str | None:
 
 
 def auto_setup(state: AppState) -> bool:
-    from cc_sentiment.signing import KeyDiscovery, NoGitHubKeysError
-
     if not (username := detect_git_username()):
         return False
     try:
@@ -167,8 +169,6 @@ def ensure_config(state: AppState) -> None:
 
 
 def run_interactive_setup(state: AppState) -> None:
-    from cc_sentiment.signing import KeyDiscovery, NoGitHubKeysError
-
     username = click.prompt("GitHub username", default=detect_git_username())
     console.print(f"Fetching SSH keys for {username}...")
 
@@ -189,8 +189,6 @@ def run_interactive_setup(state: AppState) -> None:
 
 
 def verify_credentials(state: AppState) -> None:
-    from cc_sentiment.upload import Uploader
-
     assert state.config is not None
     console.print("Verifying upload credentials...", end=" ")
     uploader = Uploader()
@@ -237,9 +235,6 @@ def setup() -> None:
 @click.option("--model", "model_repo", default=None, help="HuggingFace model repo")
 @click.option("--limit", default=None, type=int, help="Max transcripts to process")
 def scan(do_upload: bool, engine: str, model_repo: str | None, limit: int | None) -> None:
-    from cc_sentiment.pipeline import Pipeline
-    from cc_sentiment.upload import Uploader
-
     state = AppState.load()
 
     first_run = not state.processed_files and not state.sessions
@@ -320,8 +315,6 @@ def benchmark(
     transcripts: int, runs: int, engines: str,
     model_repo: str | None, scaling: bool, accuracy: bool,
 ) -> None:
-    from cc_sentiment.benchmark import run_accuracy_test, run_benchmark
-
     if accuracy:
         run_accuracy_test(engines.split(",")[0].strip(), model_repo)
         return
@@ -337,8 +330,6 @@ def benchmark(
 
 @main.command()
 def upload() -> None:
-    from cc_sentiment.upload import Uploader
-
     state = AppState.load()
     ensure_config(state)
     verify_credentials(state)
@@ -358,8 +349,6 @@ def upload() -> None:
 @click.option("--engine", type=click.Choice(["mlx", "omlx"]), default="omlx")
 @click.option("--model", "model_repo", default=None)
 def rescan(engine: str, model_repo: str | None) -> None:
-    from cc_sentiment.pipeline import Pipeline
-
     state = AppState.load()
     prev_sessions = len(state.sessions)
     state.processed_files.clear()

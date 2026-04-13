@@ -12,7 +12,7 @@ from cc_sentiment.models import (
     BucketIndex,
     CLIENT_VERSION,
     ClientConfig,
-    MODEL_ID,
+    DEFAULT_MODEL,
     PROMPT_VERSION,
     ProcessedFile,
     ProcessedSession,
@@ -72,7 +72,7 @@ class TestSentimentRecord:
         restored = SentimentRecord.model_validate(data)
         assert restored == record
         assert restored.prompt_version == PROMPT_VERSION
-        assert restored.inference_model == MODEL_ID
+        assert restored.inference_model == DEFAULT_MODEL
         assert restored.client_version == CLIENT_VERSION
 
     def test_wire_format_uses_model_id_key(self) -> None:
@@ -81,7 +81,7 @@ class TestSentimentRecord:
         assert "model_id" in data
         assert "inference_model" not in data
         restored = SentimentRecord.model_validate(data)
-        assert restored.inference_model == MODEL_ID
+        assert restored.inference_model == DEFAULT_MODEL
 
 
 class TestProcessedFile:

@@ -16,7 +16,7 @@ from cc_sentiment.engines import (
 from cc_sentiment.models import (
     ConversationBucket,
     SentimentScore,
-    DEFAULT_MODEL_REPO,
+    DEFAULT_MODEL,
 )
 from cc_sentiment.patches import apply_kv_cache_patch
 
@@ -46,7 +46,7 @@ def make_score_logit_processor() -> Callable:
 
 
 class SentimentClassifier:
-    def __init__(self, model_repo: str = DEFAULT_MODEL_REPO) -> None:
+    def __init__(self, model_repo: str = DEFAULT_MODEL) -> None:
         apply_kv_cache_patch()
 
         from mlx_lm import load

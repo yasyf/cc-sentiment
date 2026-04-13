@@ -12,8 +12,9 @@ from statistics import mean, median, stdev
 import anyio
 import click
 
-from cc_sentiment.engines import InferenceEngine
-from cc_sentiment.models import ConversationBucket, SentimentScore
+from cc_sentiment.engines import InferenceEngine, OMLXEngine
+from cc_sentiment.labeled_data import build_labeled_dataset
+from cc_sentiment.models import DEFAULT_MODEL, ConversationBucket, SentimentScore
 from cc_sentiment.transcripts import (
     ConversationBucketer,
     TranscriptDiscovery,
@@ -65,8 +66,7 @@ class BenchmarkRunner:
 
     @staticmethod
     def predownload_model(model_repo: str | None = None) -> None:
-        from cc_sentiment.models import DEFAULT_MODEL_REPO
-        repo = model_repo or DEFAULT_MODEL_REPO
+        repo = model_repo or DEFAULT_MODEL
         click.echo(f"Ensuring model is downloaded: {repo}")
         from huggingface_hub import snapshot_download
         snapshot_download(repo)
@@ -78,7 +78,6 @@ class BenchmarkRunner:
                 from cc_sentiment.sentiment import SentimentClassifier
                 return SentimentClassifier(model_repo) if model_repo else SentimentClassifier()
             case "omlx":
-                from cc_sentiment.engines import OMLXEngine
                 engine = OMLXEngine(model_repo=model_repo)
                 await engine.warm_system_prompt()
                 return engine
@@ -253,8 +252,6 @@ def run_accuracy_test(
     engine_name: str,
     model_repo: str | None = None,
 ) -> None:
-    from cc_sentiment.labeled_data import build_labeled_dataset
-
     dataset = build_labeled_dataset()
     buckets = [lb.bucket for lb in dataset]
     expected = [int(lb.expected_score) for lb in dataset]

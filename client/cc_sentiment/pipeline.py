@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from cc_sentiment.engines import InferenceEngine
+from cc_sentiment.engines import InferenceEngine, OMLXEngine
 from cc_sentiment.models import (
     AppState,
     ProcessedFile,
@@ -86,7 +86,6 @@ class Pipeline:
                     else SentimentClassifier()
                 )
             case "omlx":
-                from cc_sentiment.engines import OMLXEngine
                 classifier = OMLXEngine(model_repo=model_repo)
                 await classifier.warm_system_prompt()
             case _:

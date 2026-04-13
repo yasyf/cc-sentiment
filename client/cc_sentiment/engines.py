@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import Protocol
 
 import httpx
+import threading
 
-from cc_sentiment.models import ConversationBucket, SentimentScore
+from cc_sentiment.models import DEFAULT_MODEL, ConversationBucket, SentimentScore
 
 MAX_CONVERSATION_CHARS = 8192
 
@@ -101,11 +102,9 @@ class StallDetected(Exception):
 
 class OMLXEngine:
     def __init__(self, model_repo: str | None = None) -> None:
-        from cc_sentiment.models import DEFAULT_MODEL_REPO
-
         HF_MODEL_DIR = Path.home() / ".cache" / "huggingface" / "hub"
 
-        self.repo = model_repo or DEFAULT_MODEL_REPO
+        self.repo = model_repo or DEFAULT_MODEL
         self.omlx_dir = self._ensure_model_dir(self.repo, HF_MODEL_DIR)
         self.process: subprocess.Popen | None = None
         self.client: httpx.AsyncClient | None = None
@@ -130,8 +129,6 @@ class OMLXEngine:
         self.client = httpx.AsyncClient(base_url=self.base_url, timeout=300.0)
 
     def _start_next_server_background(self) -> None:
-        import threading
-
         port = find_free_port()
         proc = subprocess.Popen(
             [
