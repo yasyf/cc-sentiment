@@ -22,7 +22,8 @@ VALID_RECORD: dict = {
 }
 
 VALID_PAYLOAD: dict = {
-    "github_username": "octocat",
+    "contributor_type": "github",
+    "contributor_id": "octocat",
     "signature": "sig-content",
     "records": [VALID_RECORD],
 }
@@ -83,7 +84,8 @@ class TestUpload:
 
     @pytest.mark.asyncio
     async def test_missing_required_fields(self, client: httpx.AsyncClient) -> None:
-        response = await client.post("/upload", json={"github_username": "octocat"})
+        response = await client.post("/upload", json={"contributor_type": "github",
+            "contributor_id": "octocat"})
         assert response.status_code == 422
 
     @pytest.mark.asyncio
@@ -145,7 +147,8 @@ class TestVerifyEndpoint:
     @pytest.mark.asyncio
     async def test_valid_signature(self, client: httpx.AsyncClient) -> None:
         response = await client.post("/verify", json={
-            "github_username": "octocat",
+            "contributor_type": "github",
+            "contributor_id": "octocat",
             "signature": "sig-content",
             "test_payload": "cc-sentiment-verify",
         })
@@ -158,7 +161,8 @@ class TestVerifyEndpoint:
         verifier.verify_signature.return_value = False
 
         response = await client.post("/verify", json={
-            "github_username": "octocat",
+            "contributor_type": "github",
+            "contributor_id": "octocat",
             "signature": "bad-sig",
             "test_payload": "cc-sentiment-verify",
         })
@@ -167,13 +171,17 @@ class TestVerifyEndpoint:
 
     @pytest.mark.asyncio
     async def test_missing_fields(self, client: httpx.AsyncClient) -> None:
-        response = await client.post("/verify", json={"github_username": "octocat"})
+        response = await client.post("/verify", json={
+            "contributor_type": "github",
+            "contributor_id": "octocat",
+        })
         assert response.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_empty_username(self, client: httpx.AsyncClient) -> None:
+    async def test_empty_contributor_id(self, client: httpx.AsyncClient) -> None:
         response = await client.post("/verify", json={
-            "github_username": "",
+            "contributor_type": "github",
+            "contributor_id": "",
             "signature": "sig",
             "test_payload": "payload",
         })
@@ -184,7 +192,8 @@ class TestVerifyEndpoint:
         verifier.verify_signature.side_effect = ValueError("Invalid GitHub username")
 
         response = await client.post("/verify", json={
-            "github_username": "octocat",
+            "contributor_type": "github",
+            "contributor_id": "octocat",
             "signature": "sig",
             "test_payload": "payload",
         })
@@ -241,7 +250,7 @@ class TestData:
             sentiment_score=3, prompt_version="v1",
             model_id="test", client_version="0.1.0",
         )]
-        await db.ingest(records, "octocat")
+        await db.ingest(records, "octocat", "github")
 
         r1 = await client.get("/data", headers=AUTH_HEADER)
         assert r1.json()["total_records"] == 1
@@ -250,7 +259,7 @@ class TestData:
             time=now, conversation_id="c2", bucket_index=0,
             sentiment_score=4, prompt_version="v1",
             model_id="test", client_version="0.1.0",
-        )], "octocat")
+        )], "octocat", "github")
 
         r2 = await client.get("/data", headers=AUTH_HEADER)
         assert r2.json()["total_records"] == 1  # still cached

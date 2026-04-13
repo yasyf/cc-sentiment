@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -33,7 +34,8 @@ class SentimentRecord(BaseModel):
 class UploadPayload(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    github_username: str = Field(min_length=1)
+    contributor_type: Literal["github", "gpg"]
+    contributor_id: str = Field(min_length=1)
     signature: str = Field(min_length=1)
     records: list[SentimentRecord] = Field(min_length=1, max_length=10_000)
 
@@ -48,7 +50,8 @@ class UploadResponse(BaseModel):
 class VerifyRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    github_username: str = Field(min_length=1)
+    contributor_type: Literal["github", "gpg"]
+    contributor_id: str = Field(min_length=1)
     signature: str = Field(min_length=1)
     test_payload: str = Field(min_length=1)
 

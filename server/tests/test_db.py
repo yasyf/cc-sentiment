@@ -42,7 +42,7 @@ class TestSeed:
             )).fetchall()
         index_names = {r[0] for r in rows}
         assert "idx_sentiment_time_score" in index_names
-        assert "idx_sentiment_username_time" in index_names
+        assert "idx_sentiment_contributor_time" in index_names
 
     @pytest.mark.asyncio
     async def test_creates_continuous_aggregate(self, db: Database) -> None:
@@ -63,7 +63,7 @@ class TestIngest:
     async def test_inserts_records(self, db: Database) -> None:
         records = [make_record(score=4), make_record(score=2, bucket=1)]
 
-        await db.ingest(records, "octocat")
+        await db.ingest(records, "octocat", "github")
 
         async with db.pool.connection() as conn:
             row = await (await conn.execute("SELECT count(*) FROM sentiment")).fetchone()
@@ -73,11 +73,11 @@ class TestIngest:
     async def test_stores_correct_values(self, db: Database) -> None:
         records = [make_record(score=5, conv_id="test-conv")]
 
-        await db.ingest(records, "testuser")
+        await db.ingest(records, "testuser", "github")
 
         async with db.pool.connection() as conn:
             row = await (await conn.execute(
-                "SELECT sentiment_score, github_username, conversation_id FROM sentiment"
+                "SELECT sentiment_score, contributor_id, conversation_id FROM sentiment"
             )).fetchone()
         assert row == (5, "testuser", "test-conv")
 
@@ -85,8 +85,8 @@ class TestIngest:
     async def test_duplicates_ignored(self, db: Database) -> None:
         records = [make_record()]
 
-        await db.ingest(records, "octocat")
-        await db.ingest(records, "octocat")
+        await db.ingest(records, "octocat", "github")
+        await db.ingest(records, "octocat", "github")
 
         async with db.pool.connection() as conn:
             row = await (await conn.execute("SELECT count(*) FROM sentiment")).fetchone()
@@ -118,7 +118,7 @@ class TestQueryAll:
             make_record(score=4, bucket=0, t=now),
             make_record(score=2, bucket=1, t=now),
         ]
-        await db.ingest(records, "octocat")
+        await db.ingest(records, "octocat", "github")
 
         result = await db.query_all(days=7)
 
@@ -137,7 +137,7 @@ class TestQueryAll:
             make_record(score=4, bucket=1, t=now),
             make_record(score=1, bucket=2, t=now),
         ]
-        await db.ingest(records, "octocat")
+        await db.ingest(records, "octocat", "github")
 
         result = await db.query_all(days=7)
 

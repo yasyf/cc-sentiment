@@ -86,7 +86,7 @@ def create_app(
     @web_app.post("/verify")
     @limiter.limit("10/minute")
     async def verify(request: Request, body: VerifyRequest) -> StatusResponse:
-        if not await verifier.verify_signature(body.github_username, body.test_payload, body.signature):
+        if not await verifier.verify_signature(body.contributor_type, body.contributor_id, body.test_payload, body.signature):
             return JSONResponse({"detail": "Signature verification failed"}, status_code=401)
         return StatusResponse()
 
@@ -94,7 +94,8 @@ def create_app(
     @limiter.limit("100/minute")
     async def upload(request: Request, payload: UploadPayload) -> UploadResponse:
         if not await verifier.verify_signature(
-            payload.github_username,
+            payload.contributor_type,
+            payload.contributor_id,
             json.dumps(
                 [r.model_dump(mode="json") for r in payload.records],
                 sort_keys=True,
@@ -104,7 +105,7 @@ def create_app(
         ):
             return JSONResponse({"detail": "Signature verification failed"}, status_code=401)
 
-        await db.ingest(payload.records, payload.github_username)
+        await db.ingest(payload.records, payload.contributor_id, payload.contributor_type)
         return UploadResponse(ingested=len(payload.records))
 
     @web_app.get("/data")

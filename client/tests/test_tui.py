@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from textual.widgets import Button, ContentSwitcher, DataTable, Input, Label, RadioSet
 
-from cc_sentiment.models import AppState, BucketIndex, GPGConfig, ProcessedSession, SentimentRecord, SentimentScore, SessionId, SSHConfig
+from cc_sentiment.models import AppState, BucketIndex, ContributorId, GPGConfig, ProcessedSession, SentimentRecord, SentimentScore, SessionId, SSHConfig
 from cc_sentiment.signing import GPGKeyInfo, SSHKeyInfo
 from cc_sentiment.tui import ScanApp, SetupApp
 
@@ -122,7 +122,8 @@ async def test_save_ssh_config(tmp_path: Path):
 
             loaded = AppState.model_validate_json(state_file.read_text())
             assert isinstance(loaded.config, SSHConfig)
-            assert loaded.config.github_username == "testuser"
+            assert loaded.config.contributor_id == "testuser"
+            assert loaded.config.contributor_type == "github"
             assert loaded.config.key_path == Path("/home/.ssh/id_ed25519")
 
 
@@ -254,7 +255,7 @@ async def test_scan_app_runs_pipeline_and_uploads(tmp_path: Path):
     state_file = tmp_path / "state.json"
     records = [_make_record(3), _make_record(4)]
 
-    state = AppState(config=GPGConfig(github_username="testuser", fpr="ABCD1234"))
+    state = AppState(config=GPGConfig(contributor_type="github", contributor_id=ContributorId("testuser"), fpr="ABCD1234"))
 
     mock_pipeline_run = AsyncMock(return_value=records)
     mock_upload = AsyncMock()

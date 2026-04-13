@@ -10,6 +10,9 @@ SessionId = NewType("SessionId", str)
 BucketIndex = NewType("BucketIndex", int)
 SentimentScore = NewType("SentimentScore", int)
 PromptVersion = NewType("PromptVersion", str)
+ContributorId = NewType("ContributorId", str)
+
+ContributorType = Literal["github", "gpg"]
 
 PROMPT_VERSION = PromptVersion("v1")
 DEFAULT_MODEL = "unsloth/gemma-4-E2B-it-UD-MLX-4bit"
@@ -44,20 +47,23 @@ class SentimentRecord(BaseModel, frozen=True):
 
 
 class UploadPayload(BaseModel, frozen=True):
-    github_username: str
+    contributor_type: ContributorType
+    contributor_id: str
     signature: str
     records: tuple[SentimentRecord, ...]
 
 
 class SSHConfig(BaseModel, frozen=True):
     key_type: Literal["ssh"] = "ssh"
-    github_username: str
+    contributor_type: Literal["github"] = "github"
+    contributor_id: ContributorId
     key_path: Path
 
 
 class GPGConfig(BaseModel, frozen=True):
     key_type: Literal["gpg"] = "gpg"
-    github_username: str
+    contributor_type: ContributorType
+    contributor_id: ContributorId
     fpr: str
 
 

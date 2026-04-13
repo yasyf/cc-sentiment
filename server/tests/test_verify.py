@@ -9,7 +9,7 @@ import pytest
 from cc_sentiment_server.verify import DictKeyCache, Verifier
 
 
-class TestFetchSSHKeys:
+class TestFetchGitHubSSHKeys:
     @pytest.mark.asyncio
     async def test_returns_keys(self) -> None:
         mock_response = MagicMock()
@@ -23,7 +23,7 @@ class TestFetchSSHKeys:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with patch("cc_sentiment_server.verify.httpx.AsyncClient", return_value=mock_client):
-            keys = await Verifier().fetch_ssh_keys("octocat")
+            keys = await Verifier().fetch_github_ssh_keys("octocat")
 
         mock_client.get.assert_called_once_with("https://github.com/octocat.keys", timeout=10.0)
         assert keys == ["ssh-ed25519 AAAA1 user@host", "ssh-rsa AAAA2 user@host"]
@@ -41,7 +41,7 @@ class TestFetchSSHKeys:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with patch("cc_sentiment_server.verify.httpx.AsyncClient", return_value=mock_client):
-            keys = await Verifier().fetch_ssh_keys("octocat")
+            keys = await Verifier().fetch_github_ssh_keys("octocat")
 
         assert len(keys) == 2
 
@@ -57,133 +57,143 @@ class TestFetchSSHKeys:
 
         with patch("cc_sentiment_server.verify.httpx.AsyncClient", return_value=mock_client):
             with pytest.raises(ValueError, match="GitHub user not found"):
-                await Verifier().fetch_ssh_keys("nonexistent-xyz")
+                await Verifier().fetch_github_ssh_keys("nonexistent-xyz")
 
 
-class TestUsernameValidation:
+class TestContributorTypeRouting:
     @pytest.mark.asyncio
-    async def test_newlines_rejected_for_ssh(self) -> None:
-        with pytest.raises(ValueError, match="Invalid GitHub username"):
-            await Verifier().verify_signature("bad\nuser", "{}", "-----BEGIN SSH SIGNATURE-----\nsig")
+    async def test_github_ssh_dispatches_correctly(self) -> None:
+        verifier = Verifier()
+        verifier.verify_github_ssh = AsyncMock(return_value=True)
+
+        result = await verifier.verify_signature(
+            "github", "octocat", '{"test":1}', "-----BEGIN SSH SIGNATURE-----\nsig"
+        )
+
+        assert result is True
+        verifier.verify_github_ssh.assert_called_once_with("octocat", '{"test":1}', "-----BEGIN SSH SIGNATURE-----\nsig")
 
     @pytest.mark.asyncio
-    async def test_spaces_rejected_for_ssh(self) -> None:
-        with pytest.raises(ValueError, match="Invalid GitHub username"):
-            await Verifier().verify_signature("bad user", "{}", "-----BEGIN SSH SIGNATURE-----\nsig")
+    async def test_github_gpg_dispatches_correctly(self) -> None:
+        verifier = Verifier()
+        verifier.verify_github_gpg = AsyncMock(return_value=True)
+
+        result = await verifier.verify_signature(
+            "github", "octocat", '{"test":1}', "-----BEGIN PGP SIGNATURE-----\nsig"
+        )
+
+        assert result is True
+        verifier.verify_github_gpg.assert_called_once_with("octocat", '{"test":1}', "-----BEGIN PGP SIGNATURE-----\nsig")
 
     @pytest.mark.asyncio
-    async def test_unknown_signature_format(self) -> None:
+    async def test_gpg_dispatches_to_openpgp(self) -> None:
+        verifier = Verifier()
+        verifier.verify_openpgp = AsyncMock(return_value=True)
+
+        result = await verifier.verify_signature(
+            "gpg", "F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A",
+            '{"test":1}', "-----BEGIN PGP SIGNATURE-----\nsig"
+        )
+
+        assert result is True
+        verifier.verify_openpgp.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_unknown_contributor_type_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unknown contributor type"):
+            await Verifier().verify_signature("unknown", "user", "{}", "sig")
+
+    @pytest.mark.asyncio
+    async def test_unknown_signature_format_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown signature format"):
-            await Verifier().verify_signature("octocat", "{}", "garbage-sig")
+            await Verifier().verify_signature("github", "octocat", "{}", "garbage-sig")
 
 
-class TestSSHVerification:
+class TestGitHubSSHVerification:
+    @pytest.mark.asyncio
+    async def test_invalid_username_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Invalid GitHub username"):
+            await Verifier().verify_github_ssh("bad\nuser", "{}", "sig")
+
+    @pytest.mark.asyncio
+    async def test_spaces_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Invalid GitHub username"):
+            await Verifier().verify_github_ssh("bad user", "{}", "sig")
+
     @pytest.mark.asyncio
     async def test_success_with_matching_key(self) -> None:
         verifier = Verifier()
-        verifier.fetch_ssh_keys = AsyncMock(return_value=["ssh-ed25519 AAAA1 user@host"])
+        verifier.fetch_github_ssh_keys = AsyncMock(return_value=["ssh-ed25519 AAAA1 user@host"])
 
         with patch.object(verifier, "_verify_with_ssh_key", return_value=True):
-            result = await verifier.verify_signature(
-                "octocat", '{"test":1}', "-----BEGIN SSH SIGNATURE-----\nsig"
-            )
+            result = await verifier.verify_github_ssh("octocat", '{"test":1}', "sig")
 
         assert result is True
 
     @pytest.mark.asyncio
     async def test_failure_with_no_matching_key(self) -> None:
         verifier = Verifier()
-        verifier.fetch_ssh_keys = AsyncMock(return_value=["ssh-ed25519 AAAA1 user@host"])
+        verifier.fetch_github_ssh_keys = AsyncMock(return_value=["ssh-ed25519 AAAA1 user@host"])
 
         with patch.object(verifier, "_verify_with_ssh_key", return_value=False):
-            result = await verifier.verify_signature(
-                "octocat", '{"test":1}', "-----BEGIN SSH SIGNATURE-----\nbad"
-            )
+            result = await verifier.verify_github_ssh("octocat", '{"test":1}', "bad")
 
         assert result is False
 
     @pytest.mark.asyncio
     async def test_empty_keys_returns_false(self) -> None:
         verifier = Verifier()
-        verifier.fetch_ssh_keys = AsyncMock(return_value=[])
+        verifier.fetch_github_ssh_keys = AsyncMock(return_value=[])
 
-        result = await verifier.verify_ssh("octocat", "{}", "sig")
+        result = await verifier.verify_github_ssh("octocat", "{}", "sig")
         assert result is False
 
 
-class TestGPGVerification:
+class TestGitHubGPGVerification:
     @pytest.mark.asyncio
-    async def test_dispatches_to_gpg(self) -> None:
+    async def test_success(self) -> None:
         verifier = Verifier()
-        verifier.fetch_gpg_keys = AsyncMock(return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----\nkey")
+        verifier.fetch_github_gpg_keys = AsyncMock(return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----\nkey")
 
-        with patch.object(verifier, "_check_gpg_signature", return_value=True), \
-             patch.object(verifier, "_extract_gpg_key_id", return_value=None):
-            result = await verifier.verify_signature(
-                "octocat", '{"test":1}', "-----BEGIN PGP SIGNATURE-----\nsig"
-            )
+        with patch.object(verifier, "_check_gpg_signature", return_value=True):
+            result = await verifier.verify_github_gpg("octocat", '{"test":1}', "sig")
 
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_gpg_failure_falls_back_to_openpgp(self) -> None:
+    async def test_no_keys_returns_false(self) -> None:
         verifier = Verifier()
-        verifier.fetch_gpg_keys = AsyncMock(return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----\nkey")
-        verifier.fetch_openpgp_key_by_keyid = AsyncMock(return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----\nopenpgp-key")
+        verifier.fetch_github_gpg_keys = AsyncMock(return_value="")
 
-        call_count = 0
-        def check_sig(armor, payload, sig):
-            nonlocal call_count
-            call_count += 1
-            return call_count == 2
-
-        with patch.object(verifier, "_check_gpg_signature", side_effect=check_sig), \
-             patch.object(verifier, "_extract_gpg_key_id", return_value="ABCDEF1234567890"):
-            result = await verifier.verify_signature(
-                "octocat", '{"test":1}', "-----BEGIN PGP SIGNATURE-----\nsig"
-            )
-
-        assert result is True
-        verifier.fetch_openpgp_key_by_keyid.assert_called_once_with("ABCDEF1234567890")
-
-    @pytest.mark.asyncio
-    async def test_gpg_fingerprint_identity_checks_openpgp(self) -> None:
-        verifier = Verifier()
-        verifier.fetch_openpgp_key_by_fpr = AsyncMock(return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----\nkey")
-
-        with patch.object(verifier, "_check_gpg_signature", return_value=True), \
-             patch.object(verifier, "_extract_gpg_key_id", return_value=None):
-            result = await verifier.verify_gpg(
-                "ABCDEF1234567890ABCDEF1234567890ABCDEF12", '{"test":1}', "sig"
-            )
-
-        assert result is True
-        verifier.fetch_openpgp_key_by_fpr.assert_called_once_with("ABCDEF1234567890ABCDEF1234567890ABCDEF12")
-
-    @pytest.mark.asyncio
-    async def test_no_gpg_keys_returns_false(self) -> None:
-        verifier = Verifier()
-        verifier.fetch_gpg_keys = AsyncMock(return_value="")
-
-        with patch.object(verifier, "_extract_gpg_key_id", return_value=None):
-            result = await verifier.verify_gpg("octocat", "{}", "sig")
-
+        result = await verifier.verify_github_gpg("octocat", "{}", "sig")
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_gpg_allows_non_github_username(self) -> None:
-        verifier = Verifier()
-        verifier.fetch_openpgp_key_by_fpr = AsyncMock(return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----\nkey")
+    async def test_invalid_username_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Invalid GitHub username"):
+            await Verifier().verify_github_gpg("bad\nuser", "{}", "sig")
 
-        with patch.object(verifier, "_check_gpg_signature", return_value=True), \
-             patch.object(verifier, "_extract_gpg_key_id", return_value=None):
-            result = await verifier.verify_signature(
-                "F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A",
-                '{"test":1}',
-                "-----BEGIN PGP SIGNATURE-----\nsig",
+
+class TestOpenPGPVerification:
+    @pytest.mark.asyncio
+    async def test_success(self) -> None:
+        verifier = Verifier()
+        verifier.fetch_openpgp_key = AsyncMock(return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----\nkey")
+
+        with patch.object(verifier, "_check_gpg_signature", return_value=True):
+            result = await verifier.verify_openpgp(
+                "F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A", '{"test":1}', "sig"
             )
 
         assert result is True
+
+    @pytest.mark.asyncio
+    async def test_no_key_returns_false(self) -> None:
+        verifier = Verifier()
+        verifier.fetch_openpgp_key = AsyncMock(return_value="")
+
+        result = await verifier.verify_openpgp("ABCDEF1234567890", "{}", "sig")
+        assert result is False
 
 
 class TestSSHKeyCache:
@@ -191,10 +201,10 @@ class TestSSHKeyCache:
     async def test_populates_on_miss(self) -> None:
         cache = DictKeyCache()
         verifier = Verifier(key_cache=cache)
-        verifier.fetch_ssh_keys = AsyncMock(return_value=["ssh-ed25519 KEY1 user@host"])
+        verifier.fetch_github_ssh_keys = AsyncMock(return_value=["ssh-ed25519 KEY1 user@host"])
 
         with patch.object(verifier, "_verify_with_ssh_key", return_value=True):
-            await verifier.verify_ssh("octocat", "{}", "sig")
+            await verifier.verify_github_ssh("octocat", "{}", "sig")
 
         assert cache.d["ssh:octocat"] == ["ssh-ed25519 KEY1 user@host"]
 
@@ -203,12 +213,12 @@ class TestSSHKeyCache:
         cache = DictKeyCache()
         cache.d["ssh:octocat"] = ["ssh-ed25519 CACHED user@host"]
         verifier = Verifier(key_cache=cache)
-        verifier.fetch_ssh_keys = AsyncMock()
+        verifier.fetch_github_ssh_keys = AsyncMock()
 
         with patch.object(verifier, "_verify_with_ssh_key", return_value=True):
-            await verifier.verify_ssh("octocat", "{}", "sig")
+            await verifier.verify_github_ssh("octocat", "{}", "sig")
 
-        verifier.fetch_ssh_keys.assert_not_called()
+        verifier.fetch_github_ssh_keys.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_refetches_on_mismatch(self) -> None:
@@ -219,13 +229,13 @@ class TestSSHKeyCache:
         def verify_key(username, key, payload, sig):
             return key == "ssh-ed25519 NEW user@host"
 
-        verifier.fetch_ssh_keys = AsyncMock(return_value=["ssh-ed25519 NEW user@host"])
+        verifier.fetch_github_ssh_keys = AsyncMock(return_value=["ssh-ed25519 NEW user@host"])
 
         with patch.object(verifier, "_verify_with_ssh_key", side_effect=verify_key):
-            result = await verifier.verify_ssh("octocat", "{}", "sig")
+            result = await verifier.verify_github_ssh("octocat", "{}", "sig")
 
         assert result is True
-        verifier.fetch_ssh_keys.assert_called_once()
+        verifier.fetch_github_ssh_keys.assert_called_once()
         assert cache.d["ssh:octocat"] == ["ssh-ed25519 NEW user@host"]
 
 

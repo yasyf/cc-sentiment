@@ -10,6 +10,7 @@ import pytest
 from cc_sentiment.models import (
     AppState,
     BucketIndex,
+    ContributorId,
     ProcessedSession,
     SentimentRecord,
     SentimentScore,
@@ -86,7 +87,7 @@ class TestUpload:
         record = make_record()
         state = AppState(
             config=SSHConfig(
-                github_username="testuser",
+                contributor_id=ContributorId("testuser"),
                 key_path=Path("/home/.ssh/id_ed25519"),
             ),
             sessions={

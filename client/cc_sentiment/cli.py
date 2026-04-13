@@ -9,7 +9,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from cc_sentiment.models import AppState, GPGConfig, SentimentRecord, SSHConfig
+from cc_sentiment.models import AppState, ContributorId, GPGConfig, SentimentRecord, SSHConfig
 from cc_sentiment.signing import GPGBackend, KeyDiscovery, SSHBackend
 
 SCORE_COLORS: dict[int, str] = {1: "red", 2: "red", 3: "yellow", 4: "green", 5: "green"}
@@ -41,23 +41,26 @@ def auto_setup(state: AppState) -> bool:
 
     if username:
         if backend := KeyDiscovery.match_ssh_key(username):
-            state.config = SSHConfig(github_username=username, key_path=backend.private_key_path)
+            state.config = SSHConfig(contributor_id=ContributorId(username), key_path=backend.private_key_path)
             state.save()
             console.print(f"[green]Auto-configured:[/] {username} with SSH key {backend.private_key_path}")
             return True
 
         if backend := KeyDiscovery.match_gpg_key(username):
-            state.config = GPGConfig(github_username=username, fpr=backend.fpr)
+            state.config = GPGConfig(contributor_type="github", contributor_id=ContributorId(username), fpr=backend.fpr)
             state.save()
             console.print(f"[green]Auto-configured:[/] {username} with GPG key {backend.fpr[-8:]}")
             return True
 
     for info in KeyDiscovery.find_gpg_keys():
         if KeyDiscovery.fetch_openpgp_key(info.fpr):
-            identity = username or info.fpr
-            state.config = GPGConfig(github_username=identity, fpr=info.fpr)
+            if username:
+                state.config = GPGConfig(contributor_type="github", contributor_id=ContributorId(username), fpr=info.fpr)
+                label = username
+            else:
+                state.config = GPGConfig(contributor_type="gpg", contributor_id=ContributorId(info.fpr), fpr=info.fpr)
+                label = f"GPG {info.fpr[-8:]}"
             state.save()
-            label = username or f"GPG {info.fpr[-8:]}"
             console.print(f"[green]Auto-configured:[/] {label} with GPG key on keys.openpgp.org")
             return True
 

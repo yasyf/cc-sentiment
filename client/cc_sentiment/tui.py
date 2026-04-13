@@ -31,6 +31,7 @@ from textual.widgets import (
 
 from cc_sentiment.models import (
     AppState,
+    ContributorId,
     GPGConfig,
     SentimentRecord,
     SSHConfig,
@@ -523,9 +524,12 @@ Expire-Date: 0
 
         match key:
             case SSHKeyInfo(path=p):
-                state.config = SSHConfig(github_username=identity, key_path=p)
+                state.config = SSHConfig(contributor_id=ContributorId(identity), key_path=p)
             case GPGKeyInfo(fpr=f):
-                state.config = GPGConfig(github_username=identity or f, fpr=f)
+                if identity:
+                    state.config = GPGConfig(contributor_type="github", contributor_id=ContributorId(identity), fpr=f)
+                else:
+                    state.config = GPGConfig(contributor_type="gpg", contributor_id=ContributorId(f), fpr=f)
 
         state.save()
 

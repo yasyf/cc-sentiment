@@ -4,12 +4,12 @@ import asyncio
 import re
 import subprocess
 import tempfile
+from typing import Any
 
 import gnupg
 import httpx
 
 USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
-GPG_FPR_PATTERN = re.compile(r"^[0-9A-Fa-f]{16,40}$")
 
 __all__ = ["Verifier"]
 
@@ -45,7 +45,7 @@ class Verifier:
     def __init__(self, key_cache: KeyCache | None = None) -> None:
         self.key_cache = key_cache
 
-    async def fetch_ssh_keys(self, username: str) -> list[str]:
+    async def fetch_github_ssh_keys(self, username: str) -> list[str]:
         async with httpx.AsyncClient() as client:
             response = await client.get(f"https://github.com/{username}.keys", timeout=10.0)
             if response.status_code == 404:
@@ -53,12 +53,12 @@ class Verifier:
             response.raise_for_status()
         return [line for line in response.text.strip().split("\n") if line]
 
-    async def fetch_gpg_keys(self, username: str) -> str:
+    async def fetch_github_gpg_keys(self, username: str) -> str:
         async with httpx.AsyncClient() as client:
             response = await client.get(f"https://github.com/{username}.gpg", timeout=10.0)
         return response.text if response.status_code == 200 else ""
 
-    async def fetch_openpgp_key_by_fpr(self, fpr: str) -> str:
+    async def fetch_openpgp_key(self, fpr: str) -> str:
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"https://keys.openpgp.org/vks/v1/by-fingerprint/{fpr.upper()}",
@@ -66,47 +66,37 @@ class Verifier:
             )
         return response.text if response.status_code == 200 else ""
 
-    async def fetch_openpgp_key_by_keyid(self, keyid: str) -> str:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"https://keys.openpgp.org/vks/v1/by-keyid/{keyid.upper()}",
-                timeout=10.0,
-            )
-        return response.text if response.status_code == 200 else ""
-
-    async def get_or_fetch_ssh_keys(self, username: str, *, force: bool = False) -> list[str]:
-        cache_key = f"ssh:{username}"
+    async def get_or_fetch(self, cache_key: str, fetcher: Any, *args: Any, force: bool = False) -> Any:
         if not force and self.key_cache is not None and (cached := await self.key_cache.get(cache_key)) is not None:
             return cached
-        keys = await self.fetch_ssh_keys(username)
+        result = await fetcher(*args)
         if self.key_cache is not None:
-            await self.key_cache.put(cache_key, keys)
-        return keys
+            await self.key_cache.put(cache_key, result)
+        return result
 
-    async def get_or_fetch_gpg_keys(self, username: str, *, force: bool = False) -> str:
-        cache_key = f"gpg:{username}"
-        if not force and self.key_cache is not None and (cached := await self.key_cache.get(cache_key)) is not None:
-            return cached
-        armor = await self.fetch_gpg_keys(username)
-        if self.key_cache is not None:
-            await self.key_cache.put(cache_key, armor)
-        return armor
-
-    async def verify_signature(self, username: str, payload_json: str, signature: str) -> bool:
-        match signature.split("\n", 1)[0].strip():
-            case s if "SSH" in s:
-                if not USERNAME_PATTERN.fullmatch(username):
-                    raise ValueError(f"Invalid GitHub username: {username!r}")
-                return await self.verify_ssh(username, payload_json, signature)
-            case s if "PGP" in s:
-                return await self.verify_gpg(username, payload_json, signature)
+    async def verify_signature(self, contributor_type: str, contributor_id: str,
+                               payload: str, signature: str) -> bool:
+        match contributor_type:
+            case "github":
+                match signature.split("\n", 1)[0].strip():
+                    case s if "SSH" in s:
+                        return await self.verify_github_ssh(contributor_id, payload, signature)
+                    case s if "PGP" in s:
+                        return await self.verify_github_gpg(contributor_id, payload, signature)
+                    case _:
+                        raise ValueError("Unknown signature format")
+            case "gpg":
+                return await self.verify_openpgp(contributor_id, payload, signature)
             case _:
-                raise ValueError("Unknown signature format")
+                raise ValueError(f"Unknown contributor type: {contributor_type!r}")
 
-    async def verify_ssh(self, username: str, payload_json: str, signature: str) -> bool:
-        cached_keys = await self.get_or_fetch_ssh_keys(username)
+    async def verify_github_ssh(self, username: str, payload: str, signature: str) -> bool:
+        if not USERNAME_PATTERN.fullmatch(username):
+            raise ValueError(f"Invalid GitHub username: {username!r}")
+
+        cached_keys: list[str] = await self.get_or_fetch(f"ssh:{username}", self.fetch_github_ssh_keys, username)
         if any(await asyncio.gather(*(
-            self.verify_with_ssh_key(username, key, payload_json, signature)
+            self.verify_with_ssh_key(username, key, payload, signature)
             for key in cached_keys
         ))):
             return True
@@ -114,60 +104,49 @@ class Verifier:
         if self.key_cache is None:
             return False
 
-        fresh_keys = await self.get_or_fetch_ssh_keys(username, force=True)
+        fresh_keys: list[str] = await self.get_or_fetch(f"ssh:{username}", self.fetch_github_ssh_keys, username, force=True)
         return any(await asyncio.gather(*(
-            self.verify_with_ssh_key(username, key, payload_json, signature)
+            self.verify_with_ssh_key(username, key, payload, signature)
             for key in fresh_keys
             if key not in cached_keys
         )))
 
-    async def verify_gpg(self, username: str, payload_json: str, signature: str) -> bool:
-        if USERNAME_PATTERN.fullmatch(username):
-            armor = await self.get_or_fetch_gpg_keys(username)
-            if armor and await self.check_gpg_signature(armor, payload_json, signature):
-                return True
+    async def verify_github_gpg(self, username: str, payload: str, signature: str) -> bool:
+        if not USERNAME_PATTERN.fullmatch(username):
+            raise ValueError(f"Invalid GitHub username: {username!r}")
 
-            if self.key_cache is not None:
-                fresh_armor = await self.get_or_fetch_gpg_keys(username, force=True)
-                if fresh_armor != armor and fresh_armor:
-                    if await self.check_gpg_signature(fresh_armor, payload_json, signature):
-                        return True
+        armor: str = await self.get_or_fetch(f"gpg-github:{username}", self.fetch_github_gpg_keys, username)
+        if armor and await self.check_gpg_signature(armor, payload, signature):
+            return True
 
-        if GPG_FPR_PATTERN.fullmatch(username):
-            openpgp_armor = await self.fetch_openpgp_key_by_fpr(username)
-            if openpgp_armor and await self.check_gpg_signature(openpgp_armor, payload_json, signature):
-                return True
+        if self.key_cache is None:
+            return False
 
-        keyid = self._extract_gpg_key_id(signature)
-        if keyid:
-            openpgp_armor = await self.fetch_openpgp_key_by_keyid(keyid)
-            if openpgp_armor and await self.check_gpg_signature(openpgp_armor, payload_json, signature):
-                return True
+        fresh_armor: str = await self.get_or_fetch(f"gpg-github:{username}", self.fetch_github_gpg_keys, username, force=True)
+        if fresh_armor != armor and fresh_armor:
+            return await self.check_gpg_signature(fresh_armor, payload, signature)
 
         return False
 
-    @staticmethod
-    def _extract_gpg_key_id(signature: str) -> str | None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            sig_path = f"{tmpdir}/sig.asc"
-            with open(sig_path, "w") as f:
-                f.write(signature)
-            result = subprocess.run(
-                ["gpg", "--homedir", tmpdir, "--list-packets", sig_path],
-                capture_output=True, text=True, timeout=10,
-            )
-            for line in result.stdout.splitlines():
-                if "keyid" in line.lower():
-                    match = re.search(r"([0-9A-Fa-f]{16})", line)
-                    if match:
-                        return match.group(1)
-        return None
+    async def verify_openpgp(self, fingerprint: str, payload: str, signature: str) -> bool:
+        armor: str = await self.get_or_fetch(f"gpg-openpgp:{fingerprint}", self.fetch_openpgp_key, fingerprint)
+        if armor and await self.check_gpg_signature(armor, payload, signature):
+            return True
 
-    async def check_gpg_signature(self, public_key_armor: str, payload_json: str, signature: str) -> bool:
-        return await asyncio.to_thread(self._check_gpg_signature, public_key_armor, payload_json, signature)
+        if self.key_cache is None:
+            return False
+
+        fresh_armor: str = await self.get_or_fetch(f"gpg-openpgp:{fingerprint}", self.fetch_openpgp_key, fingerprint, force=True)
+        if fresh_armor != armor and fresh_armor:
+            return await self.check_gpg_signature(fresh_armor, payload, signature)
+
+        return False
+
+    async def check_gpg_signature(self, public_key_armor: str, payload: str, signature: str) -> bool:
+        return await asyncio.to_thread(self._check_gpg_signature, public_key_armor, payload, signature)
 
     @staticmethod
-    def _check_gpg_signature(public_key_armor: str, payload_json: str, signature: str) -> bool:
+    def _check_gpg_signature(public_key_armor: str, payload: str, signature: str) -> bool:
         with tempfile.TemporaryDirectory() as tmpdir:
             g = gnupg.GPG(gnupghome=tmpdir)
             g.import_keys(public_key_armor)
@@ -177,16 +156,16 @@ class Verifier:
             with open(sig_path, "wb") as f:
                 f.write(signature.encode())
             with open(data_path, "wb") as f:
-                f.write(payload_json.encode())
+                f.write(payload.encode())
 
             with open(sig_path, "rb") as sig_fh:
                 return bool(g.verify_file(sig_fh, data_filename=data_path))
 
-    async def verify_with_ssh_key(self, username: str, key: str, payload_json: str, signature: str) -> bool:
-        return await asyncio.to_thread(self._verify_with_ssh_key, username, key, payload_json, signature)
+    async def verify_with_ssh_key(self, username: str, key: str, payload: str, signature: str) -> bool:
+        return await asyncio.to_thread(self._verify_with_ssh_key, username, key, payload, signature)
 
     @staticmethod
-    def _verify_with_ssh_key(username: str, key: str, payload_json: str, signature: str) -> bool:
+    def _verify_with_ssh_key(username: str, key: str, payload: str, signature: str) -> bool:
         with (
             tempfile.NamedTemporaryFile(mode="w", suffix=".pub") as allowed_signers_file,
             tempfile.NamedTemporaryFile(mode="w", suffix=".sig") as sig_file,
@@ -198,7 +177,7 @@ class Verifier:
             sig_file.write(signature)
             sig_file.flush()
 
-            payload_file.write(payload_json)
+            payload_file.write(payload)
             payload_file.flush()
 
             with open(payload_file.name) as stdin_fh:

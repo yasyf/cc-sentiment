@@ -58,7 +58,8 @@ class Uploader:
             (await client.post(
                 f"{self.server_url}/verify",
                 json={
-                    "github_username": config.github_username,
+                    "contributor_type": config.contributor_type,
+                    "contributor_id": config.contributor_id,
                     "signature": PayloadSigner.sign(TEST_PAYLOAD, backend),
                     "test_payload": TEST_PAYLOAD,
                 },
@@ -71,7 +72,8 @@ class Uploader:
 
         backend = self.backend_from_config(state.config)
         payload = UploadPayload(
-            github_username=state.config.github_username,
+            contributor_type=state.config.contributor_type,
+            contributor_id=state.config.contributor_id,
             signature=PayloadSigner.sign_records(records, backend),
             records=tuple(records),
         )

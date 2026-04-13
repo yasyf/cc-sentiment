@@ -20,13 +20,14 @@ CREATE TABLE IF NOT EXISTS sentiment (
     time TIMESTAMPTZ NOT NULL,
     conversation_id TEXT NOT NULL,
     bucket_index SMALLINT NOT NULL,
-    github_username TEXT NOT NULL,
+    contributor_type TEXT NOT NULL CHECK(contributor_type IN ('github', 'gpg')),
+    contributor_id TEXT NOT NULL,
     sentiment_score SMALLINT NOT NULL CHECK(sentiment_score BETWEEN 1 AND 5),
     prompt_version TEXT NOT NULL,
     model_id TEXT NOT NULL,
     client_version TEXT NOT NULL,
     ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(time, conversation_id, bucket_index, github_username)
+    UNIQUE(time, conversation_id, bucket_index, contributor_id)
 )
 """
 
@@ -42,8 +43,8 @@ CREATE_INDEXES_SQL = [
         ON sentiment (time DESC, sentiment_score)
     """,
     """
-    CREATE INDEX IF NOT EXISTS idx_sentiment_username_time
-        ON sentiment (github_username, time DESC)
+    CREATE INDEX IF NOT EXISTS idx_sentiment_contributor_time
+        ON sentiment (contributor_id, time DESC)
     """,
 ]
 
@@ -69,7 +70,7 @@ SELECT add_continuous_aggregate_policy('sentiment_hourly',
 ENABLE_COMPRESSION_SQL = """
 ALTER TABLE sentiment SET (
     timescaledb.compress,
-    timescaledb.compress_segmentby = 'github_username',
+    timescaledb.compress_segmentby = 'contributor_id',
     timescaledb.compress_orderby = 'time DESC'
 )
 """
@@ -89,10 +90,19 @@ SEED_STATEMENTS = [
     ADD_COMPRESSION_POLICY_SQL,
 ]
 
+MIGRATE_SQL = [
+    "ALTER TABLE sentiment ADD COLUMN IF NOT EXISTS contributor_type TEXT NOT NULL DEFAULT 'github'",
+    "ALTER TABLE sentiment RENAME COLUMN github_username TO contributor_id",
+    "UPDATE sentiment SET contributor_type = 'gpg' WHERE contributor_id ~ '^[0-9A-Fa-f]{16,40}$'",
+    "ALTER TABLE sentiment ALTER COLUMN contributor_type DROP DEFAULT",
+    "DROP INDEX IF EXISTS idx_sentiment_username_time",
+    "CREATE INDEX IF NOT EXISTS idx_sentiment_contributor_time ON sentiment (contributor_id, time DESC)",
+]
+
 INGEST_SQL = """
-INSERT INTO sentiment (time, conversation_id, bucket_index, github_username,
+INSERT INTO sentiment (time, conversation_id, bucket_index, contributor_type, contributor_id,
                        sentiment_score, prompt_version, model_id, client_version)
-VALUES (%(time)s, %(conversation_id)s, %(bucket_index)s, %(github_username)s,
+VALUES (%(time)s, %(conversation_id)s, %(bucket_index)s, %(contributor_type)s, %(contributor_id)s,
         %(sentiment_score)s, %(prompt_version)s, %(model_id)s, %(client_version)s)
 ON CONFLICT DO NOTHING
 """
@@ -138,7 +148,7 @@ SELECT COUNT(DISTINCT conversation_id)::int FROM sentiment
 """
 
 TOTAL_CONTRIBUTORS_SQL = """
-SELECT COUNT(DISTINCT github_username)::int FROM sentiment
+SELECT COUNT(DISTINCT contributor_id)::int FROM sentiment
 """
 
 LAST_UPDATED_SQL = """
@@ -161,7 +171,12 @@ class Database:
             for sql in SEED_STATEMENTS:
                 await conn.execute(sql)
 
-    async def ingest(self, records: list[SentimentRecord], github_username: str) -> None:
+    async def migrate(self) -> None:
+        async with self.pool.connection() as conn:
+            for sql in MIGRATE_SQL:
+                await conn.execute(sql)
+
+    async def ingest(self, records: list[SentimentRecord], contributor_id: str, contributor_type: str) -> None:
         async with self.pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.executemany(
@@ -171,7 +186,8 @@ class Database:
                             "time": r.time,
                             "conversation_id": r.conversation_id,
                             "bucket_index": r.bucket_index,
-                            "github_username": github_username,
+                            "contributor_type": contributor_type,
+                            "contributor_id": contributor_id,
                             "sentiment_score": r.sentiment_score,
                             "prompt_version": r.prompt_version,
                             "model_id": r.model_id,
