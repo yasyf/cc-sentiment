@@ -6,6 +6,7 @@ from pathlib import Path
 from cc_sentiment.engines import InferenceEngine, OMLXEngine
 from cc_sentiment.models import (
     AppState,
+    BucketKey,
     ProcessedFile,
     ProcessedSession,
     SentimentRecord,
@@ -35,13 +36,22 @@ class Pipeline:
     async def process_transcript(
         path: Path,
         classifier: InferenceEngine,
+        scored_buckets: frozenset[BucketKey] = frozenset(),
     ) -> list[SentimentRecord]:
         messages = TranscriptParser.parse_file(path)
         if not messages:
             return []
 
-        buckets = ConversationBucketer.bucket_messages(messages)
-        scores = await classifier.score(buckets)
+        all_buckets = ConversationBucketer.bucket_messages(messages)
+        new_buckets = [
+            b for b in all_buckets
+            if BucketKey(session_id=b.session_id, bucket_index=b.bucket_index) not in scored_buckets
+        ]
+
+        if not new_buckets:
+            return []
+
+        scores = await classifier.score(new_buckets)
 
         return [
             SentimentRecord(
@@ -50,12 +60,21 @@ class Pipeline:
                 bucket_index=bucket.bucket_index,
                 sentiment_score=score,
             )
-            for bucket, score in zip(buckets, scores)
+            for bucket, score in zip(new_buckets, scores)
         ]
 
     @staticmethod
     def save_records(state: AppState, path: Path, mtime: float, records: list[SentimentRecord]) -> None:
-        state.processed_files[str(path)] = ProcessedFile(mtime=mtime)
+        existing_file = state.processed_files.get(str(path))
+        prev_buckets = existing_file.scored_buckets if existing_file else frozenset()
+        new_bucket_keys = frozenset(
+            BucketKey(session_id=r.conversation_id, bucket_index=r.bucket_index)
+            for r in records
+        )
+        state.processed_files[str(path)] = ProcessedFile(
+            mtime=mtime,
+            scored_buckets=prev_buckets | new_bucket_keys,
+        )
         by_session: dict[SessionId, list[SentimentRecord]] = {}
         for record in records:
             by_session.setdefault(record.conversation_id, []).append(record)
@@ -99,7 +118,9 @@ class Pipeline:
 
         try:
             for path, mtime in transcripts:
-                records = await cls.process_transcript(path, classifier)
+                existing_file = state.processed_files.get(str(path))
+                scored_buckets = existing_file.scored_buckets if existing_file else frozenset()
+                records = await cls.process_transcript(path, classifier, scored_buckets)
                 all_records.extend(records)
                 cls.save_records(state, path, mtime, records)
 

@@ -68,9 +68,17 @@ def ensure_config(state: AppState) -> None:
     assert state.config is not None, "Setup was not completed."
 
 
-@click.group()
-def main() -> None:
-    pass
+@click.group(invoke_without_command=True)
+@click.pass_context
+def main(ctx: click.Context) -> None:
+    if ctx.invoked_subcommand is not None:
+        return
+
+    state = AppState.load()
+    ensure_config(state)
+
+    from cc_sentiment.tui import ScanApp
+    ScanApp(state=state, engine="omlx", model_repo=None, limit=None, do_upload=True).run()
 
 
 @main.command()
@@ -94,7 +102,7 @@ def scan(do_upload: bool, engine: str, model_repo: str | None, limit: int | None
     ScanApp(state=state, engine=engine, model_repo=model_repo, limit=limit, do_upload=do_upload).run()
 
 
-@main.command()
+@main.command(hidden=True)
 @click.option("--transcripts", default=10, help="Max transcripts to benchmark")
 @click.option("--runs", default=1, help="Timed runs per engine")
 @click.option("--engines", default="mlx", help="Comma-separated engines")

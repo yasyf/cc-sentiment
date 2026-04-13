@@ -67,8 +67,14 @@ ClientConfig = Annotated[
 ]
 
 
+class BucketKey(BaseModel, frozen=True):
+    session_id: SessionId
+    bucket_index: BucketIndex
+
+
 class ProcessedFile(BaseModel, frozen=True):
     mtime: float
+    scored_buckets: frozenset[BucketKey] = frozenset()
 
 
 class ProcessedSession(BaseModel, frozen=True):

@@ -10,12 +10,13 @@ from statistics import mean, median
 import httpx
 from textual import on, work
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Center, Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import (
     Button,
     ContentSwitcher,
     DataTable,
+    Digits,
     Footer,
     Header,
     Input,
@@ -23,6 +24,8 @@ from textual.widgets import (
     ProgressBar,
     RadioButton,
     RadioSet,
+    Rule,
+    Sparkline,
     Static,
 )
 
@@ -42,6 +45,7 @@ from cc_sentiment.signing import (
 
 SCORE_COLORS = {1: "red", 2: "red", 3: "yellow", 4: "green", 5: "green"}
 SCORE_LABELS = {1: "frustrated", 2: "annoyed", 3: "neutral", 4: "satisfied", 5: "delighted"}
+SCORE_ICONS = {1: "😤", 2: "😒", 3: "😐", 4: "😊", 5: "🤩"}
 
 CHIP_SPEED = {"M1": 1.5, "M2": 2.0, "M3": 2.5, "M4": 2.8, "M5": 3.2}
 
@@ -491,22 +495,59 @@ Expire-Date: 0
         self.exit()
 
 
+class ScoreBar(Static):
+    DEFAULT_CSS = """
+    ScoreBar { height: 1; }
+    """
+
+    def __init__(self, score: int) -> None:
+        super().__init__()
+        self.score = score
+
+    def render_bar(self, count: int, total: int, max_count: int) -> str:
+        pct = 100 * count / total if total else 0
+        bar_width = 40
+        bar_len = int(bar_width * count / max_count) if max_count else 0
+        color = SCORE_COLORS[self.score]
+        icon = SCORE_ICONS[self.score]
+        label = SCORE_LABELS[self.score]
+        bar = "━" * bar_len + "╺" + "─" * (bar_width - bar_len)
+        return f" {icon} {self.score} [{color}]{label:>11}[/]  [{color}]{bar}[/]  {pct:4.1f}%  ({count})"
+
+
 class ScanApp(App[None]):
     CSS = """
-    Screen { layout: vertical; }
-    #scan-container { height: 100%; padding: 1 2; }
-    .score-row { height: 1; }
-    .score-bar { width: 1fr; }
-    #stats-line { margin: 1 0 0 0; color: $text-muted; }
-    #status-line { margin: 1 0 0 0; }
-    #progress-label { margin: 0 0 0 0; }
+    Screen { layout: vertical; background: $surface; }
+    #main { height: 1fr; padding: 1 2; }
+    #header-section { height: auto; }
+    #title-row { height: 3; }
+    #title-text { width: 1fr; }
+    #score-digits { width: auto; min-width: 20; }
+    #progress-section { height: auto; margin: 1 0; }
+    #progress-row { height: auto; }
+    #progress-label { width: auto; min-width: 24; }
+    #scan-progress { width: 1fr; }
+    #chart-section { height: auto; margin: 1 0 0 0; }
+    #sparkline-container { height: 3; margin: 0 0 1 0; }
+    #score-sparkline { height: 3; }
+    #distribution { height: auto; }
+    #stats-section { height: auto; margin: 1 0 0 0; }
+    #stats-row { height: 3; }
+    .stat-card { width: 1fr; height: 3; padding: 0 1; border: tall $primary-background; }
+    .stat-card .stat-value { text-style: bold; }
+    .stat-card .stat-label { color: $text-muted; }
+    #status-line { height: 1; margin: 1 0 0 0; }
+    #cached-line { height: 1; color: $text-muted; }
     """
+
+    BINDINGS = [("q", "quit", "Quit"), ("escape", "quit", "Quit")]
 
     scored: reactive[int] = reactive(0)
     total: reactive[int] = reactive(0)
     records: reactive[list] = reactive(list, init=False)
     uploaded: reactive[int] = reactive(0)
     status_text: reactive[str] = reactive("Initializing...")
+    cached_buckets: reactive[int] = reactive(0)
 
     def __init__(
         self,
@@ -524,20 +565,61 @@ class ScanApp(App[None]):
         self.do_upload = do_upload
         self.records = []
         self._start_time = 0.0
+        self._score_history: list[float] = []
+        self._score_bars: dict[int, ScoreBar] = {}
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
-        with Vertical(id="scan-container"):
-            yield Label("", id="progress-label")
-            yield ProgressBar(id="scan-progress", total=100)
-            yield Static("", id="score-display")
-            yield Label("", id="stats-line")
+        with Vertical(id="main"):
+            with Vertical(id="header-section"):
+                with Horizontal(id="title-row"):
+                    yield Static("[b]cc-sentiment[/b] scan", id="title-text")
+                    yield Digits("-.--", id="score-digits")
+
+            with Vertical(id="progress-section"):
+                with Horizontal(id="progress-row"):
+                    yield Label("Preparing...", id="progress-label")
+                    yield ProgressBar(id="scan-progress", total=100, show_eta=True, show_percentage=True)
+
+            Rule(line_style="heavy")
+
+            with Vertical(id="chart-section"):
+                yield Static("[dim]Score trend[/]", id="sparkline-label")
+                with Vertical(id="sparkline-container"):
+                    yield Sparkline([], id="score-sparkline")
+
+                yield Static("", id="cached-line")
+
+                with Vertical(id="distribution"):
+                    for s in range(1, 6):
+                        bar = ScoreBar(s)
+                        bar.id = f"bar-{s}"
+                        self._score_bars[s] = bar
+                        yield bar
+
+            with Vertical(id="stats-section"):
+                Rule()
+                with Horizontal(id="stats-row"):
+                    with Vertical(classes="stat-card"):
+                        yield Static("--", id="stat-buckets", classes="stat-value")
+                        yield Static("buckets", classes="stat-label")
+                    with Vertical(classes="stat-card"):
+                        yield Static("--", id="stat-sessions", classes="stat-value")
+                        yield Static("sessions", classes="stat-label")
+                    with Vertical(classes="stat-card"):
+                        yield Static("--", id="stat-files", classes="stat-value")
+                        yield Static("files", classes="stat-label")
+                    with Vertical(classes="stat-card"):
+                        yield Static("--", id="stat-rate", classes="stat-value")
+                        yield Static("buckets/s", classes="stat-label")
+
             yield Label("", id="status-line")
         yield Footer()
 
     def on_mount(self) -> None:
         import time
-        self.title = "cc-sentiment scan"
+        self.title = "cc-sentiment"
+        self.sub_title = "scan & upload"
         self._start_time = time.monotonic()
         self.run_scan()
 
@@ -550,18 +632,29 @@ class ScanApp(App[None]):
         from cc_sentiment.pipeline import Pipeline
         from cc_sentiment.upload import Uploader
 
-        self._update_status("Discovering transcripts...")
+        self._update_status("[dim]Discovering transcripts...[/]")
 
         new_transcripts = await anyio.to_thread.run_sync(Pipeline.discover_new_transcripts, self.state)
         if self.limit is not None:
             new_transcripts = new_transcripts[:self.limit]
 
         if not new_transcripts:
-            self._update_status("No new transcripts found.")
+            self._update_status("[yellow]No new transcripts found. All up to date.[/]")
             return
 
+        total_cached = sum(
+            len(self.state.processed_files[str(p)].scored_buckets)
+            for p, _ in new_transcripts
+            if str(p) in self.state.processed_files
+        )
+        if total_cached:
+            self.cached_buckets = total_cached
+            self.query_one("#cached-line", Static).update(
+                f"[dim]{total_cached} cached buckets will be skipped[/]",
+            )
+
         self._set_total(len(new_transcripts))
-        self._update_status(f"Loading {self.engine} engine...")
+        self._update_status(f"[dim]Loading {self.engine} engine...[/]")
 
         all_records = await Pipeline.run(
             self.state, self.engine, self.model_repo,
@@ -569,32 +662,55 @@ class ScanApp(App[None]):
         )
 
         if self.do_upload and all_records:
-            self._update_status(f"Uploading {len(all_records)} records...")
+            self._update_status("[dim]Uploading records...[/]")
             try:
                 uploader = Uploader()
                 pending = Uploader.records_from_state(self.state)
                 await uploader.upload(pending, self.state)
                 self._set_uploaded(len(pending))
-                self._update_status(f"[green]Done. {len(pending)} records uploaded.[/]")
+                self._update_status(f"[green bold]Done.[/] {len(pending)} records uploaded to dashboard.")
             except Exception as e:
-                self._update_status(f"[red]Upload failed: {e}[/]")
+                self._update_status(f"[red bold]Upload failed:[/] {e}")
+        elif self.do_upload and not all_records:
+            pending = Uploader.records_from_state(self.state)
+            if pending:
+                self._update_status("[dim]Uploading pending records...[/]")
+                try:
+                    uploader = Uploader()
+                    await uploader.upload(pending, self.state)
+                    self._set_uploaded(len(pending))
+                    self._update_status(f"[green bold]Done.[/] {len(pending)} pending records uploaded.")
+                except Exception as e:
+                    self._update_status(f"[red bold]Upload failed:[/] {e}")
+            else:
+                self._update_status("[yellow]No new buckets to score. All cached.[/]")
         elif all_records:
             elapsed = time.monotonic() - self._start_time
-            self._update_status(f"[green]Done. {len(all_records)} records scored in {elapsed:.0f}s.[/]")
+            self._update_status(f"[green bold]Done.[/] {len(all_records)} records scored in {elapsed:.0f}s.")
         else:
-            self._update_status("No records produced.")
+            self._update_status("[yellow]No new buckets to score.[/]")
 
     def _set_total(self, total: int) -> None:
         self.total = total
         self.query_one("#scan-progress", ProgressBar).update(total=total, progress=0)
-        self.query_one("#progress-label", Label).update(f"0/{total} transcripts")
+        self.query_one("#progress-label", Label).update(f"[b]0[/]/{total} files")
 
     def _add_records(self, new_records: list[SentimentRecord]) -> None:
+        import time
+
         self.records.extend(new_records)
         self.scored += 1
         self.query_one("#scan-progress", ProgressBar).update(progress=self.scored)
-        self.query_one("#progress-label", Label).update(f"{self.scored}/{self.total} transcripts")
+        self.query_one("#progress-label", Label).update(f"[b]{self.scored}[/]/{self.total} files")
+
+        for r in new_records:
+            self._score_history.append(float(r.sentiment_score))
+
         self._render_scores()
+
+        elapsed = time.monotonic() - self._start_time
+        rate = len(self.records) / elapsed if elapsed > 0 else 0
+        self.query_one("#stat-rate", Static).update(f"{rate:.1f}")
 
     def _set_uploaded(self, count: int) -> None:
         self.uploaded = count
@@ -612,19 +728,16 @@ class ScanApp(App[None]):
         total = len(scores)
         max_count = max(counts.values()) if counts else 1
 
-        lines = []
         for s in range(1, 6):
             n = counts.get(s, 0)
-            pct = 100 * n / total
-            bar_len = int(30 * n / max_count) if max_count else 0
-            color = SCORE_COLORS[s]
-            label = SCORE_LABELS[s]
-            lines.append(f"  [{color}]{s}[/] {label:>11}  [{color}]{'█' * bar_len}[/] {pct:.0f}% ({n})")
+            self._score_bars[s].update(self._score_bars[s].render_bar(n, total, max_count))
 
-        self.query_one("#score-display", Static).update("\n".join(lines))
+        avg = mean(scores)
+        self.query_one("#score-digits", Digits).update(f"{avg:.2f}")
+
+        self.query_one("#score-sparkline", Sparkline).data = self._score_history[-80:]
 
         sessions = len({r.conversation_id for r in self.records})
-        self.query_one("#stats-line", Label).update(
-            f"  mean={mean(scores):.1f}  median={median(scores):.0f}  "
-            f"{total} buckets from {sessions} sessions"
-        )
+        self.query_one("#stat-buckets", Static).update(f"[b]{total}[/]")
+        self.query_one("#stat-sessions", Static).update(f"[b]{sessions}[/]")
+        self.query_one("#stat-files", Static).update(f"[b]{self.scored}[/]")

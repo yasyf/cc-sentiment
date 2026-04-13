@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from textual.widgets import Button, ContentSwitcher, DataTable, Input, Label, RadioSet
 
-from cc_sentiment.models import AppState, GPGConfig, ProcessedSession, SentimentRecord, SessionId, SSHConfig
+from cc_sentiment.models import AppState, BucketIndex, GPGConfig, ProcessedSession, SentimentRecord, SentimentScore, SessionId, SSHConfig
 from cc_sentiment.signing import GPGKeyInfo, SSHKeyInfo
 from cc_sentiment.tui import ScanApp, SetupApp
 
@@ -241,12 +241,12 @@ async def test_skip_upload_saves_config(tmp_path: Path):
             assert isinstance(loaded.config, SSHConfig)
 
 
-def _make_record(score: int = 3) -> SentimentRecord:
+def _make_record(score: int = 3, bucket_index: int = 0) -> SentimentRecord:
     return SentimentRecord(
         time=datetime.now(timezone.utc),
         conversation_id=SessionId("sess-1"),
-        bucket_index=0,
-        sentiment_score=score,
+        bucket_index=BucketIndex(bucket_index),
+        sentiment_score=SentimentScore(score),
     )
 
 

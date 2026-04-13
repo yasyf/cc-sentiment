@@ -25,10 +25,23 @@ class TestUploadCommand:
 
 
 class TestBenchmark:
-    def test_command_exists(self) -> None:
-        assert main.get_command(None, "benchmark") is not None
+    def test_command_hidden(self) -> None:
+        cmd = main.get_command(None, "benchmark")
+        assert cmd is not None
+        assert cmd.hidden is True
+
+    def test_benchmark_not_in_help(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(main, ["--help"])
+        assert "benchmark" not in result.output
 
 
 class TestRescan:
     def test_command_exists(self) -> None:
         assert main.get_command(None, "rescan") is not None
+
+
+class TestDefaultCommand:
+    def test_no_subcommand_triggers_scan(self) -> None:
+        cmd = main.get_command(None, None)
+        assert main.invoke_without_command is True
