@@ -40,8 +40,8 @@ export type WeekdayPoint = z.infer<typeof WeekdayPointSchema>;
 export type DistributionPoint = z.infer<typeof DistributionPointSchema>;
 export type DataResponse = z.infer<typeof DataResponseSchema>;
 
-export async function fetchData(fetch: typeof globalThis.fetch): Promise<DataResponse> {
-	const response = await fetch(`${API_BASE_URL}/data`);
+export async function fetchData(): Promise<DataResponse> {
+	const response = await globalThis.fetch(`${API_BASE_URL}/data`);
 
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status} ${response.statusText}`);
