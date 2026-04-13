@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { Line } from 'svelte5-chartjs';
-	import { Chart, LineElement, PointElement, LinearScale, TimeScale, Filler, Tooltip, Legend } from 'chart.js';
+	import { Chart, LineElement, PointElement, LinearScale, TimeScale, Filler, Tooltip } from 'chart.js';
 	import 'chartjs-adapter-date-fns';
 	import type { TimelinePoint } from '$lib/types.js';
+	import { ACCENT, ACCENT_LIGHT, GRID, TICK, TOOLTIP } from '$lib/chart-theme.js';
 
-	Chart.register(LineElement, PointElement, LinearScale, TimeScale, Filler, Tooltip, Legend);
+	Chart.register(LineElement, PointElement, LinearScale, TimeScale, Filler, Tooltip);
 
 	const { data: raw }: { data: TimelinePoint[] } = $props();
 
@@ -12,21 +13,18 @@
 
 	const chartData = $derived({
 		labels: sorted.map((d) => d.time),
-		datasets: [
-			{
-				label: 'Avg Sentiment',
-				data: sorted.map((d) => d.avg_score),
-				borderColor: '#6366f1',
-				backgroundColor: 'rgba(99, 102, 241, 0.08)',
-				fill: true,
-				tension: 0.3,
-				pointRadius: 3,
-				pointHoverRadius: 6,
-				pointBackgroundColor: '#6366f1',
-				pointBorderColor: 'transparent',
-				borderWidth: 2
-			}
-		]
+		datasets: [{
+			data: sorted.map((d) => d.avg_score),
+			borderColor: ACCENT,
+			backgroundColor: ACCENT_LIGHT,
+			fill: true,
+			tension: 0.35,
+			pointRadius: 2,
+			pointHoverRadius: 5,
+			pointBackgroundColor: ACCENT,
+			pointBorderColor: 'transparent',
+			borderWidth: 1.5
+		}]
 	});
 
 	const chartOptions = {
@@ -37,37 +35,30 @@
 			x: {
 				type: 'time' as const,
 				time: { unit: 'day' as const, tooltipFormat: 'MMM d, yyyy HH:mm' },
-				grid: { color: 'rgba(255,255,255,0.04)' },
-				ticks: { color: '#52525b', font: { size: 11 }, maxTicksLimit: 8 },
+				grid: { color: GRID },
+				ticks: { color: TICK, font: { size: 11 }, maxTicksLimit: 8 },
 				border: { display: false }
 			},
 			y: {
-				min: 1,
-				max: 5,
-				grid: { color: 'rgba(255,255,255,0.06)' },
-				ticks: { color: '#52525b', font: { size: 11 }, stepSize: 1 },
+				min: 1, max: 5,
+				grid: { color: GRID },
+				ticks: { color: TICK, font: { size: 11 }, stepSize: 1 },
 				border: { display: false }
 			}
 		},
 		plugins: {
 			legend: { display: false },
 			tooltip: {
-				backgroundColor: '#12121a',
-				borderColor: '#27272a',
-				borderWidth: 1,
-				titleColor: '#e4e4e7',
-				bodyColor: '#71717a',
-				padding: 10,
-				cornerRadius: 8,
+				...TOOLTIP,
 				callbacks: {
 					label: (ctx: { parsed: { y: number | null }; dataIndex: number }) =>
-						`Score: ${(ctx.parsed.y ?? 0).toFixed(2)}  (${sorted[ctx.dataIndex]?.count ?? 0} records)`
+						`${(ctx.parsed.y ?? 0).toFixed(2)} avg  ·  ${sorted[ctx.dataIndex]?.count ?? 0} records`
 				}
 			}
 		}
 	};
 </script>
 
-<div class="h-56 w-full">
+<div class="h-52 w-full">
 	<Line data={chartData} options={chartOptions} />
 </div>

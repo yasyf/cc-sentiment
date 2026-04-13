@@ -1,32 +1,44 @@
 <script lang="ts">
-	import { Bar } from 'svelte5-chartjs';
-	import { Chart, BarElement, CategoryScale, LinearScale, Tooltip } from 'chart.js';
+	import { Chart as ChartComponent } from 'svelte5-chartjs';
+	import { Chart, BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend, BarController, LineController } from 'chart.js';
 	import type { WeekdayPoint } from '$lib/types.js';
+	import { ACCENT_BAR, ACCENT_BAR_HOVER, GRID, TICK, TOOLTIP, sentimentColor } from '$lib/chart-theme.js';
 
-	Chart.register(BarElement, CategoryScale, LinearScale, Tooltip);
+	Chart.register(BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend, BarController, LineController);
 
 	const { data: raw }: { data: WeekdayPoint[] } = $props();
 
 	const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-	function scoreColor(v: number): string {
-		if (v < 1.5) return '#ef4444';
-		if (v < 2.5) return '#f97316';
-		if (v < 3.5) return '#eab308';
-		if (v < 4.5) return '#22c55e';
-		return '#06b6d4';
-	}
-
 	const sorted = $derived(raw.toSorted((a, b) => a.dow - b.dow));
 
 	const chartData = $derived({
 		labels: sorted.map((d) => DAYS[d.dow]),
 		datasets: [
 			{
+				type: 'bar' as const,
+				label: 'Records',
+				data: sorted.map((d) => d.count),
+				backgroundColor: ACCENT_BAR,
+				hoverBackgroundColor: ACCENT_BAR_HOVER,
+				borderRadius: 4,
+				maxBarThickness: 40,
+				yAxisID: 'volume',
+				order: 2
+			},
+			{
+				type: 'line' as const,
+				label: 'Avg Score',
 				data: sorted.map((d) => d.avg_score),
-				backgroundColor: sorted.map((d) => scoreColor(d.avg_score)),
-				borderRadius: 6,
-				maxBarThickness: 48
+				borderColor: '#6366f1',
+				pointBackgroundColor: sorted.map((d) => sentimentColor(d.avg_score)),
+				pointBorderColor: '#ffffff',
+				pointBorderWidth: 1.5,
+				pointRadius: 5,
+				pointHoverRadius: 7,
+				borderWidth: 2,
+				tension: 0.3,
+				yAxisID: 'score',
+				order: 1
 			}
 		]
 	});
@@ -34,39 +46,39 @@
 	const chartOptions = {
 		responsive: true,
 		maintainAspectRatio: false,
+		interaction: { mode: 'index' as const, intersect: false },
 		scales: {
 			x: {
 				grid: { display: false },
-				ticks: { color: '#52525b', font: { size: 11 } },
+				ticks: { color: TICK, font: { size: 11 } },
 				border: { display: false }
 			},
-			y: {
-				min: 1,
-				max: 5,
-				grid: { color: 'rgba(255,255,255,0.04)' },
-				ticks: { color: '#52525b', font: { size: 10 }, stepSize: 1 },
+			volume: {
+				position: 'left' as const,
+				beginAtZero: true,
+				grid: { color: GRID },
+				ticks: { color: TICK, font: { size: 10 } },
+				border: { display: false }
+			},
+			score: {
+				position: 'right' as const,
+				min: 1, max: 5,
+				grid: { drawOnChartArea: false },
+				ticks: { color: TICK, font: { size: 10 }, stepSize: 1 },
 				border: { display: false }
 			}
 		},
 		plugins: {
-			legend: { display: false },
-			tooltip: {
-				backgroundColor: '#12121a',
-				borderColor: '#27272a',
-				borderWidth: 1,
-				titleColor: '#e4e4e7',
-				bodyColor: '#71717a',
-				padding: 10,
-				cornerRadius: 8,
-				callbacks: {
-					label: (ctx: { parsed: { y: number | null }; dataIndex: number }) =>
-						`Avg: ${(ctx.parsed.y ?? 0).toFixed(2)} (${sorted[ctx.dataIndex]?.count ?? 0} records)`
-				}
-			}
+			legend: {
+				display: true,
+				position: 'bottom' as const,
+				labels: { color: '#71717a', font: { size: 10 }, boxWidth: 10, padding: 20, usePointStyle: true }
+			},
+			tooltip: TOOLTIP
 		}
 	};
 </script>
 
 <div class="h-48 w-full">
-	<Bar data={chartData} options={chartOptions} />
+	<ChartComponent type="bar" data={chartData} options={chartOptions} />
 </div>

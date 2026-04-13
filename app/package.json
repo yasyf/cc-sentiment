@@ -23,6 +23,7 @@
 	},
 	"dependencies": {
 		"@sveltejs/adapter-vercel": "^6.3.3",
+		"@vercel/og": "^0.11.1",
 		"chart.js": "^4.5.1",
 		"chartjs-adapter-date-fns": "^3.0.0",
 		"date-fns": "^4.1.0",

@@ -9,19 +9,14 @@
 
 	const lastUpdated = $derived(
 		new Date(data.last_updated).toLocaleString('en-US', {
-			month: 'short',
-			day: 'numeric',
-			year: 'numeric',
-			hour: 'numeric',
-			minute: '2-digit'
+			month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
 		})
 	);
 
 	const overallAvg = $derived.by(() => {
-		const dist = data.distribution;
-		const total = dist.reduce((s, d) => s + d.count, 0);
+		const total = data.distribution.reduce((s, d) => s + d.count, 0);
 		if (total === 0) return 0;
-		return dist.reduce((s, d) => s + d.score * d.count, 0) / total;
+		return data.distribution.reduce((s, d) => s + d.score * d.count, 0) / total;
 	});
 
 	const sentimentLabel = $derived.by(() => {
@@ -32,135 +27,152 @@
 		return { text: 'Delighted', color: 'text-sentiment-5' };
 	});
 
+	function fmtHour(h: number): string {
+		const ampm = h < 12 ? 'AM' : 'PM';
+		const display = h === 0 ? 12 : h > 12 ? h - 12 : h;
+		return `${display} ${ampm}`;
+	}
+
 	const peakUsageHour = $derived.by(() => {
 		if (data.hourly.length === 0) return null;
 		const peak = data.hourly.toSorted((a, b) => b.count - a.count)[0];
-		const h = peak.hour;
-		const ampm = h < 12 ? 'AM' : 'PM';
-		const display = h === 0 ? 12 : h > 12 ? h - 12 : h;
-		return { label: `${display} ${ampm}`, count: peak.count, score: peak.avg_score };
+		return { label: fmtHour(peak.hour), count: peak.count, score: peak.avg_score };
 	});
 
 	const worstSentimentHour = $derived.by(() => {
-		if (data.hourly.length === 0) return null;
 		const significant = data.hourly.filter((h) => h.count >= 5);
 		if (significant.length === 0) return null;
 		const worst = significant.toSorted((a, b) => a.avg_score - b.avg_score)[0];
-		const h = worst.hour;
-		const ampm = h < 12 ? 'AM' : 'PM';
-		const display = h === 0 ? 12 : h > 12 ? h - 12 : h;
-		return { label: `${display} ${ampm}`, score: worst.avg_score, count: worst.count };
+		return { label: fmtHour(worst.hour), score: worst.avg_score, count: worst.count };
 	});
 
 	const busiestDay = $derived.by(() => {
 		if (data.weekday.length === 0) return null;
-		const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+		const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 		const peak = data.weekday.toSorted((a, b) => b.count - a.count)[0];
 		return { label: days[peak.dow], count: peak.count, score: peak.avg_score };
 	});
 </script>
 
 <svelte:head>
-	<title>cc-sentiment</title>
-	<meta name="description" content="Claude Code sentiment trends -- does heavy usage correlate with frustration?" />
+	<title>cc-sentiment -- Claude Code sentiment trends</title>
+	<meta name="description" content="Crowdsourced sentiment analysis of Claude Code sessions. {data.total_records} records from real developers. See how frustration correlates with peak usage hours." />
+	<meta property="og:title" content="cc-sentiment" />
+	<meta property="og:description" content="Overall score: {overallAvg.toFixed(1)}/5 across {data.total_records.toLocaleString()} records. Peak frustration at {worstSentimentHour?.label ?? 'N/A'}." />
+	<meta property="og:type" content="website" />
+	<meta property="og:image" content="/og" />
+	<meta name="twitter:card" content="summary_large_image" />
 </svelte:head>
 
-<div class="min-h-screen bg-bg px-4 py-8 sm:px-6">
-	<header class="mx-auto mb-8 max-w-6xl">
-		<div class="flex flex-col gap-4 sm:flex-row sm:items-baseline sm:justify-between">
+<div class="min-h-screen bg-bg">
+	<header class="border-b border-border">
+		<div class="mx-auto flex max-w-5xl items-baseline justify-between px-6 py-5">
 			<div>
-				<h1 class="text-2xl font-semibold tracking-tight text-text">cc-sentiment</h1>
-				<p class="mt-1 text-sm text-text-dim">Do peak usage hours correlate with worse Claude Code sentiment?</p>
+				<h1 class="text-lg font-semibold tracking-tight text-text">cc-sentiment</h1>
 			</div>
-			<div class="flex items-center gap-4 text-sm text-text-muted">
-				<a href="/docs" class="text-accent hover:text-accent-hover transition-colors">Get Started</a>
-				<span class="text-text-dim">&middot;</span>
-				<span>{data.total_records.toLocaleString()} records</span>
-				<span class="text-text-dim">&middot;</span>
-				<span>Updated {lastUpdated}</span>
-			</div>
+			<nav class="flex items-center gap-5 text-sm text-text-muted">
+				<a href="/docs" class="hover:text-text transition-colors">Get Started</a>
+				<a href="https://github.com/yasyf/cc-sentiment" class="hover:text-text transition-colors" target="_blank" rel="noopener">GitHub</a>
+			</nav>
 		</div>
 	</header>
 
-	{#if data.total_records === 0}
-		<div class="mx-auto max-w-6xl">
-			<div class="flex h-96 flex-col items-center justify-center rounded-xl border border-border bg-bg-card">
-				<p class="text-lg text-text-muted">No data yet</p>
-				<p class="mt-2 text-sm text-text-dim">Run <code class="rounded bg-bg-hover px-2 py-0.5 font-mono text-accent">cc-sentiment scan --upload</code> to contribute</p>
-			</div>
-		</div>
-	{:else}
-		<div class="mx-auto mb-6 grid max-w-6xl grid-cols-2 gap-4 sm:grid-cols-4">
-			<div class="rounded-xl border border-border bg-bg-card p-4">
-				<p class="text-xs font-medium uppercase tracking-wider text-text-dim">Overall Score</p>
-				<p class="mt-1 text-2xl font-semibold {sentimentLabel.color}">{overallAvg.toFixed(1)}</p>
-				<p class="text-xs {sentimentLabel.color}">{sentimentLabel.text}</p>
-			</div>
-
-			<div class="rounded-xl border border-border bg-bg-card p-4">
-				<p class="text-xs font-medium uppercase tracking-wider text-text-dim">Peak Usage</p>
-				{#if peakUsageHour}
-					<p class="mt-1 text-2xl font-semibold text-accent">{peakUsageHour.label}</p>
-					<p class="text-xs text-text-muted">{peakUsageHour.count} records &middot; {peakUsageHour.score.toFixed(1)} avg</p>
-				{:else}
-					<p class="mt-1 text-2xl font-semibold text-text-dim">---</p>
-				{/if}
-			</div>
-
-			<div class="rounded-xl border border-border bg-bg-card p-4">
-				<p class="text-xs font-medium uppercase tracking-wider text-text-dim">Most Frustrated</p>
-				{#if worstSentimentHour}
-					<p class="mt-1 text-2xl font-semibold text-sentiment-1">{worstSentimentHour.label}</p>
-					<p class="text-xs text-text-muted">{worstSentimentHour.score.toFixed(2)} avg &middot; {worstSentimentHour.count} records</p>
-				{:else}
-					<p class="mt-1 text-2xl font-semibold text-text-dim">---</p>
-				{/if}
-			</div>
-
-			<div class="rounded-xl border border-border bg-bg-card p-4">
-				<p class="text-xs font-medium uppercase tracking-wider text-text-dim">Busiest Day</p>
-				{#if busiestDay}
-					<p class="mt-1 text-2xl font-semibold text-text">{busiestDay.label}</p>
-					<p class="text-xs text-text-muted">{busiestDay.count} records &middot; {busiestDay.score.toFixed(1)} avg</p>
-				{:else}
-					<p class="mt-1 text-2xl font-semibold text-text-dim">---</p>
-				{/if}
-			</div>
+	<div class="mx-auto max-w-5xl px-6 py-10">
+		<div class="mb-10">
+			<h2 class="text-3xl font-semibold tracking-tight text-text">
+				Does heavy usage correlate with worse sentiment?
+			</h2>
+			<p class="mt-2 max-w-2xl text-text-muted">
+				Crowdsourced from real Claude Code sessions. Transcripts are scored locally, only
+				numeric results are uploaded. Inspired by
+				<a href="https://github.com/anthropics/claude-code/issues/42796" class="text-accent hover:text-accent-hover transition-colors">claude-code#42796</a>.
+			</p>
 		</div>
 
-		<main class="mx-auto grid max-w-6xl grid-cols-1 gap-6 lg:grid-cols-2">
-			<div class="rounded-xl border border-border bg-bg-card p-6 lg:col-span-2">
-				<h2 class="mb-4 text-sm font-medium text-text-muted">Sentiment Over Time</h2>
-				<SentimentTimeline data={data.timeline} />
+		{#if data.total_records === 0}
+			<div class="flex h-64 flex-col items-center justify-center rounded-lg border border-border">
+				<p class="text-text-muted">No data yet</p>
+				<p class="mt-2 text-sm text-text-dim">
+					Run <code class="rounded bg-bg-code px-1.5 py-0.5 font-mono text-xs">cc-sentiment scan --upload</code> to contribute
+				</p>
+			</div>
+		{:else}
+			<div class="mb-10 grid grid-cols-2 gap-4 sm:grid-cols-4">
+				<div class="rounded-lg border border-border bg-bg-card p-4">
+					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Overall</p>
+					<p class="mt-2 text-3xl font-semibold tabular-nums {sentimentLabel.color}">{overallAvg.toFixed(1)}</p>
+					<p class="mt-0.5 text-xs text-text-muted">{sentimentLabel.text} &middot; {data.total_records.toLocaleString()} records</p>
+				</div>
+
+				<div class="rounded-lg border border-border bg-bg-card p-4">
+					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Peak Usage</p>
+					{#if peakUsageHour}
+						<p class="mt-2 text-3xl font-semibold tabular-nums text-text">{peakUsageHour.label}</p>
+						<p class="mt-0.5 text-xs text-text-muted">{peakUsageHour.count} records &middot; {peakUsageHour.score.toFixed(1)} avg</p>
+					{:else}
+						<p class="mt-2 text-3xl font-semibold text-text-dim">--</p>
+					{/if}
+				</div>
+
+				<div class="rounded-lg border border-border bg-bg-card p-4">
+					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Most Frustrated</p>
+					{#if worstSentimentHour}
+						<p class="mt-2 text-3xl font-semibold tabular-nums text-sentiment-1">{worstSentimentHour.label}</p>
+						<p class="mt-0.5 text-xs text-text-muted">{worstSentimentHour.score.toFixed(2)} avg &middot; {worstSentimentHour.count} records</p>
+					{:else}
+						<p class="mt-2 text-3xl font-semibold text-text-dim">--</p>
+					{/if}
+				</div>
+
+				<div class="rounded-lg border border-border bg-bg-card p-4">
+					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Busiest Day</p>
+					{#if busiestDay}
+						<p class="mt-2 text-3xl font-semibold tabular-nums text-text">{busiestDay.label}</p>
+						<p class="mt-0.5 text-xs text-text-muted">{busiestDay.count} records &middot; {busiestDay.score.toFixed(1)} avg</p>
+					{:else}
+						<p class="mt-2 text-3xl font-semibold text-text-dim">--</p>
+					{/if}
+				</div>
 			</div>
 
-			<div class="rounded-xl border border-border bg-bg-card p-6 lg:col-span-2">
-				<h2 class="mb-1 text-sm font-medium text-text-muted">Usage Volume vs Sentiment by Hour</h2>
-				<p class="mb-4 text-xs text-text-dim">Do the hours with the most activity also have the worst scores?</p>
-				<HourlyHeatmap data={data.hourly} />
-			</div>
+			<div class="space-y-8">
+				<section>
+					<h3 class="mb-1 text-sm font-medium text-text-secondary">Sentiment Over Time</h3>
+					<div class="rounded-lg border border-border bg-bg-card p-5">
+						<SentimentTimeline data={data.timeline} />
+					</div>
+				</section>
 
-			<div class="rounded-xl border border-border bg-bg-card p-6">
-				<h2 class="mb-4 text-sm font-medium text-text-muted">Score Distribution</h2>
-				<DistributionHistogram data={data.distribution} />
-			</div>
+				<section>
+					<h3 class="mb-0.5 text-sm font-medium text-text-secondary">Usage Volume vs Sentiment by Hour</h3>
+					<p class="mb-2 text-xs text-text-dim">Do the busiest hours also produce the worst scores?</p>
+					<div class="rounded-lg border border-border bg-bg-card p-5">
+						<HourlyHeatmap data={data.hourly} />
+					</div>
+				</section>
 
-			<div class="rounded-xl border border-border bg-bg-card p-6">
-				<h2 class="mb-4 text-sm font-medium text-text-muted">Sentiment by Weekday</h2>
-				<WeekdayBar data={data.weekday} />
-			</div>
-		</main>
-	{/if}
+				<div class="grid grid-cols-1 gap-8 lg:grid-cols-2">
+					<section>
+						<h3 class="mb-1 text-sm font-medium text-text-secondary">Score Distribution</h3>
+						<div class="rounded-lg border border-border bg-bg-card p-5">
+							<DistributionHistogram data={data.distribution} />
+						</div>
+					</section>
 
-	<footer class="mx-auto mt-12 max-w-6xl border-t border-border pt-6 pb-8 text-center text-xs text-text-dim">
-		<p>
-			<a href="https://github.com/yasyf/cc-sentiment" class="text-accent hover:text-accent-hover transition-colors" target="_blank" rel="noopener">
-				cc-sentiment
-			</a>
-			&mdash; quantifying Claude Code frustration, inspired by
-			<a href="https://github.com/anthropics/claude-code/issues/42796" class="text-accent hover:text-accent-hover transition-colors" target="_blank" rel="noopener">
-				claude-code#42796
-			</a>
-		</p>
+					<section>
+						<h3 class="mb-1 text-sm font-medium text-text-secondary">Volume & Sentiment by Weekday</h3>
+						<div class="rounded-lg border border-border bg-bg-card p-5">
+							<WeekdayBar data={data.weekday} />
+						</div>
+					</section>
+				</div>
+			</div>
+		{/if}
+	</div>
+
+	<footer class="border-t border-border">
+		<div class="mx-auto max-w-5xl px-6 py-6 text-center text-xs text-text-dim">
+			Updated {lastUpdated}
+		</div>
 	</footer>
 </div>
