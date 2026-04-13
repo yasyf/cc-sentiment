@@ -27,6 +27,8 @@ VALID_PAYLOAD: dict = {
     "records": [VALID_RECORD],
 }
 
+AUTH_HEADER: dict = {"Authorization": "Bearer test-token"}
+
 
 @pytest.fixture
 def verifier() -> AsyncMock:
@@ -42,6 +44,7 @@ async def client(db: Database, verifier: AsyncMock) -> httpx.AsyncClient:
         verifier=verifier,
         data_cache=DictCache(),
         allowed_origins=["http://localhost:3000"],
+        data_api_token="test-token",
     )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
@@ -133,7 +136,7 @@ class TestUpload:
         record = {**VALID_RECORD, "time": now}
         await client.post("/upload", json={**VALID_PAYLOAD, "records": [record]})
 
-        response = await client.get("/data")
+        response = await client.get("/data", headers=AUTH_HEADER)
         assert response.status_code == 200
         assert response.json()["total_records"] == 1
 
@@ -193,7 +196,7 @@ class TestVerifyEndpoint:
 class TestData:
     @pytest.mark.asyncio
     async def test_returns_correct_shape(self, client: httpx.AsyncClient) -> None:
-        response = await client.get("/data")
+        response = await client.get("/data", headers=AUTH_HEADER)
 
         assert response.status_code == 200
         body = response.json()
@@ -201,26 +204,34 @@ class TestData:
             assert key in body
 
     @pytest.mark.asyncio
+    async def test_rejects_missing_token(self, client: httpx.AsyncClient) -> None:
+        assert (await client.get("/data")).status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_rejects_bad_token(self, client: httpx.AsyncClient) -> None:
+        assert (await client.get("/data", headers={"Authorization": "Bearer wrong"})).status_code == 401
+
+    @pytest.mark.asyncio
     async def test_cache_control_header(self, client: httpx.AsyncClient) -> None:
-        response = await client.get("/data")
+        response = await client.get("/data", headers=AUTH_HEADER)
         assert response.headers["cache-control"] == "public, max-age=3600"
 
     @pytest.mark.asyncio
     async def test_days_param(self, client: httpx.AsyncClient) -> None:
-        response = await client.get("/data?days=30")
+        response = await client.get("/data?days=30", headers=AUTH_HEADER)
         assert response.status_code == 200
 
     @pytest.mark.asyncio
     async def test_days_too_low(self, client: httpx.AsyncClient) -> None:
-        assert (await client.get("/data?days=0")).status_code == 422
+        assert (await client.get("/data?days=0", headers=AUTH_HEADER)).status_code == 422
 
     @pytest.mark.asyncio
     async def test_days_too_high(self, client: httpx.AsyncClient) -> None:
-        assert (await client.get("/data?days=999")).status_code == 422
+        assert (await client.get("/data?days=999", headers=AUTH_HEADER)).status_code == 422
 
     @pytest.mark.asyncio
     async def test_days_not_integer(self, client: httpx.AsyncClient) -> None:
-        assert (await client.get("/data?days=abc")).status_code == 422
+        assert (await client.get("/data?days=abc", headers=AUTH_HEADER)).status_code == 422
 
     @pytest.mark.asyncio
     async def test_caches_response(self, client: httpx.AsyncClient, db: Database) -> None:
@@ -232,7 +243,7 @@ class TestData:
         )]
         await db.ingest(records, "octocat")
 
-        r1 = await client.get("/data")
+        r1 = await client.get("/data", headers=AUTH_HEADER)
         assert r1.json()["total_records"] == 1
 
         await db.ingest([SentimentRecord(
@@ -241,5 +252,5 @@ class TestData:
             model_id="test", client_version="0.1.0",
         )], "octocat")
 
-        r2 = await client.get("/data")
+        r2 = await client.get("/data", headers=AUTH_HEADER)
         assert r2.json()["total_records"] == 1  # still cached

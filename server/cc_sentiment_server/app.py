@@ -6,7 +6,7 @@ import time
 from typing import Callable, Protocol
 
 import modal
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -63,6 +63,7 @@ def create_app(
     verifier: Verifier,
     data_cache: Cache,
     allowed_origins: list[str],
+    data_api_token: str = "",
 ) -> FastAPI:
     limiter = Limiter(key_func=get_remote_address)
 
@@ -111,7 +112,10 @@ def create_app(
     async def data(
         request: Request,
         days: int = Query(default=7, ge=1, le=365),
+        authorization: str = Header(),
     ) -> DataResponse:
+        if not data_api_token or authorization != f"Bearer {data_api_token}":
+            return JSONResponse({"detail": "Unauthorized"}, status_code=401)
         try:
             cached_at, cached_response = await data_cache.get(f"data:{days}")
             if time.time() - cached_at < DATA_CACHE_TTL_SECONDS:
@@ -156,7 +160,11 @@ class API:
 
     @modal.asgi_app()
     def serve(self) -> Callable:
-        return create_app(self.db, self.verifier, self.data_cache, os.environ["ALLOWED_ORIGINS"].split(","))
+        return create_app(
+            self.db, self.verifier, self.data_cache,
+            os.environ["ALLOWED_ORIGINS"].split(","),
+            os.environ["DATA_API_TOKEN"],
+        )
 
 
 @app.function(image=image, secrets=[modal.Secret.from_name("cc-sentiment-db")])

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { env } from '$env/dynamic/private';
 
 const API_BASE_URL = 'https://anetaco--cc-sentiment-api-serve.modal.run';
 
@@ -41,7 +42,9 @@ export type DistributionPoint = z.infer<typeof DistributionPointSchema>;
 export type DataResponse = z.infer<typeof DataResponseSchema>;
 
 export async function fetchData(): Promise<DataResponse> {
-	const response = await globalThis.fetch(`${API_BASE_URL}/data`);
+	const response = await globalThis.fetch(`${API_BASE_URL}/data`, {
+		headers: { Authorization: `Bearer ${env.DATA_API_TOKEN}` }
+	});
 
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status} ${response.statusText}`);
