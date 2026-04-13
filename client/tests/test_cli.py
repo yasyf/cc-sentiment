@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from click.testing import CliRunner
 
@@ -102,7 +102,8 @@ class TestUploadCommand:
             ),
         )
 
-        with patch.object(AppState, "load", return_value=state):
+        with patch.object(AppState, "load", return_value=state), \
+             patch("cc_sentiment.upload.Uploader.verify_credentials", new_callable=AsyncMock):
             runner = CliRunner()
             result = runner.invoke(main, ["upload"])
 

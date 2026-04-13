@@ -58,7 +58,7 @@ class PayloadSigner:
     @staticmethod
     def canonical_json(records: list[SentimentRecord]) -> str:
         return json.dumps(
-            [r.model_dump(mode="json") for r in records],
+            [r.model_dump(mode="json", by_alias=True) for r in records],
             sort_keys=True,
             separators=(",", ":"),
         )

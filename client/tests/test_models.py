@@ -72,8 +72,16 @@ class TestSentimentRecord:
         restored = SentimentRecord.model_validate(data)
         assert restored == record
         assert restored.prompt_version == PROMPT_VERSION
-        assert restored.model_id == MODEL_ID
+        assert restored.inference_model == MODEL_ID
         assert restored.client_version == CLIENT_VERSION
+
+    def test_wire_format_uses_model_id_key(self) -> None:
+        record = make_record()
+        data = record.model_dump(mode="json", by_alias=True)
+        assert "model_id" in data
+        assert "inference_model" not in data
+        restored = SentimentRecord.model_validate(data)
+        assert restored.inference_model == MODEL_ID
 
 
 class TestProcessedFile:

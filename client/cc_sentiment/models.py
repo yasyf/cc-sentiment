@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import NewType
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 SessionId = NewType("SessionId", str)
 BucketIndex = NewType("BucketIndex", int)
@@ -33,14 +33,14 @@ class ConversationBucket(BaseModel, frozen=True):
 
 
 class SentimentRecord(BaseModel, frozen=True):
-    model_config = {"protected_namespaces": ()}
+    model_config = ConfigDict(populate_by_name=True)
 
     time: datetime
     conversation_id: SessionId
     bucket_index: BucketIndex
     sentiment_score: SentimentScore
     prompt_version: PromptVersion = PROMPT_VERSION
-    model_id: str = MODEL_ID
+    inference_model: str = Field(default=MODEL_ID, validation_alias="model_id", serialization_alias="model_id")
     client_version: str = CLIENT_VERSION
 
 

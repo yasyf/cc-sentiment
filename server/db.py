@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 import psycopg
 
 from models import (
@@ -12,6 +10,8 @@ from models import (
     TimelinePoint,
     WeekdayPoint,
 )
+
+__all__ = ["Database"]
 
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS sentiment (
@@ -71,6 +71,10 @@ TOTAL_COUNT_SQL = """
 SELECT COUNT(*)::int AS total FROM sentiment
 """
 
+LAST_UPDATED_SQL = """
+SELECT MAX(ingested_at) FROM sentiment
+"""
+
 
 class Database:
     def __init__(self, dsn: str) -> None:
@@ -103,28 +107,9 @@ class Database:
                 ],
             )
 
-    def query_timeline(self, days: int = 7) -> list[TimelinePoint]:
-        with self.connect() as conn:
-            rows = conn.execute(TIMELINE_SQL, {"days": days}).fetchall()
-        return [TimelinePoint(time=row[0], avg_score=row[1], count=row[2]) for row in rows]
-
-    def query_hourly(self) -> list[HourlyPoint]:
-        with self.connect() as conn:
-            rows = conn.execute(HOURLY_SQL).fetchall()
-        return [HourlyPoint(hour=row[0], avg_score=row[1], count=row[2]) for row in rows]
-
-    def query_weekday(self) -> list[WeekdayPoint]:
-        with self.connect() as conn:
-            rows = conn.execute(WEEKDAY_SQL).fetchall()
-        return [WeekdayPoint(dow=row[0], avg_score=row[1], count=row[2]) for row in rows]
-
-    def query_distribution(self) -> list[DistributionPoint]:
-        with self.connect() as conn:
-            rows = conn.execute(DISTRIBUTION_SQL).fetchall()
-        return [DistributionPoint(score=row[0], count=row[1]) for row in rows]
-
     def query_all(self, days: int = 7) -> DataResponse:
         with self.connect() as conn:
+            conn.execute("BEGIN TRANSACTION READ ONLY")
             timeline = [
                 TimelinePoint(time=row[0], avg_score=row[1], count=row[2])
                 for row in conn.execute(TIMELINE_SQL, {"days": days}).fetchall()
@@ -142,6 +127,11 @@ class Database:
                 for row in conn.execute(DISTRIBUTION_SQL).fetchall()
             ]
             total = conn.execute(TOTAL_COUNT_SQL).fetchone()[0]
+            last_updated_row = conn.execute(LAST_UPDATED_SQL).fetchone()
+            conn.execute("COMMIT")
+
+        from datetime import datetime, timezone
+        last_updated = last_updated_row[0] if last_updated_row[0] else datetime.now(timezone.utc)
 
         return DataResponse(
             timeline=timeline,
@@ -149,5 +139,5 @@ class Database:
             weekday=weekday,
             distribution=distribution,
             total_records=total,
-            last_updated=datetime.now(timezone.utc),
+            last_updated=last_updated,
         )

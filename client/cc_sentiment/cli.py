@@ -7,6 +7,7 @@ from collections import Counter
 
 import anyio
 import click
+import httpx
 from rich.console import Console
 from rich.live import Live
 from rich.table import Table
@@ -222,6 +223,15 @@ def scan(do_upload: bool, engine: str, model_repo: str | None) -> None:
 
     if do_upload:
         ensure_config(state)
+        assert state.config is not None
+        console.print("Verifying upload credentials...", end=" ")
+        uploader_check = Uploader()
+        try:
+            anyio.run(uploader_check.verify_credentials, state.config)
+            console.print("[green]OK[/]")
+        except (httpx.HTTPStatusError, httpx.ConnectError) as e:
+            console.print(f"[red]FAILED[/]\n\nServer rejected credentials: {e}")
+            raise SystemExit(1)
 
     new_transcripts = Pipeline.discover_new_transcripts(state)
     if not new_transcripts:
@@ -327,13 +337,22 @@ def upload() -> None:
 
     state = AppState.load()
     ensure_config(state)
+    assert state.config is not None
+
+    uploader = Uploader()
+    console.print("Verifying upload credentials...", end=" ")
+    try:
+        anyio.run(uploader.verify_credentials, state.config)
+        console.print("[green]OK[/]")
+    except (httpx.HTTPStatusError, httpx.ConnectError) as e:
+        console.print(f"[red]FAILED[/]\n\nServer rejected credentials: {e}")
+        raise SystemExit(1)
 
     records = Uploader.records_from_state(state)
     if not records:
         console.print("No pending records to upload.")
         return
 
-    uploader = Uploader()
     console.print(f"Uploading {len(records)} records...")
     anyio.run(uploader.upload, records, state)
     console.print("[green]Upload complete.[/]")

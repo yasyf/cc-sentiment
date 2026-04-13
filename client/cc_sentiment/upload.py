@@ -4,6 +4,7 @@ import httpx
 
 from cc_sentiment.models import (
     AppState,
+    ClientConfig,
     SentimentRecord,
     SessionId,
     UploadPayload,
@@ -11,6 +12,8 @@ from cc_sentiment.models import (
 from cc_sentiment.signing import PayloadSigner
 
 DEFAULT_SERVER_URL = "https://cc-sentiment.modal.run"
+
+TEST_PAYLOAD = "cc-sentiment-verify"
 
 
 class Uploader:
@@ -25,6 +28,20 @@ class Uploader:
             if not session.uploaded
             for record in session.records
         ]
+
+    async def verify_credentials(self, config: ClientConfig) -> None:
+        signature = PayloadSigner.sign(TEST_PAYLOAD, config.key_path)
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.server_url}/verify",
+                json={
+                    "github_username": config.github_username,
+                    "signature": signature,
+                    "test_payload": TEST_PAYLOAD,
+                },
+                timeout=15.0,
+            )
+            response.raise_for_status()
 
     async def upload(
         self,
@@ -45,7 +62,7 @@ class Uploader:
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self.server_url}/upload",
-                json=payload.model_dump(mode="json"),
+                json=payload.model_dump(mode="json", by_alias=True),
                 timeout=30.0,
             )
             response.raise_for_status()
