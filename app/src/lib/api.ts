@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { env } from '$env/dynamic/public';
-import type { DataResponse } from './types.js';
 
 const TimelinePointSchema = z.object({
 	time: z.string(),
@@ -34,8 +33,14 @@ const DataResponseSchema = z.object({
 	last_updated: z.string()
 });
 
+export type TimelinePoint = z.infer<typeof TimelinePointSchema>;
+export type HourlyPoint = z.infer<typeof HourlyPointSchema>;
+export type WeekdayPoint = z.infer<typeof WeekdayPointSchema>;
+export type DistributionPoint = z.infer<typeof DistributionPointSchema>;
+export type DataResponse = z.infer<typeof DataResponseSchema>;
+
 export async function fetchData(fetch: typeof globalThis.fetch): Promise<DataResponse> {
-	const baseUrl = env.PUBLIC_API_URL ?? 'http://localhost:8000';
+	const baseUrl = env.PUBLIC_API_URL;
 	const response = await fetch(`${baseUrl}/data`);
 
 	if (!response.ok) {
