@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from client.models import BucketIndex, SessionId
-from client.transcripts import (
+from cc_sentiment.models import BucketIndex, SessionId
+from cc_sentiment.transcripts import (
     ASSISTANT_TRUNCATION,
     ConversationBucketer,
     TranscriptParser,

@@ -1,37 +1,36 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from client.models import (
+import pytest
+
+from cc_sentiment.models import (
     BucketIndex,
     SentimentRecord,
     SentimentScore,
     SessionId,
 )
-from client.signing import KeyDiscovery, PayloadSigner
-
-from datetime import datetime, timezone
+from cc_sentiment.signing import KeyDiscovery, PayloadSigner
 
 
 class TestKeyDiscovery:
-    @patch("client.signing.SSH_DIR", new_callable=lambda: type("", (), {"__truediv__": lambda s, n: Path(f"/tmp/test_ssh/{n}")})())
-    def test_find_private_key_ed25519(self, tmp_path: Path) -> None:
-        with patch.object(Path, "exists") as mock_exists:
-            mock_exists.return_value = True
+    def test_find_private_key_ed25519(self) -> None:
+        with patch("cc_sentiment.signing.SSH_DIR") as mock_ssh_dir:
+            ed25519_path = MagicMock(spec=Path)
+            ed25519_path.exists.return_value = True
+            mock_ssh_dir.__truediv__ = MagicMock(return_value=ed25519_path)
             key = KeyDiscovery.find_private_key()
-            assert "id_ed25519" in str(key)
+            assert key == ed25519_path
 
     def test_find_private_key_missing(self) -> None:
-        with patch("client.signing.SSH_DIR", Path("/nonexistent")):
-            try:
+        with patch("cc_sentiment.signing.SSH_DIR", Path("/nonexistent")):
+            with pytest.raises(FileNotFoundError):
                 KeyDiscovery.find_private_key()
-                assert False, "Should have raised"
-            except FileNotFoundError:
-                pass
 
-    @patch("client.signing.httpx.get")
+    @patch("cc_sentiment.signing.httpx.get")
     def test_fetch_github_keys(self, mock_get: MagicMock) -> None:
         mock_response = MagicMock()
         mock_response.text = "ssh-ed25519 AAAA key1\nssh-rsa BBBB key2\n"
@@ -41,11 +40,17 @@ class TestKeyDiscovery:
         keys = KeyDiscovery.fetch_github_keys("testuser")
         assert len(keys) == 2
         assert keys[0] == "ssh-ed25519 AAAA key1"
-        mock_get.assert_called_once_with("https://github.com/testuser.keys")
+        mock_get.assert_called_once_with(
+            "https://github.com/testuser.keys", timeout=10.0
+        )
 
-    @patch("client.signing.httpx.get")
-    @patch.object(KeyDiscovery, "read_public_key", return_value="ssh-ed25519 AAAA localkey")
-    @patch.object(KeyDiscovery, "find_private_key", return_value=Path("/home/.ssh/id_ed25519"))
+    @patch("cc_sentiment.signing.httpx.get")
+    @patch.object(
+        KeyDiscovery, "read_public_key", return_value="ssh-ed25519 AAAA localkey"
+    )
+    @patch.object(
+        KeyDiscovery, "find_private_key", return_value=Path("/home/.ssh/id_ed25519")
+    )
     def test_match_github_key_success(
         self,
         mock_find: MagicMock,
@@ -60,9 +65,13 @@ class TestKeyDiscovery:
         key_path = KeyDiscovery.match_github_key("testuser")
         assert key_path == Path("/home/.ssh/id_ed25519")
 
-    @patch("client.signing.httpx.get")
-    @patch.object(KeyDiscovery, "read_public_key", return_value="ssh-ed25519 CCCC nomatch")
-    @patch.object(KeyDiscovery, "find_private_key", return_value=Path("/home/.ssh/id_ed25519"))
+    @patch("cc_sentiment.signing.httpx.get")
+    @patch.object(
+        KeyDiscovery, "read_public_key", return_value="ssh-ed25519 CCCC nomatch"
+    )
+    @patch.object(
+        KeyDiscovery, "find_private_key", return_value=Path("/home/.ssh/id_ed25519")
+    )
     def test_match_github_key_no_match(
         self,
         mock_find: MagicMock,
@@ -74,11 +83,8 @@ class TestKeyDiscovery:
         mock_response.raise_for_status = MagicMock()
         mock_get.return_value = mock_response
 
-        try:
+        with pytest.raises(ValueError, match="No local SSH key matches"):
             KeyDiscovery.match_github_key("testuser")
-            assert False, "Should have raised"
-        except ValueError as e:
-            assert "No local SSH key matches" in str(e)
 
 
 class TestPayloadSigner:
@@ -100,7 +106,6 @@ class TestPayloadSigner:
         result = PayloadSigner.canonical_json(records)
         parsed = json.loads(result)
         assert len(parsed) == 2
-        assert " " not in result.replace(" ", "x").replace("x", "")
 
     def test_canonical_json_sorted_keys(self) -> None:
         records = [

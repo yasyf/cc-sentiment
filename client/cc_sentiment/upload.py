@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import httpx
 
-from client.models import (
+from cc_sentiment.models import (
     AppState,
     SentimentRecord,
     SessionId,
     UploadPayload,
 )
-from client.signing import PayloadSigner
+from cc_sentiment.signing import PayloadSigner
 
 DEFAULT_SERVER_URL = "https://cc-sentiment.modal.run"
 
@@ -17,12 +17,22 @@ class Uploader:
     def __init__(self, server_url: str = DEFAULT_SERVER_URL) -> None:
         self.server_url = server_url
 
+    @staticmethod
+    def records_from_state(state: AppState) -> list[SentimentRecord]:
+        return [
+            record
+            for session in state.sessions.values()
+            if not session.uploaded
+            for record in session.records
+        ]
+
     async def upload(
         self,
         records: list[SentimentRecord],
         state: AppState,
     ) -> None:
-        assert state.config is not None
+        if state.config is None:
+            raise ValueError("Client not configured. Run 'cc-sentiment setup' first.")
         config = state.config
 
         signature = PayloadSigner.sign_records(records, config.key_path)
@@ -42,16 +52,9 @@ class Uploader:
 
         uploaded_sessions: set[SessionId] = {r.conversation_id for r in records}
         for session_id in uploaded_sessions:
-            if session_id in state.processed:
-                prev = state.processed[session_id]
-                state.processed[session_id] = prev.model_copy(
+            if session_id in state.sessions:
+                prev = state.sessions[session_id]
+                state.sessions[session_id] = prev.model_copy(
                     update={"uploaded": True}
                 )
         state.save()
-
-    def pending_records(self, state: AppState) -> list[SessionId]:
-        return [
-            sid
-            for sid, info in state.processed.items()
-            if not info.uploaded
-        ]

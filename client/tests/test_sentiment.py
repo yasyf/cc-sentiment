@@ -4,14 +4,20 @@ import sys
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
-from client.models import (
+import pytest
+
+from cc_sentiment.engines import (
+    MAX_CONVERSATION_CHARS,
+    extract_score,
+    format_conversation,
+)
+from cc_sentiment.models import (
     BucketIndex,
     ConversationBucket,
     SentimentScore,
     SessionId,
     TranscriptMessage,
 )
-from client.sentiment import SentimentClassifier
 
 
 def make_bucket(
@@ -36,36 +42,34 @@ def make_bucket(
 
 
 class TestScoreExtraction:
+    def test_single_digit(self) -> None:
+        assert extract_score("4") == SentimentScore(4)
+
+    def test_digit_in_text(self) -> None:
+        assert extract_score("Score: 2") == SentimentScore(2)
+
     def test_valid_json(self) -> None:
-        response = '{"score": 4, "reason": "happy developer"}'
-        assert SentimentClassifier.extract_score(response) == SentimentScore(4)
+        assert extract_score('{"score": 4, "reason": "happy developer"}') == SentimentScore(4)
 
-    def test_json_with_extra_text(self) -> None:
-        response = 'Here is the analysis:\n{"score": 2, "reason": "frustrated"}\n'
-        assert SentimentClassifier.extract_score(response) == SentimentScore(2)
-
-    def test_regex_fallback(self) -> None:
-        response = 'The score is {"score": 5, broken json'
-        assert SentimentClassifier.extract_score(response) == SentimentScore(5)
-
-    def test_neutral_fallback(self) -> None:
-        response = "I cannot determine the sentiment"
-        assert SentimentClassifier.extract_score(response) == SentimentScore(3)
+    def test_unparseable_raises(self) -> None:
+        with pytest.raises(ValueError, match="Could not extract score"):
+            extract_score("I cannot determine the sentiment")
 
     def test_score_boundaries(self) -> None:
-        assert SentimentClassifier.extract_score('{"score": 1, "reason": "x"}') == SentimentScore(1)
-        assert SentimentClassifier.extract_score('{"score": 5, "reason": "x"}') == SentimentScore(5)
+        assert extract_score("1") == SentimentScore(1)
+        assert extract_score("5") == SentimentScore(5)
+
 
 
 class TestConversationFormatting:
     def test_format_user_message(self) -> None:
         bucket = make_bucket([("user", "fix the bug")])
-        text = SentimentClassifier.format_conversation(bucket)
+        text = format_conversation(bucket)
         assert "DEVELOPER: fix the bug" in text
 
     def test_format_assistant_message(self) -> None:
         bucket = make_bucket([("assistant", "I'll fix it")])
-        text = SentimentClassifier.format_conversation(bucket)
+        text = format_conversation(bucket)
         assert "AI: I'll fix it" in text
 
     def test_format_mixed_conversation(self) -> None:
@@ -74,46 +78,49 @@ class TestConversationFormatting:
             ("assistant", "I'll fix it"),
             ("user", "thanks!"),
         ])
-        text = SentimentClassifier.format_conversation(bucket)
+        text = format_conversation(bucket)
         lines = text.strip().splitlines()
         assert len(lines) == 3
         assert lines[0].startswith("DEVELOPER:")
         assert lines[1].startswith("AI:")
         assert lines[2].startswith("DEVELOPER:")
 
+    def test_truncates_long_conversations(self) -> None:
+        long_content = "x" * (MAX_CONVERSATION_CHARS + 1000)
+        bucket = make_bucket([("user", long_content)])
+        text = format_conversation(bucket)
+        assert text.endswith("\n[... truncated]")
+        assert len(text) == MAX_CONVERSATION_CHARS + len("\n[... truncated]")
+
 
 class TestClassifierIntegration:
-    def test_score_bucket(self) -> None:
+    def test_score_buckets(self) -> None:
+        from cc_sentiment.sentiment import SentimentClassifier
+
         mock_model = MagicMock()
         mock_tokenizer = MagicMock()
         mock_tokenizer.apply_chat_template.return_value = [1, 2, 3]
-        mock_tokenizer.encode.return_value = [4, 5, 6]
+
+        mock_batch_result = MagicMock()
+        mock_batch_result.texts = ["4"]
 
         mock_mlx_lm = MagicMock()
         mock_mlx_lm.load.return_value = (mock_model, mock_tokenizer)
-        mock_mlx_lm.generate.return_value = '{"score": 4, "reason": "productive session"}'
+        mock_mlx_lm.batch_generate.return_value = mock_batch_result
 
-        mock_cache_module = MagicMock()
-        mock_cache_module.make_prompt_cache.return_value = []
-
-        mock_generate_module = MagicMock()
-        mock_generate_module.generate_step.return_value = iter([])
-
-        mock_mx = MagicMock()
+        mock_logit_proc = MagicMock()
 
         with patch.dict(sys.modules, {
             "mlx_lm": mock_mlx_lm,
-            "mlx_lm.models": MagicMock(),
-            "mlx_lm.models.cache": mock_cache_module,
-            "mlx_lm.generate": mock_generate_module,
-            "mlx.core": mock_mx,
-        }), patch("client.patches.apply_kv_cache_patch"):
+        }), patch("cc_sentiment.patches.apply_kv_cache_patch"), \
+             patch("cc_sentiment.sentiment.make_score_logit_processor", return_value=mock_logit_proc):
             classifier = SentimentClassifier.__new__(SentimentClassifier)
             classifier.model = mock_model
             classifier.tokenizer = mock_tokenizer
-            classifier.system_cache = []
+            classifier.logit_processor = mock_logit_proc
 
             bucket = make_bucket([("user", "this works perfectly!")])
-            score = classifier.score_bucket(bucket)
+            scores = classifier.score_buckets([bucket])
 
-        assert score == SentimentScore(4)
+        assert scores == [SentimentScore(4)]
+        mock_mlx_lm.batch_generate.assert_called_once()

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import httpx
 
-from client.models import SentimentRecord
+from cc_sentiment.models import SentimentRecord
 
 SSH_DIR = Path.home() / ".ssh"
 KEY_CANDIDATES = ["id_ed25519", "id_rsa"]
@@ -32,7 +32,7 @@ class KeyDiscovery:
 
     @staticmethod
     def fetch_github_keys(username: str) -> list[str]:
-        response = httpx.get(f"https://github.com/{username}.keys")
+        response = httpx.get(f"https://github.com/{username}.keys", timeout=10.0)
         response.raise_for_status()
         return [line.strip() for line in response.text.splitlines() if line.strip()]
 
@@ -85,6 +85,7 @@ class PayloadSigner:
                 ],
                 check=True,
                 capture_output=True,
+                timeout=10,
             )
             sig_path = Path(f"{data_path}.sig")
             signature = sig_path.read_text()

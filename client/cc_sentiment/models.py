@@ -33,6 +33,8 @@ class ConversationBucket(BaseModel, frozen=True):
 
 
 class SentimentRecord(BaseModel, frozen=True):
+    model_config = {"protected_namespaces": ()}
+
     time: datetime
     conversation_id: SessionId
     bucket_index: BucketIndex
@@ -53,14 +55,18 @@ class ClientConfig(BaseModel, frozen=True):
     key_path: Path
 
 
-class ProcessedSession(BaseModel, frozen=True):
+class ProcessedFile(BaseModel, frozen=True):
     mtime: float
-    buckets: int
+
+
+class ProcessedSession(BaseModel, frozen=True):
+    records: tuple[SentimentRecord, ...]
     uploaded: bool = False
 
 
 class AppState(BaseModel):
-    processed: dict[SessionId, ProcessedSession] = Field(default_factory=dict)
+    processed_files: dict[str, ProcessedFile] = Field(default_factory=dict)
+    sessions: dict[SessionId, ProcessedSession] = Field(default_factory=dict)
     config: ClientConfig | None = None
 
     @classmethod

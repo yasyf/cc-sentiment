@@ -5,7 +5,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from client.models import (
+from cc_sentiment.models import (
     BucketIndex,
     ConversationBucket,
     SessionId,
@@ -34,15 +34,29 @@ class TranscriptParser:
     def parse_line(line: str) -> TranscriptMessage | None:
         data = json.loads(line)
 
-        match data.get("type"):
+        match data["type"]:
             case "queue-operation":
                 return None
             case "user" if data.get("isSidechain"):
                 return None
             case "user":
+                raw_content = data["message"]["content"]
+                match raw_content:
+                    case str():
+                        content = raw_content
+                    case list():
+                        text_parts = [
+                            block["text"] for block in raw_content
+                            if isinstance(block, dict) and block.get("type") == "text"
+                        ]
+                        if not text_parts:
+                            return None
+                        content = " ".join(text_parts)
+                    case _:
+                        return None
                 return TranscriptMessage(
                     role="user",
-                    content=data["message"]["content"],
+                    content=content,
                     timestamp=datetime.fromisoformat(data["timestamp"]),
                     session_id=SessionId(data["sessionId"]),
                     uuid=data["uuid"],
