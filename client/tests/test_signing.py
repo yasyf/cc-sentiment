@@ -13,7 +13,7 @@ from cc_sentiment.models import (
     SentimentScore,
     SessionId,
 )
-from cc_sentiment.signing import KeyDiscovery, PayloadSigner
+from cc_sentiment.signing import KeyDiscovery, NoGitHubKeysError, PayloadSigner
 
 
 class TestKeyDiscovery:
@@ -85,6 +85,26 @@ class TestKeyDiscovery:
 
         with pytest.raises(ValueError, match="No local SSH key matches"):
             KeyDiscovery.match_github_key("testuser")
+
+    @patch("cc_sentiment.signing.httpx.get")
+    @patch.object(
+        KeyDiscovery, "find_private_key", return_value=Path("/home/.ssh/id_ed25519")
+    )
+    def test_match_github_key_no_remote_keys(
+        self,
+        mock_find: MagicMock,
+        mock_get: MagicMock,
+    ) -> None:
+        mock_response = MagicMock()
+        mock_response.text = ""
+        mock_response.raise_for_status = MagicMock()
+        mock_get.return_value = mock_response
+
+        with pytest.raises(NoGitHubKeysError) as exc_info:
+            KeyDiscovery.match_github_key("testuser")
+
+        assert exc_info.value.username == "testuser"
+        assert exc_info.value.local_key_path == Path("/home/.ssh/id_ed25519")
 
 
 class TestPayloadSigner:

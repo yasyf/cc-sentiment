@@ -123,25 +123,28 @@ class LiveStats:
 
 
 def detect_git_username() -> str | None:
-    try:
-        result = subprocess.run(
-            ["git", "config", "github.user"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
+    for cmd in (
+        ["git", "config", "github.user"],
+        ["gh", "api", "user", "--jq", ".login"],
+    ):
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            continue
     return None
 
 
 def auto_setup(state: AppState) -> bool:
-    from cc_sentiment.signing import KeyDiscovery
+    from cc_sentiment.signing import KeyDiscovery, NoGitHubKeysError
 
     if not (username := detect_git_username()):
         return False
     try:
         key_path = KeyDiscovery.match_github_key(username)
+    except NoGitHubKeysError:
+        return False
     except (ValueError, FileNotFoundError):
         return False
 
@@ -164,15 +167,25 @@ def ensure_config(state: AppState) -> None:
 
 
 def run_interactive_setup(state: AppState) -> None:
-    from cc_sentiment.signing import KeyDiscovery
+    from cc_sentiment.signing import KeyDiscovery, NoGitHubKeysError
 
     username = click.prompt("GitHub username", default=detect_git_username())
     console.print(f"Fetching SSH keys for {username}...")
 
-    key_path = KeyDiscovery.match_github_key(username)
+    try:
+        key_path = KeyDiscovery.match_github_key(username)
+    except NoGitHubKeysError as e:
+        console.print(f"[yellow]Warning:[/] {e}")
+        local_pub = KeyDiscovery.read_public_key(e.local_key_path)
+        console.print(f"  Local key: [dim]{local_pub[:60]}...[/]")
+        console.print(f"  Upload it at: [link]https://github.com/settings/ssh/new[/link]")
+        if not click.confirm("Proceed with local key anyway? (upload will fail until key is on GitHub)"):
+            raise SystemExit(1)
+        key_path = e.local_key_path
+
     state.config = ClientConfig(github_username=username, key_path=key_path)
     state.save()
-    console.print(f"[green]Configuration saved.[/] Matched key: {key_path}")
+    console.print(f"[green]Configuration saved.[/] Using key: {key_path}")
 
 
 def verify_credentials(state: AppState) -> None:

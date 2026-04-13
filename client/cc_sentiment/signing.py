@@ -40,17 +40,28 @@ class KeyDiscovery:
     def match_github_key(cls, username: str) -> Path:
         github_keys = cls.fetch_github_keys(username)
         private_key = cls.find_private_key()
-        local_pub = cls.read_public_key(private_key)
 
-        local_key_data = " ".join(local_pub.split()[:2])
+        if not github_keys:
+            raise NoGitHubKeysError(username, private_key)
+
+        local_key_data = " ".join(cls.read_public_key(private_key).split()[:2])
         for gh_key in github_keys:
-            gh_key_data = " ".join(gh_key.split()[:2])
-            if local_key_data == gh_key_data:
+            if " ".join(gh_key.split()[:2]) == local_key_data:
                 return private_key
 
         raise ValueError(
             f"No local SSH key matches GitHub keys for {username}. "
             f"Add your key at https://github.com/settings/keys"
+        )
+
+
+class NoGitHubKeysError(Exception):
+    def __init__(self, username: str, local_key_path: Path) -> None:
+        self.username = username
+        self.local_key_path = local_key_path
+        super().__init__(
+            f"No SSH keys found on GitHub for {username}. "
+            f"Upload your key at https://github.com/settings/keys"
         )
 
 
