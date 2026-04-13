@@ -24,7 +24,7 @@ from cc_sentiment_server.models import (
 )
 from cc_sentiment_server.verify import Verifier
 
-__all__ = ["modal_app", "create_app"]
+__all__ = ["app", "create_app"]
 
 DATA_CACHE_TTL_SECONDS = 60
 
@@ -35,14 +35,11 @@ class Cache(Protocol):
 
 
 class DictCache:
-    def __init__(self, d: dict | None = None) -> None:
-        self.d = d if d is not None else {}
+    def __init__(self) -> None:
+        self.d: dict = {}
 
     async def get(self, key: str) -> object:
-        try:
-            return self.d[key]
-        except KeyError:
-            raise KeyError(key)
+        return self.d[key]
 
     async def put(self, key: str, value: object) -> None:
         self.d[key] = value
@@ -53,7 +50,9 @@ class ModalDictCache:
         self.modal_dict = modal_dict
 
     async def get(self, key: str) -> object:
-        return await self.modal_dict.get.aio(key)
+        if (result := await self.modal_dict.get.aio(key)) is None:
+            raise KeyError(key)
+        return result
 
     async def put(self, key: str, value: object) -> None:
         await self.modal_dict.put.aio(key, value)
@@ -86,31 +85,23 @@ def create_app(
     @web_app.post("/verify")
     @limiter.limit("10/minute")
     async def verify(request: Request, body: VerifyRequest) -> StatusResponse:
-        verified = await verifier.verify_signature(
-            body.github_username, body.test_payload, body.signature,
-        )
-        if not verified:
-            return JSONResponse(
-                {"detail": "Signature verification failed"}, status_code=401,
-            )
+        if not await verifier.verify_signature(body.github_username, body.test_payload, body.signature):
+            return JSONResponse({"detail": "Signature verification failed"}, status_code=401)
         return StatusResponse()
 
     @web_app.post("/upload")
     @limiter.limit("100/minute")
     async def upload(request: Request, payload: UploadPayload) -> UploadResponse:
-        canonical = json.dumps(
-            [r.model_dump(mode="json") for r in payload.records],
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-
-        verified = await verifier.verify_signature(
-            payload.github_username, canonical, payload.signature,
-        )
-        if not verified:
-            return JSONResponse(
-                {"detail": "Signature verification failed"}, status_code=401,
-            )
+        if not await verifier.verify_signature(
+            payload.github_username,
+            json.dumps(
+                [r.model_dump(mode="json") for r in payload.records],
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            payload.signature,
+        ):
+            return JSONResponse({"detail": "Signature verification failed"}, status_code=401)
 
         await db.ingest(payload.records, payload.github_username)
         return UploadResponse(ingested=len(payload.records))
@@ -121,32 +112,21 @@ def create_app(
         request: Request,
         days: int = Query(default=7, ge=1, le=365),
     ) -> DataResponse:
-        cache_key = f"data:{days}"
         try:
-            cached_at, cached_response = await data_cache.get(cache_key)
+            cached_at, cached_response = await data_cache.get(f"data:{days}")
             if time.time() - cached_at < DATA_CACHE_TTL_SECONDS:
-                return JSONResponse(
-                    cached_response,
-                    headers={"Cache-Control": "public, max-age=3600"},
-                )
+                return JSONResponse(cached_response, headers={"Cache-Control": "public, max-age=3600"})
         except KeyError:
             pass
 
-        response = await db.query_all(days)
-        response_dict = response.model_dump(mode="json")
-        await data_cache.put(cache_key, (time.time(), response_dict))
-
-        return JSONResponse(
-            response_dict,
-            headers={"Cache-Control": "public, max-age=3600"},
-        )
+        result = await db.query_all(days)
+        await data_cache.put(f"data:{days}", (time.time(), result.model_dump(mode="json")))
+        return JSONResponse(result.model_dump(mode="json"), headers={"Cache-Control": "public, max-age=3600"})
 
     return web_app
 
 
-# --- Modal wiring ---
-
-modal_app = modal.App("cc-sentiment")
+app = modal.App("cc-sentiment")
 
 image = (
     modal.Image.debian_slim(python_version="3.14")
@@ -156,7 +136,7 @@ image = (
 )
 
 
-@modal_app.cls(image=image, secrets=[modal.Secret.from_name("cc-sentiment-db")], scaledown_window=120)
+@app.cls(image=image, secrets=[modal.Secret.from_name("cc-sentiment-db")], scaledown_window=120)
 @modal.concurrent(max_inputs=100)
 class API:
     db: Database
@@ -167,8 +147,7 @@ class API:
     async def startup(self) -> None:
         self.db = Database(os.environ["TIMESCALE_DSN"])
         await self.db.open()
-        github_keys = modal.Dict.from_name("github-keys", create_if_missing=True)
-        self.verifier = Verifier(key_cache=github_keys)
+        self.verifier = Verifier(key_cache=modal.Dict.from_name("github-keys", create_if_missing=True))
         self.data_cache = ModalDictCache(modal.Dict.from_name("data-cache", create_if_missing=True))
 
     @modal.exit()
@@ -177,11 +156,10 @@ class API:
 
     @modal.asgi_app()
     def serve(self) -> Callable:
-        allowed_origins = os.environ["ALLOWED_ORIGINS"].split(",")
-        return create_app(self.db, self.verifier, self.data_cache, allowed_origins)
+        return create_app(self.db, self.verifier, self.data_cache, os.environ["ALLOWED_ORIGINS"].split(","))
 
 
-@modal_app.local_entrypoint()
+@app.function(image=image, secrets=[modal.Secret.from_name("cc-sentiment-db")])
 async def seed() -> None:
     db = Database(os.environ["TIMESCALE_DSN"])
     await db.open()
@@ -190,3 +168,8 @@ async def seed() -> None:
         print("Seed complete: table, hypertable, indexes, continuous aggregate, compression policy.")
     finally:
         await db.close()
+
+
+@app.local_entrypoint()
+async def run_seed() -> None:
+    await seed.remote.aio()

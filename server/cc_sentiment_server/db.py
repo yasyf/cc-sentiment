@@ -79,6 +79,16 @@ SELECT add_compression_policy('sentiment', INTERVAL '30 days',
     if_not_exists => TRUE)
 """
 
+SEED_STATEMENTS = [
+    CREATE_TABLE_SQL,
+    CREATE_HYPERTABLE_SQL,
+    *CREATE_INDEXES_SQL,
+    CREATE_CONTINUOUS_AGGREGATE_SQL,
+    ADD_CAGG_POLICY_SQL,
+    ENABLE_COMPRESSION_SQL,
+    ADD_COMPRESSION_POLICY_SQL,
+]
+
 INGEST_SQL = """
 INSERT INTO sentiment (time, conversation_id, bucket_index, github_username,
                        sentiment_score, prompt_version, model_id, client_version)
@@ -87,7 +97,6 @@ VALUES (%(time)s, %(conversation_id)s, %(bucket_index)s, %(github_username)s,
 ON CONFLICT DO NOTHING
 """
 
-# Query the continuous aggregate for timeline data
 TIMELINE_SQL = """
 SELECT bucket AS time, avg_score, count
 FROM sentiment_hourly
@@ -141,14 +150,8 @@ class Database:
 
     async def seed(self) -> None:
         async with self.pool.connection() as conn:
-            await conn.execute(CREATE_TABLE_SQL)
-            await conn.execute(CREATE_HYPERTABLE_SQL)
-            for idx_sql in CREATE_INDEXES_SQL:
-                await conn.execute(idx_sql)
-            await conn.execute(CREATE_CONTINUOUS_AGGREGATE_SQL)
-            await conn.execute(ADD_CAGG_POLICY_SQL)
-            await conn.execute(ENABLE_COMPRESSION_SQL)
-            await conn.execute(ADD_COMPRESSION_POLICY_SQL)
+            for sql in SEED_STATEMENTS:
+                await conn.execute(sql)
 
     async def ingest(self, records: list[SentimentRecord], github_username: str) -> None:
         async with self.pool.connection() as conn:
@@ -172,34 +175,24 @@ class Database:
 
     async def query_all(self, days: int = 7) -> DataResponse:
         async with self.pool.connection() as conn:
-            async with conn.pipeline():
-                timeline_cur = await conn.execute(TIMELINE_SQL, {"days": days})
-                hourly_cur = await conn.execute(HOURLY_SQL)
-                weekday_cur = await conn.execute(WEEKDAY_SQL)
-                distribution_cur = await conn.execute(DISTRIBUTION_SQL)
-                total_cur = await conn.execute(TOTAL_COUNT_SQL)
-                last_updated_cur = await conn.execute(LAST_UPDATED_SQL)
-
             timeline = [
                 TimelinePoint(time=row[0], avg_score=row[1], count=row[2])
-                for row in await timeline_cur.fetchall()
+                for row in await (await conn.execute(TIMELINE_SQL, {"days": days})).fetchall()
             ]
             hourly = [
                 HourlyPoint(hour=row[0], avg_score=row[1], count=row[2])
-                for row in await hourly_cur.fetchall()
+                for row in await (await conn.execute(HOURLY_SQL)).fetchall()
             ]
             weekday = [
                 WeekdayPoint(dow=row[0], avg_score=row[1], count=row[2])
-                for row in await weekday_cur.fetchall()
+                for row in await (await conn.execute(WEEKDAY_SQL)).fetchall()
             ]
             distribution = [
                 DistributionPoint(score=row[0], count=row[1])
-                for row in await distribution_cur.fetchall()
+                for row in await (await conn.execute(DISTRIBUTION_SQL)).fetchall()
             ]
-            total = (await total_cur.fetchone())[0]
-            last_updated_row = await last_updated_cur.fetchone()
-
-        last_updated = last_updated_row[0] if last_updated_row[0] else datetime.now(timezone.utc)
+            total = (await (await conn.execute(TOTAL_COUNT_SQL)).fetchone())[0]
+            last_updated = (await (await conn.execute(LAST_UPDATED_SQL)).fetchone())[0]
 
         return DataResponse(
             timeline=timeline,
@@ -207,5 +200,5 @@ class Database:
             weekday=weekday,
             distribution=distribution,
             total_records=total,
-            last_updated=last_updated,
+            last_updated=last_updated or datetime.now(timezone.utc),
         )

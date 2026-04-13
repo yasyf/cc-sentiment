@@ -79,7 +79,7 @@ class TestUpload:
         async def do_upload() -> None:
             await uploader.upload([make_record()], state)
 
-        with pytest.raises(ValueError, match="not configured"):
+        with pytest.raises(AssertionError, match="not configured"):
             anyio.run(do_upload)
 
     def test_marks_sessions_uploaded_after_success(self) -> None:
