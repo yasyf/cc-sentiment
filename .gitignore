@@ -58,3 +58,4 @@ mlx_models/
 .context/
 
 .claude/settings.local.json
+.vercel
