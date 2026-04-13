@@ -17,23 +17,22 @@
 		})
 	);
 
-	const overallAvg = $derived(() => {
+	const overallAvg = $derived.by(() => {
 		const dist = data.distribution;
 		const total = dist.reduce((s, d) => s + d.count, 0);
 		if (total === 0) return 0;
 		return dist.reduce((s, d) => s + d.score * d.count, 0) / total;
 	});
 
-	const sentimentLabel = $derived(() => {
-		const avg = overallAvg();
-		if (avg < 1.5) return { text: 'Frustrated', color: 'text-sentiment-1' };
-		if (avg < 2.5) return { text: 'Annoyed', color: 'text-sentiment-2' };
-		if (avg < 3.5) return { text: 'Neutral', color: 'text-sentiment-3' };
-		if (avg < 4.5) return { text: 'Satisfied', color: 'text-sentiment-4' };
+	const sentimentLabel = $derived.by(() => {
+		if (overallAvg < 1.5) return { text: 'Frustrated', color: 'text-sentiment-1' };
+		if (overallAvg < 2.5) return { text: 'Annoyed', color: 'text-sentiment-2' };
+		if (overallAvg < 3.5) return { text: 'Neutral', color: 'text-sentiment-3' };
+		if (overallAvg < 4.5) return { text: 'Satisfied', color: 'text-sentiment-4' };
 		return { text: 'Delighted', color: 'text-sentiment-5' };
 	});
 
-	const peakHour = $derived(() => {
+	const peakHour = $derived.by(() => {
 		if (data.hourly.length === 0) return null;
 		const worst = data.hourly.toSorted((a, b) => a.avg_score - b.avg_score)[0];
 		const h = worst.hour;
@@ -42,7 +41,7 @@
 		return `${display} ${ampm}`;
 	});
 
-	const worstDay = $derived(() => {
+	const worstDay = $derived.by(() => {
 		if (data.weekday.length === 0) return null;
 		const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 		const worst = data.weekday.toSorted((a, b) => a.avg_score - b.avg_score)[0];
@@ -83,8 +82,8 @@
 		<div class="mx-auto mb-6 grid max-w-6xl grid-cols-2 gap-4 sm:grid-cols-4">
 			<div class="rounded-xl border border-border bg-bg-card p-4">
 				<p class="text-xs font-medium uppercase tracking-wider text-text-dim">Overall</p>
-				<p class="mt-1 text-2xl font-semibold {sentimentLabel().color}">{overallAvg().toFixed(1)}</p>
-				<p class="text-xs {sentimentLabel().color}">{sentimentLabel().text}</p>
+				<p class="mt-1 text-2xl font-semibold {sentimentLabel.color}">{overallAvg.toFixed(1)}</p>
+				<p class="text-xs {sentimentLabel.color}">{sentimentLabel.text}</p>
 			</div>
 
 			<div class="rounded-xl border border-border bg-bg-card p-4">
@@ -95,13 +94,13 @@
 
 			<div class="rounded-xl border border-border bg-bg-card p-4">
 				<p class="text-xs font-medium uppercase tracking-wider text-text-dim">Worst Hour</p>
-				<p class="mt-1 text-2xl font-semibold text-sentiment-1">{peakHour() ?? '---'}</p>
+				<p class="mt-1 text-2xl font-semibold text-sentiment-1">{peakHour ?? '---'}</p>
 				<p class="text-xs text-text-muted">lowest avg score</p>
 			</div>
 
 			<div class="rounded-xl border border-border bg-bg-card p-4">
 				<p class="text-xs font-medium uppercase tracking-wider text-text-dim">Worst Day</p>
-				<p class="mt-1 text-2xl font-semibold text-sentiment-2">{worstDay() ?? '---'}</p>
+				<p class="mt-1 text-2xl font-semibold text-sentiment-2">{worstDay ?? '---'}</p>
 				<p class="text-xs text-text-muted">lowest avg score</p>
 			</div>
 		</div>

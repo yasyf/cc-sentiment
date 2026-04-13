@@ -135,7 +135,9 @@
 				<code class="font-mono text-accent">github.com/&lt;username&gt;.gpg</code>.
 			</p>
 			<p class="mt-2 text-sm text-text-muted">
-				The <code class="font-mono text-accent">GET /data</code> endpoint is public and requires no authentication.
+				The <code class="font-mono text-accent">GET /data</code> endpoint requires a bearer token via the
+				<code class="font-mono text-accent">Authorization</code> header. The dashboard fetches data server-side
+				using a shared secret that is never exposed to the browser.
 			</p>
 		</section>
 

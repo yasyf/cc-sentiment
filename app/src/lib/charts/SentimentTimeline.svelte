@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { TimelinePoint } from '../types.js';
+	import type { TimelinePoint } from '$lib/types.js';
 
 	const { data }: { data: TimelinePoint[] } = $props();
 
@@ -11,28 +11,27 @@
 
 	const sorted = $derived(data.toSorted((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()));
 
-	const xRange = $derived(() => {
+	const xRange = $derived.by(() => {
 		if (sorted.length === 0) return { min: Date.now() - 86400000, max: Date.now() };
 		const times = sorted.map((d) => new Date(d.time).getTime());
 		return { min: Math.min(...times), max: Math.max(...times) };
 	});
 
 	function xScale(t: string): number {
-		const { min, max } = xRange();
-		const range = max - min || 1;
-		return PADDING.left + ((new Date(t).getTime() - min) / range) * INNER_W;
+		const range = xRange.max - xRange.min || 1;
+		return PADDING.left + ((new Date(t).getTime() - xRange.min) / range) * INNER_W;
 	}
 
 	function yScale(v: number): number {
 		return PADDING.top + INNER_H - ((v - 1) / 4) * INNER_H;
 	}
 
-	const linePath = $derived(() => {
+	const linePath = $derived.by(() => {
 		if (sorted.length === 0) return '';
 		return sorted.map((d, i) => `${i === 0 ? 'M' : 'L'}${xScale(d.time)},${yScale(d.avg_score)}`).join(' ');
 	});
 
-	const areaPath = $derived(() => {
+	const areaPath = $derived.by(() => {
 		if (sorted.length === 0) return '';
 		const line = sorted.map((d, i) => `${i === 0 ? 'M' : 'L'}${xScale(d.time)},${yScale(d.avg_score)}`).join(' ');
 		const last = sorted[sorted.length - 1];
@@ -42,7 +41,7 @@
 
 	const yTicks = [1, 2, 3, 4, 5];
 
-	const xTicks = $derived(() => {
+	const xTicks = $derived.by(() => {
 		if (sorted.length <= 2) return sorted.map((d) => d.time);
 		const step = Math.max(1, Math.floor(sorted.length / 5));
 		return sorted.filter((_, i) => i % step === 0).map((d) => d.time);
@@ -98,7 +97,7 @@
 			</text>
 		{/each}
 
-		{#each xTicks() as tick}
+		{#each xTicks as tick}
 			<text x={xScale(tick)} y={HEIGHT - 6} text-anchor="middle" fill="var(--color-text-dim)" font-size="11">
 				{formatDate(tick)}
 			</text>
@@ -111,8 +110,8 @@
 			</linearGradient>
 		</defs>
 
-		<path d={areaPath()} fill="url(#area-grad)" />
-		<path d={linePath()} fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+		<path d={areaPath} fill="url(#area-grad)" />
+		<path d={linePath} fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
 
 		{#each sorted as point, i}
 			<circle

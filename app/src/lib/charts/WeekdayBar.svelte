@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { WeekdayPoint } from '../types.js';
+	import type { WeekdayPoint } from '$lib/types.js';
 
 	const { data }: { data: WeekdayPoint[] } = $props();
 

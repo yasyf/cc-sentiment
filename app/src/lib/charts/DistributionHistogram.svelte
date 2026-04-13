@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { DistributionPoint } from '../types.js';
+	import type { DistributionPoint } from '$lib/types.js';
 
 	const { data }: { data: DistributionPoint[] } = $props();
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { HourlyPoint } from '../types.js';
+	import type { HourlyPoint } from '$lib/types.js';
 
 	const { data }: { data: HourlyPoint[] } = $props();
 
@@ -17,7 +17,7 @@
 		return 'var(--color-sentiment-5)';
 	}
 
-	const allHours = $derived(() => {
+	const allHours = $derived.by(() => {
 		const byHour = new Map(data.map((d) => [d.hour, d]));
 		return Array.from({ length: 24 }, (_, i) => byHour.get(i) ?? { hour: i, avg_score: 0, count: 0 });
 	});
@@ -67,7 +67,7 @@
 			/>
 		{/each}
 
-		{#each allHours() as point}
+		{#each allHours as point}
 			{@const bw = barWidth()}
 			{@const bh = barHeight(point.count)}
 			{@const x = barX(point.hour)}
@@ -95,7 +95,7 @@
 		{/each}
 
 		{#if hoveredHour !== null}
-			{@const p = allHours().find((d) => d.hour === hoveredHour)}
+			{@const p = allHours.find((d) => d.hour === hoveredHour)}
 			{#if p && p.count > 0}
 				{@const x = barX(p.hour) + barWidth() / 2}
 				<rect x={x - 60} y="2" width="120" height="18" rx="4" fill="var(--color-bg-card)" stroke="var(--color-border)" />
