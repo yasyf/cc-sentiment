@@ -75,12 +75,12 @@ class GPGBackend:
     key_type: Literal["gpg"] = "gpg"
 
     def sign(self, data: str) -> str:
-        signed = gnupg.GPG().sign(data, keyid=self.fpr, detach=True, armor=True)
+        signed = gnupg.GPG().sign(data, keyid=self.fpr, detach=True)
         assert signed.data, f"GPG signing failed: {signed.status}"
         return str(signed)
 
     def public_key_text(self) -> str:
-        return gnupg.GPG().export_keys(self.fpr, armor=True)
+        return gnupg.GPG().export_keys(self.fpr)
 
     def fingerprint(self) -> str:
         return self.fpr

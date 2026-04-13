@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cc_sentiment_server.verify import Verifier
+from cc_sentiment_server.verify import DictKeyCache, Verifier
 
 
 class TestFetchSSHKeys:
@@ -148,18 +148,19 @@ class TestGPGVerification:
 class TestSSHKeyCache:
     @pytest.mark.asyncio
     async def test_populates_on_miss(self) -> None:
-        cache: dict = {}
+        cache = DictKeyCache()
         verifier = Verifier(key_cache=cache)
         verifier.fetch_ssh_keys = AsyncMock(return_value=["ssh-ed25519 KEY1 user@host"])
 
         with patch.object(verifier, "_verify_with_ssh_key", return_value=True):
             await verifier.verify_ssh("octocat", "{}", "sig")
 
-        assert cache["ssh:octocat"] == ["ssh-ed25519 KEY1 user@host"]
+        assert cache.d["ssh:octocat"] == ["ssh-ed25519 KEY1 user@host"]
 
     @pytest.mark.asyncio
     async def test_uses_cached_keys(self) -> None:
-        cache = {"ssh:octocat": ["ssh-ed25519 CACHED user@host"]}
+        cache = DictKeyCache()
+        cache.d["ssh:octocat"] = ["ssh-ed25519 CACHED user@host"]
         verifier = Verifier(key_cache=cache)
         verifier.fetch_ssh_keys = AsyncMock()
 
@@ -170,7 +171,8 @@ class TestSSHKeyCache:
 
     @pytest.mark.asyncio
     async def test_refetches_on_mismatch(self) -> None:
-        cache = {"ssh:octocat": ["ssh-ed25519 OLD user@host"]}
+        cache = DictKeyCache()
+        cache.d["ssh:octocat"] = ["ssh-ed25519 OLD user@host"]
         verifier = Verifier(key_cache=cache)
 
         def verify_key(username, key, payload, sig):
@@ -183,7 +185,7 @@ class TestSSHKeyCache:
 
         assert result is True
         verifier.fetch_ssh_keys.assert_called_once()
-        assert cache["ssh:octocat"] == ["ssh-ed25519 NEW user@host"]
+        assert cache.d["ssh:octocat"] == ["ssh-ed25519 NEW user@host"]
 
 
 class TestVerifyWithSSHKey:

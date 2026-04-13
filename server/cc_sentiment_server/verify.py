@@ -13,8 +13,35 @@ USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9-]+$")
 __all__ = ["Verifier"]
 
 
+class KeyCache:
+    async def get(self, key: str) -> object | None: ...
+    async def put(self, key: str, value: object) -> None: ...
+
+
+class DictKeyCache(KeyCache):
+    def __init__(self) -> None:
+        self.d: dict = {}
+
+    async def get(self, key: str) -> object | None:
+        return self.d.get(key)
+
+    async def put(self, key: str, value: object) -> None:
+        self.d[key] = value
+
+
+class ModalKeyCache(KeyCache):
+    def __init__(self, modal_dict: object) -> None:
+        self.modal_dict = modal_dict
+
+    async def get(self, key: str) -> object | None:
+        return await self.modal_dict.get.aio(key)
+
+    async def put(self, key: str, value: object) -> None:
+        await self.modal_dict.put.aio(key, value)
+
+
 class Verifier:
-    def __init__(self, key_cache: dict | None = None) -> None:
+    def __init__(self, key_cache: KeyCache | None = None) -> None:
         self.key_cache = key_cache
 
     async def fetch_ssh_keys(self, username: str) -> list[str]:
@@ -32,20 +59,20 @@ class Verifier:
 
     async def get_or_fetch_ssh_keys(self, username: str, *, force: bool = False) -> list[str]:
         cache_key = f"ssh:{username}"
-        if not force and self.key_cache is not None and cache_key in self.key_cache:
-            return self.key_cache[cache_key]
+        if not force and self.key_cache is not None and (cached := await self.key_cache.get(cache_key)) is not None:
+            return cached
         keys = await self.fetch_ssh_keys(username)
         if self.key_cache is not None:
-            self.key_cache[cache_key] = keys
+            await self.key_cache.put(cache_key, keys)
         return keys
 
     async def get_or_fetch_gpg_keys(self, username: str, *, force: bool = False) -> str:
         cache_key = f"gpg:{username}"
-        if not force and self.key_cache is not None and cache_key in self.key_cache:
-            return self.key_cache[cache_key]
+        if not force and self.key_cache is not None and (cached := await self.key_cache.get(cache_key)) is not None:
+            return cached
         armor = await self.fetch_gpg_keys(username)
         if self.key_cache is not None:
-            self.key_cache[cache_key] = armor
+            await self.key_cache.put(cache_key, armor)
         return armor
 
     async def verify_signature(self, username: str, payload_json: str, signature: str) -> bool:
@@ -100,7 +127,16 @@ class Verifier:
         with tempfile.TemporaryDirectory() as tmpdir:
             g = gnupg.GPG(gnupghome=tmpdir)
             g.import_keys(public_key_armor)
-            return bool(g.verify(payload_json, sig=signature))
+
+            sig_path = f"{tmpdir}/sig.asc"
+            data_path = f"{tmpdir}/data.json"
+            with open(sig_path, "wb") as f:
+                f.write(signature.encode())
+            with open(data_path, "wb") as f:
+                f.write(payload_json.encode())
+
+            with open(sig_path, "rb") as sig_fh:
+                return bool(g.verify_file(sig_fh, data_filename=data_path))
 
     async def verify_with_ssh_key(self, username: str, key: str, payload_json: str, signature: str) -> bool:
         return await asyncio.to_thread(self._verify_with_ssh_key, username, key, payload_json, signature)

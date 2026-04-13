@@ -22,7 +22,7 @@ from cc_sentiment_server.models import (
     UploadResponse,
     VerifyRequest,
 )
-from cc_sentiment_server.verify import Verifier
+from cc_sentiment_server.verify import ModalKeyCache, Verifier
 
 __all__ = ["app", "create_app"]
 
@@ -147,7 +147,7 @@ class API:
     async def startup(self) -> None:
         self.db = Database(os.environ["TIMESCALE_DSN"])
         await self.db.open()
-        self.verifier = Verifier(key_cache=modal.Dict.from_name("github-keys", create_if_missing=True))
+        self.verifier = Verifier(key_cache=ModalKeyCache(modal.Dict.from_name("github-keys", create_if_missing=True)))
         self.data_cache = ModalDictCache(modal.Dict.from_name("data-cache", create_if_missing=True))
 
     @modal.exit()
