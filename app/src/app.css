@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 @theme {
+	--font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
 	--color-bg: #0a0a0f;
 	--color-bg-card: #12121a;
 	--color-bg-hover: #1a1a25;

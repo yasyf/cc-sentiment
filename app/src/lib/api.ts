@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { env } from '$env/dynamic/public';
+
+const API_BASE_URL = 'https://anetaco--cc-sentiment-api-serve.modal.run';
 
 const TimelinePointSchema = z.object({
 	time: z.string(),
@@ -40,8 +41,7 @@ export type DistributionPoint = z.infer<typeof DistributionPointSchema>;
 export type DataResponse = z.infer<typeof DataResponseSchema>;
 
 export async function fetchData(fetch: typeof globalThis.fetch): Promise<DataResponse> {
-	const baseUrl = env.PUBLIC_API_URL;
-	const response = await fetch(`${baseUrl}/data`);
+	const response = await fetch(`${API_BASE_URL}/data`);
 
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status} ${response.statusText}`);
