@@ -170,7 +170,11 @@ class OMLXEngine:
             self.client = None
         if self.process:
             self.process.terminate()
-            self.process.wait(timeout=10)
+            try:
+                self.process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=5)
 
     async def _cold_restart_server(self) -> None:
         await self._stop_current()

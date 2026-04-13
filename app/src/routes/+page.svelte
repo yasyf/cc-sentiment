@@ -192,7 +192,7 @@
 				<section>
 					<h3 class="mb-0.5 text-sm font-medium text-text-secondary">When to use Claude Code</h3>
 					<p class="mb-2 text-xs text-text-dim">
-						Sentiment drops during peak US hours. The red zones mark 5–7 PM PT — the worst window per the <a href="https://github.com/anthropics/claude-code/issues/42796" class="text-accent hover:text-accent-hover">analysis</a>.
+						Per the <a href="https://github.com/anthropics/claude-code/issues/42796" class="text-accent hover:text-accent-hover">#42796 analysis</a>, 5 PM PT is the worst hour and 7 PM PT is another valley.
 					</p>
 					<div class="rounded-lg border border-border bg-bg-card p-5">
 						<HourlyHeatmap data={data.hourly} />

@@ -24,30 +24,42 @@
 
 	const currentUTCHour = new Date().getUTCHours();
 
-	// Peak US hours: 9am-6pm PT = 16:00-01:00 UTC
-	// Worst window per #42796: 5-7pm PT = 0:00-2:00 UTC
+	// Per #42796 analysis: 5pm PST is the worst hour, 7pm PST is another valley.
+	// 5pm PT = 0:00 UTC (12a), 7pm PT = 2:00 UTC (2a)
 	const peakAnnotations = {
-		peakBroad: {
-			type: 'box' as const,
-			xMin: '4p',
-			xMax: '1a',
-			backgroundColor: 'rgba(220, 38, 38, 0.03)',
-			borderWidth: 0,
+		worst5pm: {
+			type: 'line' as const,
+			xMin: '12a',
+			xMax: '12a',
+			borderColor: 'rgba(220, 38, 38, 0.4)',
+			borderWidth: 1.5,
+			borderDash: [4, 4],
 			label: {
 				display: true,
-				content: 'Peak US hours (PT)',
-				position: { x: 'start' as const, y: 'start' as const },
+				content: '5 PM PT',
+				position: 'start' as const,
 				font: { size: 9 },
-				color: '#a1a1aa',
+				color: '#dc2626',
+				backgroundColor: 'rgba(255,255,255,0.9)',
 				padding: 2
 			}
 		},
-		peakWorst: {
-			type: 'box' as const,
-			xMin: '12a',
+		worst7pm: {
+			type: 'line' as const,
+			xMin: '2a',
 			xMax: '2a',
-			backgroundColor: 'rgba(220, 38, 38, 0.06)',
-			borderWidth: 0,
+			borderColor: 'rgba(220, 38, 38, 0.4)',
+			borderWidth: 1.5,
+			borderDash: [4, 4],
+			label: {
+				display: true,
+				content: '7 PM PT',
+				position: 'start' as const,
+				font: { size: 9 },
+				color: '#dc2626',
+				backgroundColor: 'rgba(255,255,255,0.9)',
+				padding: 2
+			}
 		},
 		currentHour: {
 			type: 'line' as const,

@@ -33,7 +33,10 @@ class TranscriptDiscovery:
 class TranscriptParser:
     @staticmethod
     def parse_line(line: str) -> TranscriptMessage | None:
-        data = orjson.loads(line)
+        try:
+            data = orjson.loads(line)
+        except orjson.JSONDecodeError:
+            return None
 
         match data["type"]:
             case "queue-operation":
