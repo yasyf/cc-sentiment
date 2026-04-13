@@ -4,6 +4,7 @@ import platform
 import subprocess
 import time
 from collections import Counter
+from statistics import mean, median
 
 import anyio
 import click
@@ -19,8 +20,6 @@ SCORE_LABELS: dict[int, str] = {
     1: "frustrated", 2: "annoyed", 3: "neutral", 4: "satisfied", 5: "delighted",
 }
 
-# Empirical throughput (buckets/file) and speed (files/sec) by chip family.
-# Used for ETAs before we have a measured rate.
 CHIP_SPEED: dict[str, float] = {
     "M1": 1.5, "M2": 2.0, "M3": 2.5, "M4": 2.8, "M5": 3.2,
 }
@@ -99,9 +98,9 @@ class LiveStats:
         grid.add_column(justify="right", style="bold")
         grid.add_column()
 
-        elapsed = f"{self.elapsed:.0f}s"
+        elapsed_s = f"{self.elapsed:.0f}s"
         rate_str = f"{self.rate:.1f} files/s" if self.scored > 0 else "starting..."
-        grid.add_row("Transcripts", f"{self.scored}/{self.total}  ({elapsed}, {rate_str})")
+        grid.add_row("Transcripts", f"{self.scored}/{self.total}  ({elapsed_s}, {rate_str})")
         grid.add_row("ETA", self.format_eta())
         grid.add_row("Buckets", str(len(self.records)))
         grid.add_row("Uploaded", str(self.uploaded))
@@ -118,7 +117,6 @@ class LiveStats:
                 bars.append(f"  [{color}]{s}[/] {'█' * bar_len} {pct:.0f}% ({n})")
             grid.add_row("Scores", "\n".join(bars))
 
-            from statistics import mean, median
             scores = [int(r.sentiment_score) for r in self.records]
             grid.add_row("Stats", f"mean={mean(scores):.1f}  median={median(scores):.0f}")
 
@@ -178,6 +176,20 @@ def run_interactive_setup(state: AppState) -> None:
     console.print(f"[green]Configuration saved.[/] Matched key: {key_path}")
 
 
+def verify_credentials(state: AppState) -> None:
+    from cc_sentiment.upload import Uploader
+
+    assert state.config is not None
+    console.print("Verifying upload credentials...", end=" ")
+    uploader = Uploader()
+    try:
+        anyio.run(uploader.verify_credentials, state.config)
+        console.print("[green]OK[/]")
+    except (httpx.HTTPStatusError, httpx.ConnectError) as e:
+        console.print(f"[red]FAILED[/]\n\nServer rejected credentials: {e}")
+        raise SystemExit(1)
+
+
 def show_welcome() -> None:
     chip = get_chip_family() or "Apple Silicon"
     mem = get_memory_gb()
@@ -223,15 +235,7 @@ def scan(do_upload: bool, engine: str, model_repo: str | None) -> None:
 
     if do_upload:
         ensure_config(state)
-        assert state.config is not None
-        console.print("Verifying upload credentials...", end=" ")
-        uploader_check = Uploader()
-        try:
-            anyio.run(uploader_check.verify_credentials, state.config)
-            console.print("[green]OK[/]")
-        except (httpx.HTTPStatusError, httpx.ConnectError) as e:
-            console.print(f"[red]FAILED[/]\n\nServer rejected credentials: {e}")
-            raise SystemExit(1)
+        verify_credentials(state)
 
     new_transcripts = Pipeline.discover_new_transcripts(state)
     if not new_transcripts:
@@ -259,51 +263,42 @@ def scan(do_upload: bool, engine: str, model_repo: str | None) -> None:
     uploader = Uploader() if do_upload else None
     stats = LiveStats(len(new_transcripts))
     upload_queue: list[SentimentRecord] = []
-    upload_batch_size = 50
-
-    def on_records(records: list[SentimentRecord]) -> None:
-        stats.records.extend(records)
-        stats.scored += 1
-        if uploader:
-            upload_queue.extend(records)
-
-    def flush_uploads() -> None:
-        if not upload_queue or not uploader:
-            return
-        batch = list(upload_queue)
-        upload_queue.clear()
-        try:
-            anyio.from_thread.run(uploader.upload, batch, state)
-            stats.uploaded += len(batch)
-        except Exception as e:
-            console.print(f"[yellow]Upload failed (will retry): {e}[/]")
-            upload_queue.extend(batch)
 
     async def do_scan_live() -> list[SentimentRecord]:
-        def on_records_live(records: list[SentimentRecord]) -> None:
-            on_records(records)
+        def on_records(records: list[SentimentRecord]) -> None:
+            stats.records.extend(records)
+            stats.scored += 1
+            if uploader:
+                upload_queue.extend(records)
             live.update(stats.render())
-            if len(upload_queue) >= upload_batch_size:
-                flush_uploads()
+
+            if uploader and len(upload_queue) >= 50:
+                batch = list(upload_queue)
+                upload_queue.clear()
+                try:
+                    anyio.from_thread.run(uploader.upload, batch, state)
+                    stats.uploaded += len(batch)
+                except Exception as e:
+                    console.print(f"[yellow]Upload failed (will retry): {e}[/]")
+                    upload_queue.extend(batch)
                 live.update(stats.render())
 
         return await Pipeline.run(
             state, engine, model_repo=model_repo,
-            new_transcripts=new_transcripts, on_records=on_records_live,
+            new_transcripts=new_transcripts, on_records=on_records,
         )
 
     with Live(stats.render(), console=console, refresh_per_second=4) as live:
         all_records = anyio.run(do_scan_live)
 
-    if uploader:
+    if uploader and upload_queue:
         remaining = list(upload_queue)
         upload_queue.clear()
-        if remaining:
-            try:
-                anyio.run(uploader.upload, remaining, state)
-                stats.uploaded += len(remaining)
-            except Exception as e:
-                console.print(f"[yellow]Final upload failed: {e}[/]")
+        try:
+            anyio.run(uploader.upload, remaining, state)
+            stats.uploaded += len(remaining)
+        except Exception as e:
+            console.print(f"[yellow]Final upload failed: {e}[/]")
 
     if not all_records:
         console.print("No buckets scored.")
@@ -337,22 +332,14 @@ def upload() -> None:
 
     state = AppState.load()
     ensure_config(state)
-    assert state.config is not None
-
-    uploader = Uploader()
-    console.print("Verifying upload credentials...", end=" ")
-    try:
-        anyio.run(uploader.verify_credentials, state.config)
-        console.print("[green]OK[/]")
-    except (httpx.HTTPStatusError, httpx.ConnectError) as e:
-        console.print(f"[red]FAILED[/]\n\nServer rejected credentials: {e}")
-        raise SystemExit(1)
+    verify_credentials(state)
 
     records = Uploader.records_from_state(state)
     if not records:
         console.print("No pending records to upload.")
         return
 
+    uploader = Uploader()
     console.print(f"Uploading {len(records)} records...")
     anyio.run(uploader.upload, records, state)
     console.print("[green]Upload complete.[/]")
@@ -362,6 +349,8 @@ def upload() -> None:
 @click.option("--engine", type=click.Choice(["mlx", "omlx"]), default="omlx")
 @click.option("--model", "model_repo", default=None)
 def rescan(engine: str, model_repo: str | None) -> None:
+    from cc_sentiment.pipeline import Pipeline
+
     state = AppState.load()
     prev_sessions = len(state.sessions)
     state.processed_files.clear()
@@ -370,12 +359,7 @@ def rescan(engine: str, model_repo: str | None) -> None:
 
     console.print(f"Cleared {prev_sessions} sessions. Re-running full scan...\n")
 
-    from cc_sentiment.pipeline import Pipeline
-
-    async def do_rescan() -> list:
-        return await Pipeline.run(state, engine, model_repo=model_repo)
-
-    all_records = anyio.run(do_rescan)
+    all_records = anyio.run(Pipeline.run, state, engine, model_repo)
 
     if not all_records:
         console.print("No records produced during rescan.")
@@ -385,8 +369,6 @@ def rescan(engine: str, model_repo: str | None) -> None:
 
 
 def print_summary(records: list[SentimentRecord]) -> None:
-    from statistics import mean, median
-
     scores = [int(r.sentiment_score) for r in records]
     counts = Counter(scores)
     total = len(scores)

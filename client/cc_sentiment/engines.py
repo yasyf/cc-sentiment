@@ -12,18 +12,6 @@ import httpx
 
 from cc_sentiment.models import ConversationBucket, SentimentScore
 
-__all__ = [
-    "InferenceEngine",
-    "OMLXEngine",
-    "SYSTEM_PROMPT",
-    "MAX_CONVERSATION_CHARS",
-    "FRUSTRATION_PATTERN",
-    "format_conversation",
-    "extract_score",
-    "check_frustration",
-    "ensure_omlx_model_symlink",
-]
-
 MAX_CONVERSATION_CHARS = 8192
 
 FRUSTRATION_PATTERN = re.compile(
@@ -53,6 +41,11 @@ SYSTEM_PROMPT = """Rate the developer's sentiment in this developer-AI conversat
 5 - Delighted, impressed, flow state
 
 Focus ONLY on the developer's messages. Reply with a single digit 1-5, nothing else."""
+
+LOGIT_BIAS = {
+    "236770": 100, "236778": 100, "236800": 100,
+    "236812": 100, "236810": 100,
+}
 
 HF_MODEL_DIR = Path.home() / ".cache" / "huggingface" / "hub"
 
@@ -129,6 +122,7 @@ class OMLXEngine:
         )
         self.model_name: str | None = None
         self.wait_for_ready()
+        self.warm_system_prompt()
 
     def wait_for_ready(self, timeout: float = 60.0) -> None:
         deadline = time.monotonic() + timeout
@@ -144,6 +138,31 @@ class OMLXEngine:
             time.sleep(1.0)
         self.shutdown()
         raise TimeoutError("omlx server did not start within timeout")
+
+    def warm_system_prompt(self) -> None:
+        body = self._make_body("warmup")
+        try:
+            httpx.post(
+                f"http://localhost:{self.port}/v1/chat/completions",
+                json=body, timeout=30.0,
+            )
+        except httpx.HTTPError:
+            pass
+
+    def _make_body(self, user_content: str) -> dict:
+        body: dict = {
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": f"CONVERSATION:\n{user_content}"},
+            ],
+            "max_tokens": 1,
+            "temperature": 0.0,
+            "chat_template_kwargs": {"enable_thinking": False},
+            "logit_bias": LOGIT_BIAS,
+        }
+        if self.model_name:
+            body["model"] = self.model_name
+        return body
 
     def score_buckets(self, buckets: list[ConversationBucket]) -> list[SentimentScore]:
         scores: list[SentimentScore] = [SentimentScore(0)] * len(buckets)
@@ -173,21 +192,7 @@ class OMLXEngine:
             return await asyncio.gather(*(bounded(b) for b in buckets))
 
     async def score_one(self, client: httpx.AsyncClient, bucket: ConversationBucket) -> SentimentScore:
-        body: dict = {
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"CONVERSATION:\n{format_conversation(bucket)}"},
-            ],
-            "max_tokens": 1,
-            "temperature": 0.0,
-            "chat_template_kwargs": {"enable_thinking": False},
-            "logit_bias": {
-                "236770": 100, "236778": 100, "236800": 100,
-                "236812": 100, "236810": 100,
-            },
-        }
-        if self.model_name:
-            body["model"] = self.model_name
+        body = self._make_body(format_conversation(bucket))
         resp = await client.post(
             f"http://localhost:{self.port}/v1/chat/completions",
             json=body,
