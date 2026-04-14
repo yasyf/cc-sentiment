@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from cc_sentiment.engines import InferenceEngine, OMLXEngine
+from cc_sentiment.engines import HAIKU_MODEL, ClaudeCLIEngine, InferenceEngine, OMLXEngine
 from cc_sentiment.models import (
     AppState,
     BucketKey,
@@ -31,6 +31,21 @@ class Pipeline:
                 or state.processed_files[key].mtime < mtime
             )
         ]
+
+    @staticmethod
+    def count_new_buckets(state: AppState, transcripts: list[tuple[Path, float]]) -> int:
+        return sum(
+            sum(
+                BucketKey(session_id=b.session_id, bucket_index=b.bucket_index) not in (
+                    state.processed_files[key].scored_buckets
+                    if (key := str(path)) in state.processed_files
+                    else frozenset()
+                )
+                for b in ConversationBucketer.bucket_messages(messages)
+            )
+            for path, _ in transcripts
+            if (messages := TranscriptParser.parse_file(path))
+        )
 
     @staticmethod
     async def process_transcript(
@@ -112,6 +127,8 @@ class Pipeline:
             case "omlx":
                 classifier = OMLXEngine(model_repo=model_repo)
                 await classifier.warm_system_prompt()
+            case "claude":
+                classifier = ClaudeCLIEngine(model=model_repo or HAIKU_MODEL)
             case _:
                 raise ValueError(f"Unknown engine: {engine}")
 

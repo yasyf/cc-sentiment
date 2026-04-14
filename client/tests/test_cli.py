@@ -3,9 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import click
+import pytest
 from click.testing import CliRunner
 
-from cc_sentiment.cli import auto_setup, ensure_config, main
+from cc_sentiment.cli import auto_setup, confirm_claude_cost, ensure_config, main, resolve_engine
 from cc_sentiment.models import AppState, ContributorId, GPGConfig, ProcessedFile, SSHConfig
 from cc_sentiment.signing import GPGBackend, GPGKeyInfo, SSHBackend, SSHKeyInfo
 
@@ -153,3 +155,73 @@ class TestEnsureConfig:
         )
         ensure_config(state)
         assert state.config is not None
+
+
+class TestResolveEngine:
+    def test_explicit_omlx_passes_through(self) -> None:
+        assert resolve_engine("omlx") == "omlx"
+
+    def test_explicit_mlx_passes_through(self) -> None:
+        assert resolve_engine("mlx") == "mlx"
+
+    def test_default_on_apple_silicon(self) -> None:
+        with patch("cc_sentiment.cli.default_engine", return_value="omlx"):
+            assert resolve_engine(None) == "omlx"
+
+    def test_default_claude_when_available(self) -> None:
+        with patch("cc_sentiment.cli.default_engine", return_value="claude"), \
+             patch("cc_sentiment.cli.claude_cli_available", return_value=True):
+            assert resolve_engine(None) == "claude"
+
+    def test_claude_requested_but_missing_raises(self) -> None:
+        with patch("cc_sentiment.cli.claude_cli_available", return_value=False), \
+             pytest.raises(click.ClickException):
+            resolve_engine("claude")
+
+
+class TestConfirmClaudeCost:
+    def test_no_transcripts_skips_confirmation(self) -> None:
+        state = AppState()
+        with patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+             patch("cc_sentiment.cli.confirm_action") as confirm_mock:
+            assert confirm_claude_cost(state, None, "claude-haiku-4-5") is True
+            confirm_mock.assert_not_called()
+
+    def test_zero_buckets_skips_confirmation(self) -> None:
+        state = AppState()
+        with patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts",
+                   return_value=[(Path("/tmp/fake.jsonl"), 0.0)]), \
+             patch("cc_sentiment.pipeline.Pipeline.count_new_buckets", return_value=0), \
+             patch("cc_sentiment.cli.confirm_action") as confirm_mock:
+            assert confirm_claude_cost(state, None, "claude-haiku-4-5") is True
+            confirm_mock.assert_not_called()
+
+    def test_prompts_with_bucket_count_and_cost(self) -> None:
+        state = AppState()
+        with patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts",
+                   return_value=[(Path("/tmp/fake.jsonl"), 0.0)]), \
+             patch("cc_sentiment.pipeline.Pipeline.count_new_buckets", return_value=500), \
+             patch("cc_sentiment.cli.confirm_action", return_value=True) as confirm_mock:
+            assert confirm_claude_cost(state, None, "claude-haiku-4-5") is True
+            confirm_mock.assert_called_once()
+            detail = confirm_mock.call_args.kwargs["detail"]
+            assert "500" in detail
+            assert "$" in detail
+
+    def test_declined_returns_false(self) -> None:
+        state = AppState()
+        with patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts",
+                   return_value=[(Path("/tmp/fake.jsonl"), 0.0)]), \
+             patch("cc_sentiment.pipeline.Pipeline.count_new_buckets", return_value=10), \
+             patch("cc_sentiment.cli.confirm_action", return_value=False):
+            assert confirm_claude_cost(state, None, "claude-haiku-4-5") is False
+
+    def test_respects_limit(self) -> None:
+        state = AppState()
+        transcripts = [(Path(f"/tmp/{i}.jsonl"), 0.0) for i in range(10)]
+        with patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=transcripts), \
+             patch("cc_sentiment.pipeline.Pipeline.count_new_buckets", return_value=5) as count_mock, \
+             patch("cc_sentiment.cli.confirm_action", return_value=True):
+            confirm_claude_cost(state, 3, "claude-haiku-4-5")
+            passed = count_mock.call_args.args[1]
+            assert len(passed) == 3

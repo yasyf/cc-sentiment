@@ -9,9 +9,19 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from cc_sentiment.engines import (
+    HAIKU_INPUT_USD_PER_MTOK,
+    HAIKU_MODEL,
+    HAIKU_OUTPUT_USD_PER_MTOK,
+    claude_cli_available,
+    default_engine,
+    estimate_claude_cost_usd,
+)
 from cc_sentiment.models import AppState, ContributorId, GPGConfig, SentimentRecord, SSHConfig
 from cc_sentiment.signing import GPGKeyInfo, KeyDiscovery, SSHKeyInfo
 from cc_sentiment.upload import Uploader
+
+ENGINE_CHOICES = ["mlx", "omlx", "claude"]
 
 SCORE_COLORS: dict[int, str] = {1: "red", 2: "red", 3: "yellow", 4: "green", 5: "green"}
 SCORE_LABELS: dict[int, str] = {
@@ -69,6 +79,41 @@ def try_config(state: AppState, config: SSHConfig | GPGConfig, label: str) -> bo
 def confirm_action(title: str, detail: str, confirm_label: str) -> bool:
     from cc_sentiment.tui import ConfirmActionApp
     return ConfirmActionApp(title=title, detail=detail, confirm_label=confirm_label).run()
+
+
+def resolve_engine(requested: str | None) -> str:
+    engine = requested or default_engine()
+    if engine != "claude" or claude_cli_available():
+        return engine
+    raise click.ClickException(
+        "Can't run sentiment analysis on this platform.\n"
+        "cc-sentiment needs Apple Silicon for local inference, or the `claude` CLI as a fallback.\n"
+        "Install Claude Code from https://claude.com/claude-code, then run `claude auth login` and try again."
+    )
+
+
+def confirm_claude_cost(state: AppState, limit: int | None, model: str) -> bool:
+    from cc_sentiment.pipeline import Pipeline
+
+    if not (transcripts := Pipeline.discover_new_transcripts(state)[:limit]):
+        return True
+    console.print("[dim]Counting new buckets for cost estimate...[/]")
+    if not (bucket_count := Pipeline.count_new_buckets(state, transcripts)):
+        return True
+    cost = estimate_claude_cost_usd(bucket_count)
+    return confirm_action(
+        title=f"Use {model} for scoring?",
+        detail=(
+            f"This machine can't run local inference, so we'll use the Claude API via "
+            f"`claude -p` to score {bucket_count} new buckets.\n\n"
+            f"Estimated cost: about ${cost:.2f} (at ${HAIKU_INPUT_USD_PER_MTOK:.2f}/MTok in, "
+            f"${HAIKU_OUTPUT_USD_PER_MTOK:.2f}/MTok out). Actual cost is often lower thanks "
+            f"to prompt caching.\n\n"
+            f"This gets billed by Anthropic through your existing `claude` account. "
+            f"Your conversation text still leaves the machine only as part of this API call."
+        ),
+        confirm_label="Continue",
+    )
 
 
 def try_link_local_key(
@@ -189,10 +234,13 @@ def main(ctx: click.Context) -> None:
         return
 
     state = AppState.load()
+    engine = resolve_engine(None)
+    if engine == "claude" and not confirm_claude_cost(state, None, HAIKU_MODEL):
+        return
     ensure_config(state)
 
     from cc_sentiment.tui import ScanApp
-    ScanApp(state=state, engine="omlx", model_repo=None, limit=None, do_upload=True).run()
+    ScanApp(state=state, engine=engine, model_repo=None, limit=None, do_upload=True).run()
 
 
 @main.command()
@@ -203,17 +251,20 @@ def setup() -> None:
 
 @main.command()
 @click.option("--upload", "do_upload", is_flag=True, help="Upload results after scan")
-@click.option("--engine", type=click.Choice(["mlx", "omlx"]), default="omlx")
-@click.option("--model", "model_repo", default=None, help="HuggingFace model repo")
+@click.option("--engine", type=click.Choice(ENGINE_CHOICES), default=None)
+@click.option("--model", "model_repo", default=None, help="Model repo (HF for mlx/omlx) or name (claude)")
 @click.option("--limit", default=None, type=int, help="Max transcripts to process")
-def scan(do_upload: bool, engine: str, model_repo: str | None, limit: int | None) -> None:
+def scan(do_upload: bool, engine: str | None, model_repo: str | None, limit: int | None) -> None:
     state = AppState.load()
+    resolved = resolve_engine(engine)
+    if resolved == "claude" and not confirm_claude_cost(state, limit, model_repo or HAIKU_MODEL):
+        return
 
     if do_upload:
         ensure_config(state)
 
     from cc_sentiment.tui import ScanApp
-    ScanApp(state=state, engine=engine, model_repo=model_repo, limit=limit, do_upload=do_upload).run()
+    ScanApp(state=state, engine=resolved, model_repo=model_repo, limit=limit, do_upload=do_upload).run()
 
 
 @main.command(hidden=True)
@@ -252,27 +303,32 @@ def upload() -> None:
         return
 
     from cc_sentiment.tui import ScanApp
-    ScanApp(state=state, engine="omlx", model_repo=None, limit=0, do_upload=True).run()
+    ScanApp(state=state, engine=default_engine(), model_repo=None, limit=0, do_upload=True).run()
 
 
 @main.command()
-@click.option("--engine", type=click.Choice(["mlx", "omlx"]), default="omlx")
+@click.option("--engine", type=click.Choice(ENGINE_CHOICES), default=None)
 @click.option("--model", "model_repo", default=None)
-def rescan(engine: str, model_repo: str | None) -> None:
+def rescan(engine: str | None, model_repo: str | None) -> None:
     from cc_sentiment.pipeline import Pipeline
 
     import anyio
 
     state = AppState.load()
+    resolved = resolve_engine(engine)
+
     prev_sessions = len(state.sessions)
     state.processed_files.clear()
     state.sessions.clear()
     state.save()
 
+    if resolved == "claude" and not confirm_claude_cost(state, None, model_repo or HAIKU_MODEL):
+        return
+
     console.print(f"Cleared {prev_sessions} sessions. Re-running full scan...\n")
 
     async def do_rescan() -> list[SentimentRecord]:
-        return await Pipeline.run(state, engine, model_repo)
+        return await Pipeline.run(state, resolved, model_repo)
 
     all_records = anyio.run(do_rescan)
 

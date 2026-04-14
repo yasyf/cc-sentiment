@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import platform
 import re
+import shutil
 import socket
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -15,6 +19,13 @@ import threading
 from cc_sentiment.models import DEFAULT_MODEL, ConversationBucket, SentimentScore
 
 MAX_CONVERSATION_CHARS = 8192
+
+HAIKU_MODEL = "claude-haiku-4-5"
+HAIKU_INPUT_USD_PER_MTOK = 1.0
+HAIKU_OUTPUT_USD_PER_MTOK = 5.0
+CLAUDE_EST_INPUT_TOKENS_PER_BUCKET = 2650
+CLAUDE_EST_OUTPUT_TOKENS_PER_BUCKET = 1
+CLAUDE_CLI_CONCURRENCY = 4
 
 FRUSTRATION_PATTERN = re.compile(
     r"\b("
@@ -353,3 +364,91 @@ class OMLXEngine:
 
     def __del__(self) -> None:
         self._shutdown()
+
+
+def estimate_claude_cost_usd(bucket_count: int) -> float:
+    return bucket_count * (
+        CLAUDE_EST_INPUT_TOKENS_PER_BUCKET * HAIKU_INPUT_USD_PER_MTOK
+        + CLAUDE_EST_OUTPUT_TOKENS_PER_BUCKET * HAIKU_OUTPUT_USD_PER_MTOK
+    ) / 1_000_000
+
+
+def claude_cli_available() -> bool:
+    if not shutil.which("claude"):
+        return False
+    try:
+        result = subprocess.run(
+            ["claude", "auth", "status"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False
+    return result.returncode == 0
+
+
+def default_engine() -> str:
+    match (sys.platform, platform.machine()):
+        case ("darwin", "arm64"):
+            return "omlx"
+        case _:
+            return "claude"
+
+
+class ClaudeCLIEngine:
+    def __init__(self, model: str) -> None:
+        if not shutil.which("claude"):
+            raise RuntimeError(
+                "`claude` CLI not found. Install Claude Code from https://claude.com/claude-code"
+            )
+        self.model = model
+        self.total_cost_usd = 0.0
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
+
+    async def score_one(self, bucket: ConversationBucket) -> SentimentScore:
+        proc = await asyncio.create_subprocess_exec(
+            "claude", "-p", f"CONVERSATION:\n{format_conversation(bucket)}",
+            "--model", self.model,
+            "--system-prompt", SYSTEM_PROMPT,
+            "--output-format", "json",
+            "--max-turns", "1",
+            "--tools", "",
+            "--disable-slash-commands",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(f"claude -p failed ({proc.returncode}): {stderr.decode()[:500]}")
+        data = json.loads(stdout)
+        if data["is_error"]:
+            raise RuntimeError(f"claude -p error: {data['result']}")
+        usage = data["usage"]
+        self.total_cost_usd += data["total_cost_usd"]
+        self.total_input_tokens += usage["input_tokens"]
+        self.total_output_tokens += usage["output_tokens"]
+        return extract_score(data["result"])
+
+    async def score(
+        self,
+        buckets: list[ConversationBucket],
+        on_progress: Callable[[int], None] | None = None,
+    ) -> list[SentimentScore]:
+        sem = asyncio.Semaphore(CLAUDE_CLI_CONCURRENCY)
+
+        async def score_bucket(bucket: ConversationBucket) -> SentimentScore:
+            if check_frustration(bucket):
+                return SentimentScore(1)
+            async with sem:
+                score = await self.score_one(bucket)
+            if on_progress:
+                on_progress(1)
+            return score
+
+        return list(await asyncio.gather(*map(score_bucket, buckets)))
+
+    def peak_memory_gb(self) -> float:
+        return 0.0
+
+    async def close(self) -> None:
+        pass

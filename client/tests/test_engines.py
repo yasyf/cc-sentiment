@@ -1,10 +1,24 @@
 from __future__ import annotations
 
+import json
+import subprocess
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cc_sentiment.engines import check_frustration, extract_score
+from cc_sentiment.engines import (
+    CLAUDE_EST_INPUT_TOKENS_PER_BUCKET,
+    CLAUDE_EST_OUTPUT_TOKENS_PER_BUCKET,
+    HAIKU_INPUT_USD_PER_MTOK,
+    HAIKU_OUTPUT_USD_PER_MTOK,
+    ClaudeCLIEngine,
+    check_frustration,
+    claude_cli_available,
+    default_engine,
+    estimate_claude_cost_usd,
+    extract_score,
+)
 from cc_sentiment.models import (
     BucketIndex,
     ConversationBucket,
@@ -87,3 +101,105 @@ class TestFrustrationDetection:
             messages=(make_message("assistant", "wtf this sucks"),),
         )
         assert not check_frustration(bucket)
+
+
+class TestEstimateClaudeCost:
+    def test_zero_buckets(self) -> None:
+        assert estimate_claude_cost_usd(0) == 0.0
+
+    def test_matches_haiku_rates(self) -> None:
+        n = 1000
+        expected = (
+            n * CLAUDE_EST_INPUT_TOKENS_PER_BUCKET / 1_000_000 * HAIKU_INPUT_USD_PER_MTOK
+            + n * CLAUDE_EST_OUTPUT_TOKENS_PER_BUCKET / 1_000_000 * HAIKU_OUTPUT_USD_PER_MTOK
+        )
+        assert estimate_claude_cost_usd(n) == pytest.approx(expected)
+
+    def test_scales_linearly(self) -> None:
+        assert estimate_claude_cost_usd(200) == pytest.approx(2 * estimate_claude_cost_usd(100))
+
+
+class TestClaudeCliAvailable:
+    def test_false_when_binary_missing(self) -> None:
+        with patch("cc_sentiment.engines.shutil.which", return_value=None):
+            assert claude_cli_available() is False
+
+    def test_true_when_auth_status_zero(self) -> None:
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with patch("cc_sentiment.engines.shutil.which", return_value="/usr/bin/claude"), \
+             patch("cc_sentiment.engines.subprocess.run", return_value=completed):
+            assert claude_cli_available() is True
+
+    def test_false_when_auth_status_nonzero(self) -> None:
+        completed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="not logged in")
+        with patch("cc_sentiment.engines.shutil.which", return_value="/usr/bin/claude"), \
+             patch("cc_sentiment.engines.subprocess.run", return_value=completed):
+            assert claude_cli_available() is False
+
+    def test_false_on_timeout(self) -> None:
+        with patch("cc_sentiment.engines.shutil.which", return_value="/usr/bin/claude"), \
+             patch("cc_sentiment.engines.subprocess.run", side_effect=subprocess.TimeoutExpired("claude", 10)):
+            assert claude_cli_available() is False
+
+
+class TestDefaultEngine:
+    def test_apple_silicon_prefers_omlx(self) -> None:
+        with patch("cc_sentiment.engines.sys.platform", "darwin"), \
+             patch("cc_sentiment.engines.platform.machine", return_value="arm64"):
+            assert default_engine() == "omlx"
+
+    def test_linux_falls_back_to_claude(self) -> None:
+        with patch("cc_sentiment.engines.sys.platform", "linux"), \
+             patch("cc_sentiment.engines.platform.machine", return_value="x86_64"):
+            assert default_engine() == "claude"
+
+    def test_darwin_intel_falls_back_to_claude(self) -> None:
+        with patch("cc_sentiment.engines.sys.platform", "darwin"), \
+             patch("cc_sentiment.engines.platform.machine", return_value="x86_64"):
+            assert default_engine() == "claude"
+
+
+class TestClaudeCLIEngine:
+    def test_init_raises_without_claude_binary(self) -> None:
+        with patch("cc_sentiment.engines.shutil.which", return_value=None), \
+             pytest.raises(RuntimeError, match="claude.*not found"):
+            ClaudeCLIEngine(model="claude-haiku-4-5")
+
+    def test_score_frustration_bypasses_api(self) -> None:
+        import asyncio
+        with patch("cc_sentiment.engines.shutil.which", return_value="/usr/bin/claude"):
+            engine = ClaudeCLIEngine(model="claude-haiku-4-5")
+        scores = asyncio.run(engine.score([make_bucket("this is fucking broken")]))
+        assert scores == [SentimentScore(1)]
+        assert engine.total_cost_usd == 0.0
+
+    def test_score_parses_json_response_and_tracks_cost(self) -> None:
+        import asyncio
+        response = json.dumps({
+            "type": "result",
+            "is_error": False,
+            "result": "4",
+            "total_cost_usd": 0.0025,
+            "usage": {"input_tokens": 2500, "output_tokens": 1},
+        }).encode()
+        proc = MagicMock(returncode=0, communicate=AsyncMock(return_value=(response, b"")))
+
+        with patch("cc_sentiment.engines.shutil.which", return_value="/usr/bin/claude"):
+            engine = ClaudeCLIEngine(model="claude-haiku-4-5")
+        with patch("cc_sentiment.engines.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+            scores = asyncio.run(engine.score([make_bucket("please help me fix this")]))
+
+        assert scores == [SentimentScore(4)]
+        assert engine.total_cost_usd == pytest.approx(0.0025)
+        assert engine.total_input_tokens == 2500
+        assert engine.total_output_tokens == 1
+
+    def test_score_raises_on_subprocess_failure(self) -> None:
+        import asyncio
+        proc = MagicMock(returncode=2, communicate=AsyncMock(return_value=(b"", b"auth failed")))
+
+        with patch("cc_sentiment.engines.shutil.which", return_value="/usr/bin/claude"):
+            engine = ClaudeCLIEngine(model="claude-haiku-4-5")
+        with patch("cc_sentiment.engines.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)), \
+             pytest.raises(RuntimeError, match="claude -p failed"):
+            asyncio.run(engine.score([make_bucket("please help me fix this")]))
