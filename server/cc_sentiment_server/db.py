@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS sentiment (
     contributor_id TEXT NOT NULL,
     sentiment_score SMALLINT NOT NULL CHECK(sentiment_score BETWEEN 1 AND 5),
     prompt_version TEXT NOT NULL,
-    model_id TEXT NOT NULL,
+    claude_model TEXT NOT NULL,
     client_version TEXT NOT NULL,
     read_edit_ratio FLOAT,
     turn_count SMALLINT NOT NULL,
@@ -101,10 +101,10 @@ SEED_STATEMENTS = [
 
 INGEST_SQL = """
 INSERT INTO sentiment (time, conversation_id, bucket_index, contributor_type, contributor_id,
-                       sentiment_score, prompt_version, model_id, client_version,
+                       sentiment_score, prompt_version, claude_model, client_version,
                        read_edit_ratio, turn_count, thinking_present, thinking_chars, cc_version)
 VALUES (%(time)s, %(conversation_id)s, %(bucket_index)s, %(contributor_type)s, %(contributor_id)s,
-        %(sentiment_score)s, %(prompt_version)s, %(model_id)s, %(client_version)s,
+        %(sentiment_score)s, %(prompt_version)s, %(claude_model)s, %(client_version)s,
         %(read_edit_ratio)s, %(turn_count)s, %(thinking_present)s, %(thinking_chars)s, %(cc_version)s)
 ON CONFLICT DO NOTHING
 """
@@ -171,11 +171,11 @@ WHERE time BETWEEN NOW() - make_interval(days => %(days_double)s)
 """
 
 MODEL_BREAKDOWN_SQL = """
-SELECT model_id, AVG(sentiment_score)::float AS avg_score,
+SELECT claude_model, AVG(sentiment_score)::float AS avg_score,
        COUNT(*)::int AS count, AVG(read_edit_ratio)::float AS avg_read_edit_ratio
 FROM sentiment
 WHERE time > NOW() - make_interval(days => %(days)s)
-GROUP BY model_id
+GROUP BY claude_model
 ORDER BY count DESC
 """
 
@@ -216,7 +216,7 @@ class Database:
                             "contributor_id": contributor_id,
                             "sentiment_score": r.sentiment_score,
                             "prompt_version": r.prompt_version,
-                            "model_id": r.model_id,
+                            "claude_model": r.claude_model,
                             "client_version": r.client_version,
                             "read_edit_ratio": r.read_edit_ratio,
                             "turn_count": r.turn_count,
@@ -256,7 +256,7 @@ class Database:
 
             model_rows = await (await conn.execute(MODEL_BREAKDOWN_SQL, {"days": days})).fetchall()
             model_breakdown = [
-                ModelBreakdown(model_id=row[0], avg_score=row[1], count=row[2], avg_read_edit_ratio=row[3])
+                ModelBreakdown(claude_model=row[0], avg_score=row[1], count=row[2], avg_read_edit_ratio=row[3])
                 for row in model_rows
             ]
 

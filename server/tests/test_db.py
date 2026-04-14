@@ -13,6 +13,7 @@ def make_record(
     bucket: int = 0,
     conv_id: str = "abc-123",
     t: datetime | None = None,
+    claude_model: str = "claude-sonnet-4-20250514",
 ) -> SentimentRecord:
     return SentimentRecord(
         time=t or datetime(2026, 4, 12, 10, 30, tzinfo=timezone.utc),
@@ -20,8 +21,13 @@ def make_record(
         bucket_index=bucket,
         sentiment_score=score,
         prompt_version="v1",
-        model_id="gemma-4-e4b-it-4bit",
+        claude_model=claude_model,
         client_version="0.1.0",
+        read_edit_ratio=None,
+        turn_count=1,
+        thinking_present=False,
+        thinking_chars=0,
+        cc_version="2.1.92",
     )
 
 

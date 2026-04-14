@@ -12,12 +12,41 @@ from cc_sentiment.engines import (
     format_conversation,
 )
 from cc_sentiment.models import (
+    AssistantMessage,
     BucketIndex,
     ConversationBucket,
     SentimentScore,
     SessionId,
     TranscriptMessage,
+    UserMessage,
 )
+
+
+def _make_message(role: str, content: str, i: int) -> TranscriptMessage:
+    match role:
+        case "user":
+            return UserMessage(
+                content=content,
+                timestamp=datetime(2026, 4, 10, 7, 35, i, tzinfo=timezone.utc),
+                session_id=SessionId("test-session"),
+                uuid=f"uuid-{i}",
+                tool_names=(),
+                thinking_chars=0,
+                cc_version="2.1.92",
+            )
+        case "assistant":
+            return AssistantMessage(
+                content=content,
+                timestamp=datetime(2026, 4, 10, 7, 35, i, tzinfo=timezone.utc),
+                session_id=SessionId("test-session"),
+                uuid=f"uuid-{i}",
+                tool_names=(),
+                thinking_chars=0,
+                cc_version="",
+                claude_model="claude-sonnet-4-20250514",
+            )
+        case _:
+            raise ValueError(f"unknown role: {role}")
 
 
 def make_bucket(
@@ -29,17 +58,7 @@ def make_bucket(
         bucket_index=BucketIndex(0),
         bucket_start=datetime(2026, 4, 10, 7, 35, 0, tzinfo=timezone.utc),
         messages=tuple(
-            TranscriptMessage(
-                role=role,
-                content=content,
-                timestamp=datetime(2026, 4, 10, 7, 35, i, tzinfo=timezone.utc),
-                session_id=SessionId("test-session"),
-                uuid=f"uuid-{i}",
-                tool_names=(),
-                thinking_chars=0,
-                cc_version="2.1.92" if role == "user" else "",
-            )
-            for i, (role, content) in enumerate(msgs)
+            _make_message(role, content, i) for i, (role, content) in enumerate(msgs)
         ),
     )
 

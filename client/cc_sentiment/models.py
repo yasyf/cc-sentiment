@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal, NewType
 
-from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag
+from pydantic import BaseModel, Discriminator, Field, Tag
 
 SessionId = NewType("SessionId", str)
 BucketIndex = NewType("BucketIndex", int)
@@ -15,12 +15,10 @@ ContributorId = NewType("ContributorId", str)
 ContributorType = Literal["github", "gpg"]
 
 PROMPT_VERSION = PromptVersion("v1")
-DEFAULT_MODEL = "unsloth/gemma-4-E2B-it-UD-MLX-4bit"
 CLIENT_VERSION = "0.1.0"
 
 
-class TranscriptMessage(BaseModel, frozen=True):
-    role: str
+class BaseMessage(BaseModel, frozen=True):
     content: str
     timestamp: datetime
     session_id: SessionId
@@ -30,6 +28,21 @@ class TranscriptMessage(BaseModel, frozen=True):
     cc_version: str
 
 
+class UserMessage(BaseMessage, frozen=True):
+    role: Literal["user"] = "user"
+
+
+class AssistantMessage(BaseMessage, frozen=True):
+    role: Literal["assistant"] = "assistant"
+    claude_model: str
+
+
+TranscriptMessage = Annotated[
+    Annotated[UserMessage, Tag("user")] | Annotated[AssistantMessage, Tag("assistant")],
+    Discriminator("role"),
+]
+
+
 class BucketMetrics(BaseModel, frozen=True):
     tool_counts: dict[str, int]
     read_edit_ratio: float | None
@@ -37,6 +50,7 @@ class BucketMetrics(BaseModel, frozen=True):
     thinking_present: bool
     thinking_chars: int
     cc_version: str
+    claude_model: str
 
     @staticmethod
     def from_messages(messages: tuple[TranscriptMessage, ...]) -> BucketMetrics:
@@ -45,17 +59,25 @@ class BucketMetrics(BaseModel, frozen=True):
         thinking_present = False
         turn_count = 0
         cc_version = ""
+        claude_model: str | None = None
 
         for msg in messages:
-            if msg.role == "user":
-                turn_count += 1
-                if msg.cc_version:
-                    cc_version = msg.cc_version
+            match msg:
+                case UserMessage():
+                    turn_count += 1
+                    if msg.cc_version:
+                        cc_version = msg.cc_version
+                case AssistantMessage():
+                    claude_model = msg.claude_model
             for name in msg.tool_names:
                 tool_counts[name] = tool_counts.get(name, 0) + 1
             if msg.thinking_chars > 0:
                 thinking_present = True
                 total_thinking_chars += msg.thinking_chars
+
+        assert claude_model is not None, (
+            "bucket has no assistant message — cannot be scored"
+        )
 
         read_ops = sum(tool_counts.get(t, 0) for t in ("Read", "Grep", "Glob"))
         write_ops = sum(tool_counts.get(t, 0) for t in ("Edit", "Write"))
@@ -68,6 +90,7 @@ class BucketMetrics(BaseModel, frozen=True):
             thinking_present=thinking_present,
             thinking_chars=total_thinking_chars,
             cc_version=cc_version,
+            claude_model=claude_model,
         )
 
 
@@ -83,14 +106,12 @@ class ConversationBucket(BaseModel, frozen=True):
 
 
 class SentimentRecord(BaseModel, frozen=True):
-    model_config = ConfigDict(populate_by_name=True)
-
     time: datetime
     conversation_id: SessionId
     bucket_index: BucketIndex
     sentiment_score: SentimentScore
     prompt_version: PromptVersion = PROMPT_VERSION
-    inference_model: str = Field(default=DEFAULT_MODEL, validation_alias="model_id", serialization_alias="model_id")
+    claude_model: str
     client_version: str = CLIENT_VERSION
     read_edit_ratio: float | None
     turn_count: int

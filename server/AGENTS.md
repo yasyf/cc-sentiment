@@ -87,7 +87,7 @@ Accepts a JSON payload:
       "conversation_id": "uuid",
       "sentiment_score": 4,
       "prompt_version": "v1",
-      "model_id": "gemma-4-e4b-it-4bit",
+      "claude_model": "claude-sonnet-4-20250514",
       "client_version": "0.1.0"
     }
   ]

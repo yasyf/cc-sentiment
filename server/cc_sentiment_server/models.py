@@ -29,7 +29,7 @@ class SentimentRecord(BaseModel):
     bucket_index: int = Field(ge=0)
     sentiment_score: int = Field(ge=1, le=5)
     prompt_version: str = Field(min_length=1)
-    model_id: str = Field(min_length=1)
+    claude_model: str = Field(min_length=1)
     client_version: str = Field(min_length=1)
     read_edit_ratio: float | None
     turn_count: int = Field(ge=0)
@@ -115,7 +115,7 @@ class TrendComparison(BaseModel):
 class ModelBreakdown(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    model_id: str
+    claude_model: str
     avg_score: float
     count: int
     avg_read_edit_ratio: float | None

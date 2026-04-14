@@ -12,9 +12,9 @@ from statistics import mean, median, stdev
 import anyio
 import click
 
-from cc_sentiment.engines import InferenceEngine, OMLXEngine
+from cc_sentiment.engines import DEFAULT_MODEL, InferenceEngine, OMLXEngine
 from cc_sentiment.labeled_data import build_labeled_dataset
-from cc_sentiment.models import DEFAULT_MODEL, ConversationBucket, SentimentScore
+from cc_sentiment.models import ConversationBucket, SentimentScore
 from cc_sentiment.transcripts import (
     ConversationBucketer,
     TranscriptDiscovery,

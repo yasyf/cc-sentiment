@@ -22,7 +22,7 @@ const DataResponseSchema = z.object({
 		read_edit_previous: z.number().nullable()
 	}).default({ sentiment_current: 0, sentiment_previous: 0, sessions_current: 0, sessions_previous: 0, read_edit_current: null, read_edit_previous: null }),
 	model_breakdown: z.array(z.object({
-		model_id: z.string(),
+		claude_model: z.string(),
 		avg_score: z.number(),
 		count: z.number(),
 		avg_read_edit_ratio: z.number().nullable()

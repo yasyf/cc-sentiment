@@ -79,6 +79,7 @@ class Pipeline:
                 thinking_present=m.thinking_present,
                 thinking_chars=m.thinking_chars,
                 cc_version=m.cc_version,
+                claude_model=m.claude_model,
             )
             for bucket, score in zip(new_buckets, scores)
         ]

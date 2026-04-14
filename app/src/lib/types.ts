@@ -32,7 +32,7 @@ export interface TrendComparison {
 }
 
 export interface ModelBreakdown {
-	model_id: string;
+	claude_model: string;
 	avg_score: number;
 	count: number;
 	avg_read_edit_ratio: number | null;

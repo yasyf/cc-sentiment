@@ -11,7 +11,6 @@ from cc_sentiment.models import (
     BucketIndex,
     CLIENT_VERSION,
     ContributorId,
-    DEFAULT_MODEL,
     GPGConfig,
     PROMPT_VERSION,
     ProcessedFile,
@@ -56,21 +55,13 @@ class TestProcessedSession:
 
 class TestSentimentRecord:
     def test_serialization_roundtrip(self) -> None:
-        record = make_record()
+        record = make_record(claude_model="claude-sonnet-4-20250514")
         data = record.model_dump(mode="json")
         restored = SentimentRecord.model_validate(data)
         assert restored == record
         assert restored.prompt_version == PROMPT_VERSION
-        assert restored.inference_model == DEFAULT_MODEL
+        assert restored.claude_model == "claude-sonnet-4-20250514"
         assert restored.client_version == CLIENT_VERSION
-
-    def test_wire_format_uses_model_id_key(self) -> None:
-        record = make_record()
-        data = record.model_dump(mode="json", by_alias=True)
-        assert "model_id" in data
-        assert "inference_model" not in data
-        restored = SentimentRecord.model_validate(data)
-        assert restored.inference_model == DEFAULT_MODEL
 
 
 class TestProcessedFile:

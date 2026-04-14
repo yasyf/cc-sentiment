@@ -20,25 +20,41 @@ from cc_sentiment.engines import (
     extract_score,
 )
 from cc_sentiment.models import (
+    AssistantMessage,
     BucketIndex,
     ConversationBucket,
     SentimentScore,
     SessionId,
     TranscriptMessage,
+    UserMessage,
 )
 
 
 def make_message(role: str, content: str) -> TranscriptMessage:
-    return TranscriptMessage(
-        role=role,
-        content=content,
-        timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        session_id=SessionId("test"),
-        uuid="u1",
-        tool_names=(),
-        thinking_chars=0,
-        cc_version="2.1.92" if role == "user" else "",
-    )
+    match role:
+        case "user":
+            return UserMessage(
+                content=content,
+                timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                session_id=SessionId("test"),
+                uuid="u1",
+                tool_names=(),
+                thinking_chars=0,
+                cc_version="2.1.92",
+            )
+        case "assistant":
+            return AssistantMessage(
+                content=content,
+                timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                session_id=SessionId("test"),
+                uuid="u1",
+                tool_names=(),
+                thinking_chars=0,
+                cc_version="",
+                claude_model="claude-sonnet-4-20250514",
+            )
+        case _:
+            raise ValueError(f"unknown role: {role}")
 
 
 def make_bucket(user_text: str) -> ConversationBucket:

@@ -7,10 +7,12 @@ from pathlib import Path
 import orjson
 
 from cc_sentiment.models import (
+    AssistantMessage,
     BucketIndex,
     ConversationBucket,
     SessionId,
     TranscriptMessage,
+    UserMessage,
 )
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
@@ -58,8 +60,7 @@ class TranscriptParser:
                         content = " ".join(text_parts)
                     case _:
                         return None
-                return TranscriptMessage(
-                    role="user",
+                return UserMessage(
                     content=content,
                     timestamp=datetime.fromisoformat(data["timestamp"]),
                     session_id=SessionId(data["sessionId"]),
@@ -93,8 +94,7 @@ class TranscriptParser:
                     if len(combined) > ASSISTANT_TRUNCATION
                     else combined
                 )
-                return TranscriptMessage(
-                    role="assistant",
+                return AssistantMessage(
                     content=truncated,
                     timestamp=datetime.fromisoformat(data["timestamp"]),
                     session_id=SessionId(data["sessionId"]),
@@ -102,6 +102,7 @@ class TranscriptParser:
                     tool_names=tool_names,
                     thinking_chars=thinking_chars,
                     cc_version="",
+                    claude_model=data["message"]["model"],
                 )
             case _:
                 return None
@@ -145,6 +146,8 @@ class ConversationBucketer:
                 grouped[idx].append(msg)
 
             for idx, bucket_msgs in sorted(grouped.items()):
+                if not any(isinstance(m, AssistantMessage) for m in bucket_msgs):
+                    continue
                 bucket_start = session_start + timedelta(minutes=BUCKET_MINUTES * idx)
                 buckets.append(
                     ConversationBucket(

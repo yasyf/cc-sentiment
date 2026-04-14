@@ -68,14 +68,14 @@ class TestProcessTranscript:
 
     def test_correct_record_count(self) -> None:
         classifier = MagicMock()
-        classifier.score = AsyncMock(return_value=[SentimentScore(3)] * 5)
+        classifier.score = AsyncMock(return_value=[SentimentScore(3)] * 2)
         classifier.close = AsyncMock()
 
         async def run() -> list[SentimentRecord]:
             return await Pipeline.process_transcript(FIXTURE_PATH, classifier)
 
         result = anyio.run(run)
-        assert len(result) == 5
+        assert len(result) == 2
         classifier.score.assert_called_once()
 
 

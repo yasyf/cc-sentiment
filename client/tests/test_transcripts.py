@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from cc_sentiment.models import BucketIndex, SessionId
+from cc_sentiment.models import SessionId
 from cc_sentiment.transcripts import (
     ASSISTANT_TRUNCATION,
     ConversationBucketer,
@@ -75,7 +75,7 @@ class TestConversationBucketer:
         session_aaa_buckets = [
             b for b in buckets if b.session_id == SessionId("session-aaa")
         ]
-        assert len(session_aaa_buckets) == 3
+        assert len(session_aaa_buckets) == 1
 
     def test_bucket_alignment(self) -> None:
         messages = TranscriptParser.parse_file(FIXTURE_PATH)
@@ -85,27 +85,20 @@ class TestConversationBucketer:
             assert bucket.bucket_start.microsecond == 0
             assert bucket.bucket_start.minute % 5 == 0
 
-    def test_bucket_indices(self) -> None:
+    def test_drops_user_only_buckets(self) -> None:
         messages = TranscriptParser.parse_file(FIXTURE_PATH)
         buckets = ConversationBucketer.bucket_messages(messages)
-        session_aaa_buckets = sorted(
-            [b for b in buckets if b.session_id == SessionId("session-aaa")],
-            key=lambda b: b.bucket_index,
-        )
-        assert session_aaa_buckets[0].bucket_index == BucketIndex(0)
-        assert session_aaa_buckets[1].bucket_index == BucketIndex(1)
+        for bucket in buckets:
+            assert any(m.role == "assistant" for m in bucket.messages)
 
     def test_messages_in_correct_buckets(self) -> None:
         messages = TranscriptParser.parse_file(FIXTURE_PATH)
         buckets = ConversationBucketer.bucket_messages(messages)
-        first_bucket = next(
-            b
-            for b in buckets
-            if b.session_id == SessionId("session-aaa")
-            and b.bucket_index == BucketIndex(0)
+        bucket = next(
+            b for b in buckets if b.session_id == SessionId("session-aaa")
         )
-        user_contents = [m.content for m in first_bucket.messages if m.role == "user"]
-        assert "fix the login bug please, it keeps crashing on submit" in user_contents
+        user_contents = [m.content for m in bucket.messages if m.role == "user"]
+        assert "great, that fixed it! now can you add email validation too?" in user_contents
 
     def test_separate_sessions_bucketed_independently(self) -> None:
         messages = TranscriptParser.parse_file(FIXTURE_PATH)
@@ -113,4 +106,4 @@ class TestConversationBucketer:
         session_bbb_buckets = [
             b for b in buckets if b.session_id == SessionId("session-bbb")
         ]
-        assert len(session_bbb_buckets) == 2
+        assert len(session_bbb_buckets) == 1

@@ -8,6 +8,7 @@ from collections.abc import Callable
 from anyio import to_thread
 
 from cc_sentiment.engines import (
+    DEFAULT_MODEL,
     SYSTEM_PROMPT,
     check_frustration,
     extract_score,
@@ -16,7 +17,6 @@ from cc_sentiment.engines import (
 from cc_sentiment.models import (
     ConversationBucket,
     SentimentScore,
-    DEFAULT_MODEL,
 )
 from cc_sentiment.patches import apply_kv_cache_patch
 

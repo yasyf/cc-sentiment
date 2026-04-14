@@ -17,8 +17,13 @@ VALID_RECORD: dict = {
     "bucket_index": 0,
     "sentiment_score": 4,
     "prompt_version": "v1",
-    "model_id": "gemma-4-e4b-it-4bit",
+    "claude_model": "claude-sonnet-4-20250514",
     "client_version": "0.1.0",
+    "read_edit_ratio": None,
+    "turn_count": 1,
+    "thinking_present": False,
+    "thinking_chars": 0,
+    "cc_version": "2.1.92",
 }
 
 VALID_PAYLOAD: dict = {
@@ -248,7 +253,9 @@ class TestData:
         records = [SentimentRecord(
             time=now, conversation_id="c1", bucket_index=0,
             sentiment_score=3, prompt_version="v1",
-            model_id="test", client_version="0.1.0",
+            claude_model="claude-sonnet-4-20250514", client_version="0.1.0",
+            read_edit_ratio=None, turn_count=1,
+            thinking_present=False, thinking_chars=0, cc_version="2.1.92",
         )]
         await db.ingest(records, "octocat", "github")
 
@@ -258,7 +265,9 @@ class TestData:
         await db.ingest([SentimentRecord(
             time=now, conversation_id="c2", bucket_index=0,
             sentiment_score=4, prompt_version="v1",
-            model_id="test", client_version="0.1.0",
+            claude_model="claude-sonnet-4-20250514", client_version="0.1.0",
+            read_edit_ratio=None, turn_count=1,
+            thinking_present=False, thinking_chars=0, cc_version="2.1.92",
         )], "octocat", "github")
 
         r2 = await client.get("/data", headers=AUTH_HEADER)

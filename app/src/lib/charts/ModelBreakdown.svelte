@@ -15,7 +15,7 @@
 	}
 
 	const chartData = $derived({
-		labels: sorted.map((d) => shortModel(d.model_id)),
+		labels: sorted.map((d) => shortModel(d.claude_model)),
 		datasets: [{
 			data: sorted.map((d) => d.avg_score),
 			backgroundColor: sorted.map((d) => sentimentColor(d.avg_score) + '40'),

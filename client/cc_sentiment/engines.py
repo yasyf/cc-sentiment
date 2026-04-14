@@ -16,8 +16,9 @@ from typing import Protocol
 import httpx
 import threading
 
-from cc_sentiment.models import DEFAULT_MODEL, ConversationBucket, SentimentScore
+from cc_sentiment.models import ConversationBucket, SentimentScore
 
+DEFAULT_MODEL = "unsloth/gemma-4-E2B-it-UD-MLX-4bit"
 MAX_CONVERSATION_CHARS = 8192
 
 HAIKU_MODEL = "claude-haiku-4-5"

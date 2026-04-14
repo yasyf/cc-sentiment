@@ -4,12 +4,16 @@ from datetime import datetime, timezone
 from typing import NamedTuple
 
 from cc_sentiment.models import (
+    AssistantMessage,
     BucketIndex,
     ConversationBucket,
     SentimentScore,
     SessionId,
     TranscriptMessage,
+    UserMessage,
 )
+
+LABELED_CLAUDE_MODEL = "claude-sonnet-4-20250514"
 
 
 class LabeledBucket(NamedTuple):
@@ -17,18 +21,46 @@ class LabeledBucket(NamedTuple):
     expected_score: SentimentScore
 
 
+def _message(session_id: SessionId, uuid: str, ts: datetime, role: str, content: str) -> TranscriptMessage:
+    match role:
+        case "user":
+            return UserMessage(
+                content=content,
+                timestamp=ts,
+                session_id=session_id,
+                uuid=uuid,
+                tool_names=(),
+                thinking_chars=0,
+                cc_version="",
+            )
+        case "assistant":
+            return AssistantMessage(
+                content=content,
+                timestamp=ts,
+                session_id=session_id,
+                uuid=uuid,
+                tool_names=(),
+                thinking_chars=0,
+                cc_version="",
+                claude_model=LABELED_CLAUDE_MODEL,
+            )
+        case _:
+            raise ValueError(f"unknown role: {role}")
+
+
 def _bucket(label: str, index: int, messages: list[tuple[str, str]]) -> ConversationBucket:
+    session_id = SessionId(f"labeled-{label}-{index}")
     return ConversationBucket(
-        session_id=SessionId(f"labeled-{label}-{index}"),
+        session_id=session_id,
         bucket_index=BucketIndex(0),
         bucket_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
         messages=tuple(
-            TranscriptMessage(
-                role=role,
-                content=content,
-                timestamp=datetime(2026, 1, 1, 0, 0, i, tzinfo=timezone.utc),
-                session_id=SessionId(f"labeled-{label}-{index}"),
-                uuid=f"labeled-{label}-{index}-{i}",
+            _message(
+                session_id,
+                f"labeled-{label}-{index}-{i}",
+                datetime(2026, 1, 1, 0, 0, i, tzinfo=timezone.utc),
+                role,
+                content,
             )
             for i, (role, content) in enumerate(messages)
         ),
