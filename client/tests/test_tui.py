@@ -7,7 +7,7 @@ from textual.widgets import Button, ContentSwitcher, DataTable, Input, RadioSet
 
 from cc_sentiment.models import AppState, ContributorId, GPGConfig, SentimentRecord, SSHConfig
 from cc_sentiment.signing import GPGKeyInfo, SSHKeyInfo
-from cc_sentiment.tui import ScanApp, SetupApp
+from cc_sentiment.tui import ConfirmActionApp, ScanApp, SetupApp
 from tests.helpers import make_record
 
 
@@ -303,3 +303,81 @@ async def test_scan_app_handles_no_transcripts():
             await pilot.pause(delay=0.5)
 
             assert "no new" in app.status_text.lower()
+
+
+async def test_confirm_action_app_confirm():
+    app = ConfirmActionApp(
+        title="Test title",
+        detail="Test detail text",
+        confirm_label="Do it",
+        decline_label="Nope",
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert pilot.app.query_one("#confirm-yes", Button).label.plain == "Do it"
+        assert pilot.app.query_one("#confirm-no", Button).label.plain == "Nope"
+
+
+async def test_confirm_action_app_renders_content():
+    app = ConfirmActionApp(
+        title="Almost there",
+        detail="We found a signing key on your machine.",
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        labels = pilot.app.query("Label")
+        assert len(labels) >= 2
+
+
+async def test_wizard_updated_copy():
+    with patch("cc_sentiment.tui.shutil.which", return_value=None), \
+         patch("cc_sentiment.tui.subprocess.run", return_value=MagicMock(returncode=1, stdout="")):
+        async with SetupApp().run_test() as pilot:
+            await pilot.pause()
+            labels = pilot.app.query("Label")
+            assert len(labels) > 0
+
+
+async def test_wizard_back_buttons_exist():
+    with patch("cc_sentiment.tui.shutil.which", return_value=None), \
+         patch("cc_sentiment.tui.subprocess.run", return_value=MagicMock(returncode=1, stdout="")):
+        async with SetupApp().run_test() as pilot:
+            assert pilot.app.query_one("#discovery-back", Button) is not None
+            assert pilot.app.query_one("#remote-back", Button) is not None
+            assert pilot.app.query_one("#upload-back", Button) is not None
+
+
+async def test_wizard_done_step_has_verify_label():
+    with patch("cc_sentiment.tui.shutil.which", return_value=None), \
+         patch("cc_sentiment.tui.subprocess.run", return_value=MagicMock(returncode=1, stdout="")):
+        async with SetupApp().run_test() as pilot:
+            assert pilot.app.query_one("#done-verify") is not None
+
+
+async def test_wizard_discovery_auto_selects_single_key():
+    ssh_keys = (SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host"),)
+
+    with patch("cc_sentiment.tui.shutil.which", return_value=None), \
+         patch("cc_sentiment.tui.subprocess.run", return_value=MagicMock(returncode=1, stdout="")), \
+         patch("cc_sentiment.tui.httpx.get", return_value=MagicMock(status_code=200)), \
+         patch("cc_sentiment.tui.KeyDiscovery.find_ssh_keys", return_value=ssh_keys), \
+         patch("cc_sentiment.tui.KeyDiscovery.find_gpg_keys", return_value=()):
+        async with SetupApp().run_test() as pilot:
+            pilot.app.username = "testuser"
+            pilot.app._switch_to_discovery()
+            await pilot.pause(delay=0.5)
+
+            assert pilot.app.query_one("#key-table", DataTable).row_count == 1
+            assert pilot.app.query_one("#key-select", RadioSet).display is False
+            assert pilot.app.query_one("#discovery-next", Button).disabled is False
+
+
+async def test_wizard_discovery_back_returns_to_username():
+    with patch("cc_sentiment.tui.shutil.which", return_value=None), \
+         patch("cc_sentiment.tui.subprocess.run", return_value=MagicMock(returncode=1, stdout="")):
+        async with SetupApp().run_test() as pilot:
+            pilot.app.query_one(ContentSwitcher).current = "step-discovery"
+            await pilot.pause()
+            pilot.app.query_one("#discovery-back", Button).press()
+            await pilot.pause()
+            assert pilot.app.query_one(ContentSwitcher).current == "step-username"

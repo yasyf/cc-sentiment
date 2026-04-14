@@ -102,3 +102,21 @@ class TestUpload:
             anyio.run(do_upload)
 
         assert state.sessions[SessionId("session-1")].uploaded is True
+
+
+class TestVerifyConfig:
+    def test_verify_config_success(self) -> None:
+        config = SSHConfig(
+            contributor_id=ContributorId("testuser"),
+            key_path=Path("/home/.ssh/id_ed25519"),
+        )
+        with patch.object(Uploader, "verify_credentials", new_callable=AsyncMock):
+            assert Uploader.verify_config(config) is True
+
+    def test_verify_config_failure(self) -> None:
+        config = SSHConfig(
+            contributor_id=ContributorId("testuser"),
+            key_path=Path("/home/.ssh/id_ed25519"),
+        )
+        with patch.object(Uploader, "verify_credentials", side_effect=Exception("fail"), new_callable=AsyncMock):
+            assert Uploader.verify_config(config) is False

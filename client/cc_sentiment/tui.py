@@ -51,6 +51,50 @@ SCORE_ICONS = {1: "😤", 2: "😒", 3: "😐", 4: "😊", 5: "🤩"}
 CHIP_SPEED = {"M1": 1.5, "M2": 2.0, "M3": 2.5, "M4": 2.8, "M5": 3.2}
 
 
+class ConfirmActionApp(App[bool]):
+    CSS = """
+    Screen { align: center middle; }
+    #confirm-box { width: 72; height: auto; border: heavy $accent; padding: 2 3; }
+    #confirm-box .title { text-style: bold; color: $text; margin: 0 0 1 0; }
+    #confirm-box .detail { color: $text-muted; margin: 0 0 2 0; }
+    #confirm-box Button { margin: 0 1 0 0; }
+    """
+
+    BINDINGS = [("escape", "decline", "Back")]
+
+    def __init__(
+        self,
+        title: str,
+        detail: str,
+        confirm_label: str = "Continue",
+        decline_label: str = "I'll do it myself",
+    ) -> None:
+        super().__init__()
+        self._title = title
+        self._detail = detail
+        self._confirm_label = confirm_label
+        self._decline_label = decline_label
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="confirm-box"):
+            yield Label(self._title, classes="title")
+            yield Label(self._detail, classes="detail")
+            with Horizontal():
+                yield Button(self._confirm_label, id="confirm-yes", variant="primary")
+                yield Button(self._decline_label, id="confirm-no", variant="default")
+
+    @on(Button.Pressed, "#confirm-yes")
+    def on_confirm(self) -> None:
+        self.exit(True)
+
+    @on(Button.Pressed, "#confirm-no")
+    def on_decline(self) -> None:
+        self.exit(False)
+
+    def action_decline(self) -> None:
+        self.exit(False)
+
+
 class SetupApp(App[None]):
     CSS = """
     Screen { align: center middle; }
@@ -88,8 +132,9 @@ class SetupApp(App[None]):
         with Vertical(id="step-username"):
             yield Label("Who are you?", classes="step-title")
             yield Label(
-                "We verify uploads using your public keys on GitHub. "
-                "No account creation needed -- just your username.",
+                "Your GitHub username lets us verify your uploads — "
+                "no account creation, no permissions needed. "
+                "We just check that your public keys match.",
                 classes="status",
             )
             yield Input(placeholder="GitHub username", id="username-input")
@@ -101,51 +146,56 @@ class SetupApp(App[None]):
         with Vertical(id="step-discovery"):
             yield Label("Pick a signing key", classes="step-title")
             yield Label(
-                "Checking which SSH and GPG keys you already have...",
+                "Looking for signing keys on your machine...",
                 id="discovery-status", classes="status",
             )
             yield DataTable(id="key-table")
             yield RadioSet(id="key-select")
             yield Label("", id="no-keys-msg", classes="status")
             yield Label(
-                "[dim]Why? Your key proves the data came from you. "
-                "We never read or upload your private key -- only "
-                "the signature it produces.[/]",
+                "[dim]Why do we need this? Your key is like a personal stamp — "
+                "it proves the data came from you, without sharing anything "
+                "private. We never read or upload your private key.[/]",
                 classes="faq",
             )
             yield Button("Next", id="discovery-next", variant="primary", disabled=True)
+            yield Button("Back", id="discovery-back", variant="default")
 
     def compose_remote_step(self) -> ComposeResult:
         with Vertical(id="step-remote"):
             yield Label("Verifying your key", classes="step-title")
             yield Label(
-                "Checking that this key is linked to your GitHub account...",
+                "Checking that the dashboard can verify your uploads...",
                 id="remote-status", classes="status",
             )
             yield Static("", id="remote-checks")
             yield Button("Next", id="remote-next", variant="primary", disabled=True)
+            yield Button("Back", id="remote-back", variant="default")
 
     def compose_upload_step(self) -> ComposeResult:
         with Vertical(id="step-upload"):
-            yield Label("Register your key", classes="step-title")
+            yield Label("Link your key", classes="step-title")
             yield Label(
-                "Your key needs to be on a public keyserver so the "
-                "server can verify your uploads.",
+                "The dashboard needs to be able to look up your key "
+                "to verify your uploads. We'll help you set this up.",
                 id="upload-status", classes="status",
             )
             yield RadioSet(id="upload-options")
             yield Label("", id="upload-key-text", classes="key-text")
             yield Label("", id="upload-result", classes="status")
-            yield Button("Upload key", id="upload-go", variant="primary", disabled=True)
-            yield Button("I'll do it manually", id="upload-skip", variant="default")
+            yield Button("Link my key", id="upload-go", variant="primary", disabled=True)
+            yield Button("I'll do it myself", id="upload-skip", variant="default")
+            yield Button("Back", id="upload-back", variant="default")
 
     def compose_done_step(self) -> ComposeResult:
         with Vertical(id="step-done"):
             yield Label("You're all set", classes="step-title")
             yield Label("", id="done-summary", classes="success")
+            yield Label("", id="done-verify", classes="status")
             yield Label(
-                "[dim]What gets uploaded: a 1-5 score and timestamp per conversation. "
-                "What stays on your machine: all conversation text and code.[/]",
+                "[dim]Here's what gets sent to the dashboard: just a 1-5 score and "
+                "a timestamp for each conversation. All your actual conversation "
+                "text and code stays on your machine — nothing leaves.[/]",
                 classes="faq",
             )
             yield Button("Start scanning", id="done-btn", variant="primary")
@@ -233,36 +283,48 @@ class SetupApp(App[None]):
         self._discovered_keys = all_keys
 
         if not all_keys:
-            status.update("No signing keys found.")
+            status.update("No signing keys found on your machine.")
             if KeyDiscovery.has_tool("gpg"):
-                no_keys.update("No worries -- we'll generate a GPG key for you automatically. Press Next.")
+                no_keys.update("No worries — we'll create a signing key for you automatically. Just press Next.")
                 self.query_one("#discovery-next", Button).disabled = False
                 self._generate_gpg = True
             elif not self.username:
-                no_keys.update("[red]No GPG keys found. Install gpg (brew install gnupg) or go back and enter a GitHub username to use SSH.[/]")
+                no_keys.update("Go back and enter a GitHub username to use SSH keys instead, or install gpg (brew install gnupg) to use GPG.")
                 self._generate_gpg = False
             else:
-                no_keys.update("[red]No signing keys found. Install gpg (brew install gnupg) or create an SSH key first.[/]")
+                no_keys.update("You can create an SSH key by running: ssh-keygen -t ed25519")
                 self._generate_gpg = False
             return
 
         self._generate_gpg = False
         table.display = True
-        radio.display = True
-        status.update(f"Found {len(all_keys)} existing key{'s' if len(all_keys) != 1 else ''}:")
+        status.update(f"Found {len(all_keys)} key{'s' if len(all_keys) != 1 else ''} on your machine:")
 
-        radio_children = []
+        if len(all_keys) == 1:
+            radio.display = False
+            self.query_one("#discovery-next", Button).disabled = False
+        else:
+            radio.display = True
+            radio_children = []
+            for key in all_keys:
+                match key:
+                    case SSHKeyInfo(path=p, algorithm=a):
+                        radio_children.append(RadioButton(f"SSH: {p.name} ({a})"))
+                    case GPGKeyInfo(fpr=f, email=e):
+                        radio_children.append(RadioButton(f"GPG: {f[-8:]} ({e})"))
+            radio.mount_all(radio_children)
+            self.query_one("#discovery-next", Button).disabled = False
+
         for key in all_keys:
             match key:
-                case SSHKeyInfo(path=p, algorithm=a, comment=c):
+                case SSHKeyInfo(path=p, algorithm=_, comment=c):
                     table.add_row("SSH", str(p), c)
-                    radio_children.append(RadioButton(f"SSH: {p.name} ({a})"))
-                case GPGKeyInfo(fpr=f, email=e, algo=a):
+                case GPGKeyInfo(fpr=f, email=e):
                     table.add_row("GPG", f"{f[:4]} {f[4:8]} ... {f[-8:-4]} {f[-4:]}", e)
-                    radio_children.append(RadioButton(f"GPG: {f[-8:]} ({e})"))
 
-        radio.mount_all(radio_children)
-        self.query_one("#discovery-next", Button).disabled = False
+    @on(Button.Pressed, "#discovery-back")
+    def on_discovery_back(self) -> None:
+        self.query_one(ContentSwitcher).current = "step-username"
 
     @on(Button.Pressed, "#discovery-next")
     def on_discovery_next(self) -> None:
@@ -279,7 +341,7 @@ class SetupApp(App[None]):
     @work(thread=True)
     def generate_gpg_key(self) -> None:
         status = self.query_one("#discovery-status", Label)
-        self.call_from_thread(status.update, "Creating a new GPG key for you...")
+        self.call_from_thread(status.update, "Creating a signing key for you...")
 
         email = self.username + "@users.noreply.github.com"
         batch_input = f"""%no-protection
@@ -327,23 +389,23 @@ Expire-Date: 0
 
         match key:
             case SSHKeyInfo(path=p):
-                self.call_from_thread(checks_widget.update, "  [dim]...[/] GitHub SSH keys")
+                self.call_from_thread(checks_widget.update, "  [dim]...[/] Checking GitHub")
                 try:
                     github_keys = KeyDiscovery.fetch_github_ssh_keys(self.username)
                     local_fp = SSHBackend(private_key_path=p).fingerprint()
                     if any(" ".join(gk.split()[:2]) == local_fp for gk in github_keys):
-                        results.append("  [green]✓[/] GitHub SSH keys — matched")
+                        results.append("  [green]✓[/] Found on GitHub")
                         found = True
                     else:
-                        results.append("  [red]✗[/] GitHub SSH keys — not found")
+                        results.append("  [yellow]—[/] Not on GitHub yet")
                 except httpx.HTTPError:
-                    results.append("  [yellow]?[/] GitHub SSH keys — error")
+                    results.append("  [yellow]?[/] Couldn't reach GitHub")
 
             case GPGKeyInfo(fpr=f):
                 checks = []
                 if self.username:
-                    checks.append("  [dim]...[/] GitHub GPG keys")
-                checks.append("  [dim]...[/] keys.openpgp.org")
+                    checks.append("  [dim]...[/] Checking GitHub")
+                checks.append("  [dim]...[/] Checking keys.openpgp.org")
                 self.call_from_thread(checks_widget.update, "\n".join(checks))
 
                 if self.username:
@@ -353,40 +415,44 @@ Expire-Date: 0
                             import gnupg
                             imported = gnupg.GPG().import_keys(armor)
                             if f in set(imported.fingerprints):
-                                results.append("  [green]✓[/] GitHub GPG keys — matched")
+                                results.append("  [green]✓[/] Found on GitHub")
                                 found = True
                             else:
-                                results.append("  [red]✗[/] GitHub GPG keys — not found")
+                                results.append("  [yellow]—[/] Not on GitHub yet")
                         else:
-                            results.append("  [red]✗[/] GitHub GPG keys — none registered")
+                            results.append("  [yellow]—[/] No keys on GitHub yet")
                     except httpx.HTTPError:
-                        results.append("  [yellow]?[/] GitHub GPG keys — error")
+                        results.append("  [yellow]?[/] Couldn't reach GitHub")
 
                 try:
                     openpgp_key = KeyDiscovery.fetch_openpgp_key(f)
                     if openpgp_key:
-                        results.append("  [green]✓[/] keys.openpgp.org — found")
+                        results.append("  [green]✓[/] Found on keys.openpgp.org")
                         found = True
                         self._key_on_openpgp = True
                     else:
-                        results.append("  [red]✗[/] keys.openpgp.org — not found")
+                        results.append("  [yellow]—[/] Not on keys.openpgp.org yet")
                 except httpx.HTTPError:
-                    results.append("  [yellow]?[/] keys.openpgp.org — error")
+                    results.append("  [yellow]?[/] Couldn't reach keys.openpgp.org")
 
         self.call_from_thread(checks_widget.update, "\n".join(results))
 
         if found:
-            self.call_from_thread(status.update, "[green]Key verified. You're good to go.[/]")
+            self.call_from_thread(status.update, "[green]Key verified — the dashboard can confirm your uploads.[/]")
             self.call_from_thread(self._enable_remote_next)
             self._key_on_remote = True
         else:
-            msg = "Key not found on any keyserver. We can register it in the next step."
+            msg = "Not linked yet — no worries, we can set this up in the next step."
             self.call_from_thread(status.update, msg)
             self.call_from_thread(self._enable_remote_next)
             self._key_on_remote = False
 
     def _enable_remote_next(self) -> None:
         self.query_one("#remote-next", Button).disabled = False
+
+    @on(Button.Pressed, "#remote-back")
+    def on_remote_back(self) -> None:
+        self.query_one(ContentSwitcher).current = "step-discovery"
 
     @on(Button.Pressed, "#remote-next")
     def on_remote_next(self) -> None:
@@ -406,14 +472,14 @@ Expire-Date: 0
 
         match key:
             case SSHKeyInfo():
-                rb = RadioButton(f"Add to GitHub automatically{'' if has_gh else ' (needs gh CLI)'}")
+                rb = RadioButton(f"Link to GitHub{'' if has_gh else ' (needs gh CLI)'}")
                 rb.disabled = not has_gh
                 options.append(rb)
                 self._upload_actions.append("github-ssh")
 
             case GPGKeyInfo():
                 if self.username:
-                    rb = RadioButton(f"Add to GitHub automatically{'' if has_gh else ' (needs gh CLI)'}")
+                    rb = RadioButton(f"Link to GitHub{'' if has_gh else ' (needs gh CLI)'}")
                     rb.disabled = not has_gh
                     options.append(rb)
                     self._upload_actions.append("github-gpg")
@@ -424,7 +490,15 @@ Expire-Date: 0
         options.append(RadioButton("Show key so I can add it myself"))
         self._upload_actions.append("manual")
 
-        radio.mount_all(options)
+        enabled_actions = [
+            (opt, act)
+            for opt, act in zip(options, self._upload_actions)
+            if not opt.disabled and act != "manual"
+        ]
+        if len(enabled_actions) == 1:
+            radio.display = False
+        else:
+            radio.mount_all(options)
 
         pub_text = ""
         match key:
@@ -447,6 +521,10 @@ Expire-Date: 0
     def on_upload_skip(self) -> None:
         self._save_and_finish()
 
+    @on(Button.Pressed, "#upload-back")
+    def on_upload_back(self) -> None:
+        self.query_one(ContentSwitcher).current = "step-remote"
+
     @work(thread=True)
     def run_upload(self, action: str) -> None:
         result_label = self.query_one("#upload-result", Label)
@@ -461,10 +539,10 @@ Expire-Date: 0
                     capture_output=True, text=True, timeout=30,
                 )
                 if result.returncode == 0:
-                    self.call_from_thread(result_label.update, "[green]SSH key uploaded to GitHub[/]")
-                    self.call_from_thread(self._finish_after_upload)
+                    self.call_from_thread(result_label.update, "[green]Key linked to GitHub — you're all set.[/]")
+                    self.call_from_thread(self._save_and_finish)
                 else:
-                    self.call_from_thread(result_label.update, f"[red]Failed: {result.stderr.strip()}[/]")
+                    self.call_from_thread(result_label.update, f"[red]Something went wrong: {result.stderr.strip()}[/]")
 
             case "github-gpg":
                 assert isinstance(key, GPGKeyInfo)
@@ -478,16 +556,16 @@ Expire-Date: 0
                         capture_output=True, text=True, timeout=30,
                     )
                     if result.returncode == 0:
-                        self.call_from_thread(result_label.update, "[green]GPG key uploaded to GitHub[/]")
-                        self.call_from_thread(self._finish_after_upload)
+                        self.call_from_thread(result_label.update, "[green]Key linked to GitHub — you're all set.[/]")
+                        self.call_from_thread(self._save_and_finish)
                     else:
-                        self.call_from_thread(result_label.update, f"[red]Failed: {result.stderr.strip()}[/]")
+                        self.call_from_thread(result_label.update, f"[red]Something went wrong: {result.stderr.strip()}[/]")
                 finally:
                     tmp_path.unlink(missing_ok=True)
 
             case "openpgp":
                 assert isinstance(key, GPGKeyInfo)
-                self.call_from_thread(result_label.update, "Uploading to keys.openpgp.org...")
+                self.call_from_thread(result_label.update, "Publishing to keys.openpgp.org...")
                 try:
                     pub_text = GPGBackend(fpr=key.fpr).public_key_text()
                     token, statuses = KeyDiscovery.upload_openpgp_key(pub_text)
@@ -496,14 +574,14 @@ Expire-Date: 0
                         KeyDiscovery.request_openpgp_verify(token, emails)
                         self.call_from_thread(
                             result_label.update,
-                            f"[yellow]Verification email sent to {', '.join(emails)}.\n"
-                            f"Click the link in the email, then press Done.[/]",
+                            f"[yellow]Almost done — check your email ({', '.join(emails)}) "
+                            f"for a verification link, then press Start scanning.[/]",
                         )
                     else:
-                        self.call_from_thread(result_label.update, "[green]Key already published on keys.openpgp.org[/]")
-                    self.call_from_thread(self._finish_after_upload)
+                        self.call_from_thread(result_label.update, "[green]Key already published — you're all set.[/]")
+                    self.call_from_thread(self._save_and_finish)
                 except httpx.HTTPError as e:
-                    self.call_from_thread(result_label.update, f"[red]Upload failed: {e}[/]")
+                    self.call_from_thread(result_label.update, f"[red]Couldn't reach keys.openpgp.org: {e}[/]")
 
             case "manual":
                 match key:
@@ -511,11 +589,8 @@ Expire-Date: 0
                         url = "https://github.com/settings/ssh/new"
                     case GPGKeyInfo():
                         url = "https://github.com/settings/gpg/new"
-                self.call_from_thread(result_label.update, f"Add your public key at:\n{url}")
-                self.call_from_thread(self._finish_after_upload)
-
-    def _finish_after_upload(self) -> None:
-        self._save_and_finish()
+                self.call_from_thread(result_label.update, f"Paste your public key at:\n{url}")
+                self.call_from_thread(self._save_and_finish)
 
     def _save_and_finish(self) -> None:
         state = AppState.load()
@@ -542,6 +617,28 @@ Expire-Date: 0
                 summary.update(f"Signed in as [b]{label}[/]")
 
         self.query_one(ContentSwitcher).current = "step-done"
+        self.verify_server_config(state)
+
+    @work(thread=True)
+    def verify_server_config(self, state: AppState) -> None:
+        verify_label = self.query_one("#done-verify", Label)
+        self.call_from_thread(verify_label.update, "[dim]Verifying with dashboard...[/]")
+
+        assert state.config is not None
+        from cc_sentiment.upload import Uploader
+        if Uploader.verify_config(state.config):
+            self.call_from_thread(
+                verify_label.update,
+                "[green]Verified — the dashboard can confirm your uploads.[/]",
+            )
+        else:
+            self.call_from_thread(
+                verify_label.update,
+                "[yellow]We couldn't verify your setup just yet. This usually means:\n"
+                "  • If you uploaded to keys.openpgp.org — check your email for a verification link\n"
+                "  • If you just added a key to GitHub — it can take a minute to propagate\n"
+                "  • You can run cc-sentiment setup again anytime to retry[/]",
+            )
 
     @on(Button.Pressed, "#done-btn")
     def on_done(self) -> None:

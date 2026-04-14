@@ -10,7 +10,8 @@ from rich.console import Console
 from rich.table import Table
 
 from cc_sentiment.models import AppState, ContributorId, GPGConfig, SentimentRecord, SSHConfig
-from cc_sentiment.signing import GPGBackend, KeyDiscovery, SSHBackend
+from cc_sentiment.signing import GPGKeyInfo, KeyDiscovery, SSHKeyInfo
+from cc_sentiment.upload import Uploader
 
 SCORE_COLORS: dict[int, str] = {1: "red", 2: "red", 3: "yellow", 4: "green", 5: "green"}
 SCORE_LABELS: dict[int, str] = {
@@ -36,32 +37,124 @@ def detect_git_username() -> str | None:
     return None
 
 
+ALMOST_THERE_DETAIL = (
+    "We found a signing key on your machine ({key_display}), "
+    "but it's not linked to your GitHub account yet.\n\n"
+    "We can add it for you — this just lets the dashboard verify "
+    "that uploads came from you. It won't change anything else "
+    "about your GitHub account."
+)
+
+ONE_TIME_SETUP_DETAIL = (
+    "To verify your uploads, we need a signing key. "
+    "We can create one for you automatically — it's a small file "
+    "that lives on your machine and proves your identity.\n\n"
+    "We'll also link it to your GitHub account so the "
+    "dashboard can verify your data."
+)
+
+
+def try_config(state: AppState, config: SSHConfig | GPGConfig, label: str) -> bool:
+    state.config = config
+    state.save()
+    if Uploader.verify_config(config):
+        console.print(f"[green]All set![/] Verified as {label}.")
+        return True
+    console.print("[dim]Hmm, the dashboard couldn't verify that config. Trying another approach...[/]")
+    state.config = None
+    state.save()
+    return False
+
+
+def confirm_action(title: str, detail: str, confirm_label: str) -> bool:
+    from cc_sentiment.tui import ConfirmActionApp
+    return ConfirmActionApp(title=title, detail=detail, confirm_label=confirm_label).run()
+
+
+def try_link_local_key(
+    state: AppState, username: str, key: SSHKeyInfo | GPGKeyInfo,
+) -> bool:
+    match key:
+        case SSHKeyInfo(path=p):
+            key_display, upload, config = (
+                str(p),
+                lambda: KeyDiscovery.upload_github_ssh_key(key),
+                SSHConfig(contributor_id=ContributorId(username), key_path=p),
+            )
+        case GPGKeyInfo(fpr=f):
+            key_display, upload, config = (
+                f"GPG {f[-8:]}",
+                lambda: KeyDiscovery.upload_github_gpg_key(key),
+                GPGConfig(contributor_type="github", contributor_id=ContributorId(username), fpr=f),
+            )
+    if not confirm_action(
+        title="Almost there",
+        detail=ALMOST_THERE_DETAIL.format(key_display=key_display),
+        confirm_label="Link key to GitHub",
+    ):
+        return False
+    if not upload():
+        return False
+    return try_config(state, config, username)
+
+
 def auto_setup(state: AppState) -> bool:
+    console.print("[dim]Checking GitHub username...[/]", end=" ")
     username = detect_git_username()
+    console.print(f"found: {username}" if username else "not found")
 
     if username:
+        console.print("[dim]Looking for signing keys...[/]", end=" ")
         if backend := KeyDiscovery.match_ssh_key(username):
-            state.config = SSHConfig(contributor_id=ContributorId(username), key_path=backend.private_key_path)
-            state.save()
-            console.print(f"[green]Auto-configured:[/] {username} with SSH key {backend.private_key_path}")
-            return True
+            console.print("found SSH key, already on GitHub")
+            if try_config(
+                state,
+                SSHConfig(contributor_id=ContributorId(username), key_path=backend.private_key_path),
+                username,
+            ):
+                return True
 
         if backend := KeyDiscovery.match_gpg_key(username):
-            state.config = GPGConfig(contributor_type="github", contributor_id=ContributorId(username), fpr=backend.fpr)
-            state.save()
-            console.print(f"[green]Auto-configured:[/] {username} with GPG key {backend.fpr[-8:]}")
-            return True
+            console.print("found GPG key, already on GitHub")
+            if try_config(
+                state,
+                GPGConfig(contributor_type="github", contributor_id=ContributorId(username), fpr=backend.fpr),
+                username,
+            ):
+                return True
+
+        if shutil.which("gh"):
+            for key in (*KeyDiscovery.find_ssh_keys(), *KeyDiscovery.find_gpg_keys()):
+                match key:
+                    case SSHKeyInfo(path=p):
+                        console.print(f"found SSH key ({p.name}), not on GitHub yet")
+                    case GPGKeyInfo(fpr=f):
+                        console.print(f"found GPG key ({f[-8:]}), not on GitHub yet")
+                if try_link_local_key(state, username, key):
+                    return True
 
     for info in KeyDiscovery.find_gpg_keys():
-        if KeyDiscovery.fetch_openpgp_key(info.fpr):
-            if username:
-                state.config = GPGConfig(contributor_type="github", contributor_id=ContributorId(username), fpr=info.fpr)
-                label = username
-            else:
-                state.config = GPGConfig(contributor_type="gpg", contributor_id=ContributorId(info.fpr), fpr=info.fpr)
-                label = f"GPG {info.fpr[-8:]}"
-            state.save()
-            console.print(f"[green]Auto-configured:[/] {label} with GPG key on keys.openpgp.org")
+        if not KeyDiscovery.fetch_openpgp_key(info.fpr):
+            continue
+        config, label = (
+            (GPGConfig(contributor_type="github", contributor_id=ContributorId(username), fpr=info.fpr), username)
+            if username
+            else (GPGConfig(contributor_type="gpg", contributor_id=ContributorId(info.fpr), fpr=info.fpr), f"GPG {info.fpr[-8:]}")
+        )
+        if try_config(state, config, label):
+            return True
+
+    if username and shutil.which("gh") and confirm_action(
+        title="One-time setup",
+        detail=ONE_TIME_SETUP_DETAIL,
+        confirm_label="Set up automatically",
+    ):
+        new_key = KeyDiscovery.generate_ssh_key()
+        if KeyDiscovery.upload_github_ssh_key(new_key) and try_config(
+            state,
+            SSHConfig(contributor_id=ContributorId(username), key_path=new_key.path),
+            username,
+        ):
             return True
 
     return False
@@ -69,7 +162,16 @@ def auto_setup(state: AppState) -> bool:
 
 def ensure_config(state: AppState) -> None:
     if state.config is not None:
-        return
+        match state.config:
+            case SSHConfig(key_path=p) if not p.exists():
+                console.print(
+                    f"[yellow]Your signing key ({p}) seems to have moved or been deleted. "
+                    f"Let's set up a new one.[/]"
+                )
+                state.config = None
+                state.save()
+            case _:
+                return
 
     if auto_setup(state):
         return
@@ -142,13 +244,10 @@ def benchmark(
 
 @main.command()
 def upload() -> None:
-    from cc_sentiment.upload import Uploader
-
     state = AppState.load()
     ensure_config(state)
 
-    records = Uploader.records_from_state(state)
-    if not records:
+    if not Uploader.records_from_state(state):
         console.print("No pending records to upload.")
         return
 

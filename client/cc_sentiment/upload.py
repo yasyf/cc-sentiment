@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import anyio
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
@@ -33,6 +34,14 @@ _retry = retry(
 class Uploader:
     def __init__(self, server_url: str = DEFAULT_SERVER_URL) -> None:
         self.server_url = server_url
+
+    @staticmethod
+    def verify_config(config: SSHConfig | GPGConfig, server_url: str = DEFAULT_SERVER_URL) -> bool:
+        try:
+            anyio.run(Uploader(server_url).verify_credentials, config)
+            return True
+        except Exception:
+            return False
 
     @staticmethod
     def backend_from_config(config: SSHConfig | GPGConfig) -> SigningBackend:

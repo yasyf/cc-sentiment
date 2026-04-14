@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from cc_sentiment.signing import (
+    GPGKeyInfo,
     KeyDiscovery,
     PayloadSigner,
     SSHBackend,
@@ -112,3 +113,45 @@ class TestPayloadSigner:
         result = PayloadSigner.sign("test-data", backend)
         assert result == "fake-signature"
         backend.sign.assert_called_once_with("test-data")
+
+
+class TestKeyGeneration:
+    def test_generate_ssh_key(self) -> None:
+        with patch("cc_sentiment.signing.SSH_DIR", Path("/home/.ssh")), \
+             patch("cc_sentiment.signing.subprocess.run") as mock_run, \
+             patch("pathlib.Path.read_text", return_value="ssh-ed25519 AAAA cc-sentiment\n"), \
+             patch("pathlib.Path.exists", return_value=True):
+            mock_run.return_value = MagicMock(returncode=0)
+            result = KeyDiscovery.generate_ssh_key()
+            assert result.algorithm == "ssh-ed25519"
+            assert result.comment == "cc-sentiment"
+            assert result.path == Path("/home/.ssh/id_ed25519")
+            mock_run.assert_called_once()
+
+    def test_upload_github_ssh_key_success(self) -> None:
+        key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+        with patch("cc_sentiment.signing.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            assert KeyDiscovery.upload_github_ssh_key(key) is True
+
+    def test_upload_github_ssh_key_failure(self) -> None:
+        key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+        with patch("cc_sentiment.signing.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1)
+            assert KeyDiscovery.upload_github_ssh_key(key) is False
+
+    def test_upload_github_gpg_key_success(self) -> None:
+        key = GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096")
+        with patch("cc_sentiment.signing.gnupg.GPG") as mock_gpg_cls, \
+             patch("cc_sentiment.signing.subprocess.run") as mock_run, \
+             patch("cc_sentiment.signing.tempfile.NamedTemporaryFile"), \
+             patch("pathlib.Path.unlink"):
+            mock_gpg_cls.return_value.export_keys.return_value = "-----BEGIN PGP PUBLIC KEY BLOCK-----"
+            mock_run.return_value = MagicMock(returncode=0)
+            assert KeyDiscovery.upload_github_gpg_key(key) is True
+
+    def test_upload_github_gpg_key_no_export(self) -> None:
+        key = GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096")
+        with patch("cc_sentiment.signing.gnupg.GPG") as mock_gpg_cls:
+            mock_gpg_cls.return_value.export_keys.return_value = ""
+            assert KeyDiscovery.upload_github_gpg_key(key) is False

@@ -153,6 +153,46 @@ class KeyDiscovery:
         response.raise_for_status()
         return response.json()["status"]
 
+    @staticmethod
+    def generate_ssh_key() -> SSHKeyInfo:
+        path = SSH_DIR / "id_ed25519"
+        subprocess.run(
+            ["ssh-keygen", "-t", "ed25519", "-f", str(path), "-N", "", "-C", "cc-sentiment"],
+            check=True, capture_output=True, timeout=10,
+        )
+        parts = path.with_suffix(path.suffix + ".pub").read_text().strip().split()
+        return SSHKeyInfo(
+            path=path,
+            algorithm=parts[0] if len(parts) >= 2 else "unknown",
+            comment=parts[2] if len(parts) >= 3 else "",
+        )
+
+    @staticmethod
+    def upload_github_ssh_key(info: SSHKeyInfo) -> bool:
+        pub_path = info.path.with_suffix(info.path.suffix + ".pub")
+        result = subprocess.run(
+            ["gh", "ssh-key", "add", str(pub_path), "-t", "cc-sentiment"],
+            capture_output=True, text=True, timeout=30,
+        )
+        return result.returncode == 0
+
+    @staticmethod
+    def upload_github_gpg_key(info: GPGKeyInfo) -> bool:
+        armored = gnupg.GPG().export_keys(info.fpr)
+        if not armored:
+            return False
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".asc", delete=False) as f:
+            f.write(armored)
+            tmp_path = Path(f.name)
+        try:
+            result = subprocess.run(
+                ["gh", "gpg-key", "add", str(tmp_path)],
+                capture_output=True, text=True, timeout=30,
+            )
+            return result.returncode == 0
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
     @classmethod
     def match_ssh_key(cls, username: str) -> SSHBackend | None:
         github_keys = cls.fetch_github_ssh_keys(username)
