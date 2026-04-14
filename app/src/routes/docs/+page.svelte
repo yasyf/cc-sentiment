@@ -36,9 +36,8 @@
 				<pre class="mt-2 overflow-x-auto rounded border border-border bg-bg-code px-4 py-3 font-mono text-sm text-text-secondary"><code>uv tool install cc-sentiment
 cc-sentiment</code></pre>
 				<p class="mt-3 text-sm text-text-muted">
-					The wizard walks you through everything: detecting your GitHub identity,
-					finding your signing keys, and scoring your sessions. If you don't have a
-					signing key, it can generate one for you.
+					The wizard confirms your GitHub identity, scores your sessions on your Mac,
+					and uploads the numeric scores. If anything's missing, it'll set it up for you.
 				</p>
 			</section>
 
@@ -49,7 +48,7 @@ cc-sentiment</code></pre>
 				<ol class="mt-3 space-y-2 pl-5 text-sm text-text-muted list-decimal marker:text-text-dim">
 					<li>Finds your Claude Code transcripts in <code class="rounded bg-bg-code px-1 py-0.5 font-mono text-xs">~/.claude/projects/</code></li>
 					<li>Scores each conversation on-device using Gemma 4 via MLX -- nothing is sent anywhere</li>
-					<li>Signs the scores with your GitHub SSH or GPG key so we can verify authorship</li>
+					<li>Links each upload to your GitHub account so uploads are attributable (and nobody else can upload under your name)</li>
 					<li>Uploads only the numeric scores and timestamps to the <a href="/" class="text-accent hover:text-accent-hover transition-colors">dashboard</a></li>
 				</ol>
 			</section>

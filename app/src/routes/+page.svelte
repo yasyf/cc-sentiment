@@ -116,8 +116,8 @@
 				{overallAvg.toFixed(1)}/5 across {data.total_sessions.toLocaleString()} sessions this week — {trendDescription}.
 			</p>
 			<p class="mt-1 max-w-2xl text-sm text-text-dim">
-				Born from <a href="https://github.com/anthropics/claude-code/issues/42796" class="text-accent hover:text-accent-hover transition-colors">#42796</a>
-				— 1,677 developers flagged a quality regression. This tracks whether it's improving.
+				An open experiment: does Claude Code sentiment vary with time of day, day of week, or model?
+				Anyone can contribute — scores are generated on your Mac and only the numbers leave.
 			</p>
 		</div>
 
@@ -182,7 +182,7 @@
 				<section>
 					<h3 class="mb-0.5 text-sm font-medium text-text-secondary">The trend</h3>
 					<p class="mb-2 text-xs text-text-dim">
-						Sentiment over time with session volume. Busier periods often correlate with lower scores.
+						Average sentiment and session volume over time.
 					</p>
 					<div class="rounded-lg border border-border bg-bg-card p-5">
 						<SentimentTimeline data={data.timeline} />
@@ -190,9 +190,9 @@
 				</section>
 
 				<section>
-					<h3 class="mb-0.5 text-sm font-medium text-text-secondary">When to use Claude Code</h3>
+					<h3 class="mb-0.5 text-sm font-medium text-text-secondary">By hour of day</h3>
 					<p class="mb-2 text-xs text-text-dim">
-						Per the <a href="https://github.com/anthropics/claude-code/issues/42796" class="text-accent hover:text-accent-hover">#42796 analysis</a>, 5 PM PT is the worst hour and 7 PM PT is another valley.
+						Average sentiment and session volume by hour (UTC).
 					</p>
 					<div class="rounded-lg border border-border bg-bg-card p-5">
 						<HourlyHeatmap data={data.hourly} />
@@ -248,7 +248,7 @@
 								<section>
 									<h3 class="mb-0.5 text-sm font-medium text-text-secondary">By model</h3>
 									<p class="mb-2 text-xs text-text-dim">
-										Average sentiment per Claude model. Some versions perform differently.
+										Average sentiment by Claude model, across scored sessions.
 									</p>
 									<div class="rounded-lg border border-border bg-bg-card p-5">
 										<ModelBreakdown data={data.model_breakdown} />
@@ -281,7 +281,7 @@
 		<div class="mx-auto flex max-w-5xl items-center justify-between px-6 py-6 text-xs text-text-dim">
 			<span>Updated {lastUpdated}</span>
 			<a href="/docs" class="text-accent hover:text-accent-hover transition-colors">
-				Add yours in 30 seconds — {data.total_contributors} contributor{data.total_contributors === 1 ? '' : 's'} and counting
+				Add yours in 30 seconds →
 			</a>
 		</div>
 	</footer>

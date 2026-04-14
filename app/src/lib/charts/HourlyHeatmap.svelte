@@ -24,37 +24,19 @@
 
 	const currentUTCHour = new Date().getUTCHours();
 
-	// Per #42796 analysis: 5pm PST is the worst hour, 7pm PST is another valley.
-	// 5pm PT = 0:00 UTC (12a), 7pm PT = 2:00 UTC (2a)
+	// 5-7 PM PT (0:00-2:00 UTC) is typical peak usage for US-based devs — shade the band as reference.
 	const peakAnnotations = {
-		worst5pm: {
-			type: 'line' as const,
+		peakUsage: {
+			type: 'box' as const,
 			xMin: '12a',
-			xMax: '12a',
-			borderColor: 'rgba(220, 38, 38, 0.4)',
-			borderWidth: 1.5,
-			borderDash: [4, 4],
-			label: {
-				display: true,
-				content: '5 PM PT',
-				position: 'start' as const,
-				font: { size: 9 },
-				color: '#dc2626',
-				backgroundColor: 'rgba(255,255,255,0.9)',
-				padding: 2
-			}
-		},
-		worst7pm: {
-			type: 'line' as const,
-			xMin: '2a',
 			xMax: '2a',
-			borderColor: 'rgba(220, 38, 38, 0.4)',
-			borderWidth: 1.5,
-			borderDash: [4, 4],
+			backgroundColor: 'rgba(220, 38, 38, 0.08)',
+			borderColor: 'rgba(220, 38, 38, 0.25)',
+			borderWidth: 1,
 			label: {
 				display: true,
-				content: '7 PM PT',
-				position: 'start' as const,
+				content: 'peak usage (5–7 PM PT)',
+				position: { x: 'center' as const, y: 'start' as const },
 				font: { size: 9 },
 				color: '#dc2626',
 				backgroundColor: 'rgba(255,255,255,0.9)',
