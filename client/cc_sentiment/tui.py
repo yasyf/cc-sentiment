@@ -3,15 +3,20 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tempfile
+import time
 from collections import Counter
 from pathlib import Path
-from statistics import mean, median
+from statistics import mean
 
+import anyio
+import anyio.to_thread
 import httpx
 from textual import on, work
 from textual.app import App, ComposeResult
-from textual.containers import Center, Horizontal, Vertical
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
+from textual.screen import Screen
 from textual.widgets import (
     Button,
     ContentSwitcher,
@@ -29,6 +34,13 @@ from textual.widgets import (
     Static,
 )
 
+from cc_sentiment.engines import (
+    HAIKU_INPUT_USD_PER_MTOK,
+    HAIKU_MODEL,
+    HAIKU_OUTPUT_USD_PER_MTOK,
+    estimate_claude_cost_usd,
+    resolve_engine,
+)
 from cc_sentiment.models import (
     AppState,
     ContributorId,
@@ -48,56 +60,170 @@ SCORE_COLORS = {1: "red", 2: "red", 3: "yellow", 4: "green", 5: "green"}
 SCORE_LABELS = {1: "frustrated", 2: "annoyed", 3: "neutral", 4: "satisfied", 5: "delighted"}
 SCORE_ICONS = {1: "😤", 2: "😒", 3: "😐", 4: "😊", 5: "🤩"}
 
-CHIP_SPEED = {"M1": 1.5, "M2": 2.0, "M3": 2.5, "M4": 2.8, "M5": 3.2}
+RESCAN_CONFIRM_SECONDS = 5.0
 
 
-class ConfirmActionApp(App[bool]):
-    CSS = """
-    Screen { align: center middle; }
-    #confirm-box { width: 72; height: auto; border: heavy $accent; padding: 2 3; }
-    #confirm-box .title { text-style: bold; color: $text; margin: 0 0 1 0; }
-    #confirm-box .detail { color: $text-muted; margin: 0 0 2 0; }
-    #confirm-box Button { margin: 0 1 0 0; }
+def detect_git_username() -> str | None:
+    for cmd in (
+        ["gh", "api", "user", "--jq", ".login"],
+        ["git", "config", "github.user"],
+    ):
+        if not shutil.which(cmd[0]):
+            continue
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            continue
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    return None
+
+
+def _try_config(state: AppState, config: SSHConfig | GPGConfig) -> bool:
+    from cc_sentiment.upload import Uploader
+    if not Uploader.verify_config(config):
+        return False
+    state.config = config
+    state.save()
+    return True
+
+
+def auto_setup_silent(state: AppState) -> bool:
+    username = detect_git_username()
+
+    if username:
+        if backend := KeyDiscovery.match_ssh_key(username):
+            if _try_config(
+                state,
+                SSHConfig(contributor_id=ContributorId(username), key_path=backend.private_key_path),
+            ):
+                return True
+        if backend := KeyDiscovery.match_gpg_key(username):
+            if _try_config(
+                state,
+                GPGConfig(contributor_type="github", contributor_id=ContributorId(username), fpr=backend.fpr),
+            ):
+                return True
+
+    for info in KeyDiscovery.find_gpg_keys():
+        if not KeyDiscovery.fetch_openpgp_key(info.fpr):
+            continue
+        config = (
+            GPGConfig(contributor_type="github", contributor_id=ContributorId(username), fpr=info.fpr)
+            if username
+            else GPGConfig(contributor_type="gpg", contributor_id=ContributorId(info.fpr), fpr=info.fpr)
+        )
+        if _try_config(state, config):
+            return True
+
+    return False
+
+
+class ScoreBar(Static):
+    DEFAULT_CSS = """
+    ScoreBar { height: 1; }
     """
 
-    BINDINGS = [("escape", "decline", "Back")]
-
-    def __init__(
-        self,
-        title: str,
-        detail: str,
-        confirm_label: str = "Continue",
-        decline_label: str = "I'll do it myself",
-    ) -> None:
+    def __init__(self, score: int) -> None:
         super().__init__()
-        self._title = title
-        self._detail = detail
-        self._confirm_label = confirm_label
-        self._decline_label = decline_label
+        self.score = score
+
+    def render_bar(self, count: int, total: int, max_count: int) -> str:
+        pct = 100 * count / total if total else 0
+        bar_width = 40
+        bar_len = int(bar_width * count / max_count) if max_count else 0
+        color = SCORE_COLORS[self.score]
+        icon = SCORE_ICONS[self.score]
+        label = SCORE_LABELS[self.score]
+        bar = "━" * bar_len + "╺" + "─" * (bar_width - bar_len)
+        return f" {icon} {self.score} [{color}]{label:>11}[/]  [{color}]{bar}[/]  {pct:4.1f}%  ({count})"
+
+
+class PlatformErrorScreen(Screen[None]):
+    DEFAULT_CSS = """
+    PlatformErrorScreen { align: center middle; }
+    #error-box { width: 76; height: auto; border: heavy $error; padding: 2 3; }
+    #error-box .title { text-style: bold; color: $error; margin: 0 0 1 0; }
+    #error-box .detail { color: $text; margin: 0 0 2 0; }
+    """
+
+    BINDINGS = [("q", "done", "Quit"), ("escape", "done", "Quit"), ("enter", "done", "Quit")]
+
+    def __init__(self, message: str) -> None:
+        super().__init__()
+        self.message = message
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="confirm-box"):
-            yield Label(self._title, classes="title")
-            yield Label(self._detail, classes="detail")
+        with Vertical(id="error-box"):
+            yield Label("Sorry — this machine can't run cc-sentiment.", classes="title")
+            yield Label(self.message, classes="detail")
+            yield Button("Quit", id="quit-btn", variant="primary")
+
+    @on(Button.Pressed, "#quit-btn")
+    def on_quit(self) -> None:
+        self.dismiss(None)
+
+    def action_done(self) -> None:
+        self.dismiss(None)
+
+
+class CostReviewScreen(Screen[bool]):
+    DEFAULT_CSS = """
+    CostReviewScreen { align: center middle; }
+    #cost-box { width: 76; height: auto; border: heavy $accent; padding: 2 3; }
+    #cost-box .title { text-style: bold; color: $text; margin: 0 0 1 0; }
+    #cost-box .detail { color: $text-muted; margin: 0 0 1 0; }
+    #cost-box .emphasis { color: $text; margin: 0 0 2 0; }
+    #cost-box Button { margin: 1 1 0 0; }
+    """
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, bucket_count: int, model: str) -> None:
+        super().__init__()
+        self.bucket_count = bucket_count
+        self.model = model
+        self.cost = estimate_claude_cost_usd(bucket_count)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="cost-box"):
+            yield Label(f"Use {self.model} for scoring?", classes="title")
+            yield Label(
+                f"This machine can't run local inference, so we'll use the Claude API "
+                f"via `claude -p` to score [b]{self.bucket_count}[/] new buckets.",
+                classes="detail",
+            )
+            yield Label(
+                f"Estimated cost: about [b]${self.cost:.2f}[/] "
+                f"(at ${HAIKU_INPUT_USD_PER_MTOK:.2f}/MTok in, "
+                f"${HAIKU_OUTPUT_USD_PER_MTOK:.2f}/MTok out). "
+                f"Actual cost is often lower thanks to prompt caching.",
+                classes="emphasis",
+            )
+            yield Label(
+                "This gets billed by Anthropic through your existing `claude` account. "
+                "Your conversation text still leaves the machine only as part of this API call.",
+                classes="detail",
+            )
             with Horizontal():
-                yield Button(self._confirm_label, id="confirm-yes", variant="primary")
-                yield Button(self._decline_label, id="confirm-no", variant="default")
+                yield Button("Continue", id="cost-yes", variant="primary")
+                yield Button("Cancel", id="cost-no", variant="default")
 
-    @on(Button.Pressed, "#confirm-yes")
+    @on(Button.Pressed, "#cost-yes")
     def on_confirm(self) -> None:
-        self.exit(True)
+        self.dismiss(True)
 
-    @on(Button.Pressed, "#confirm-no")
-    def on_decline(self) -> None:
-        self.exit(False)
+    @on(Button.Pressed, "#cost-no")
+    def on_cancel(self) -> None:
+        self.dismiss(False)
 
-    def action_decline(self) -> None:
-        self.exit(False)
+    def action_cancel(self) -> None:
+        self.dismiss(False)
 
 
-class SetupApp(App[None]):
-    CSS = """
-    Screen { align: center middle; }
+class SetupScreen(Screen[bool]):
+    DEFAULT_CSS = """
+    SetupScreen { align: center middle; }
     #wizard { width: 80; height: auto; max-height: 44; border: heavy $accent; padding: 1 2; }
     #wizard Label { margin: 1 0 0 0; }
     #wizard .step-title { text-style: bold; color: $text; margin: 0 0 1 0; }
@@ -112,21 +238,35 @@ class SetupApp(App[None]):
     #wizard .key-text { color: $text-muted; margin: 0 0 1 0; max-height: 3; overflow-y: auto; }
     """
 
-    BINDINGS = [("q", "quit", "Quit"), ("escape", "quit", "Quit")]
+    BINDINGS = [
+        Binding("escape", "cancel", "Quit", priority=True),
+        Binding("ctrl+c", "cancel", "Quit", priority=True),
+    ]
 
     username: reactive[str] = reactive("")
     selected_key: reactive[SSHKeyInfo | GPGKeyInfo | None] = reactive(None)
 
+    def __init__(self, state: AppState) -> None:
+        super().__init__()
+        self.state = state
+
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=False)
         with Vertical(id="wizard"):
-            with ContentSwitcher(initial="step-username"):
+            with ContentSwitcher(initial="step-loading"):
+                yield from self.compose_loading_step()
                 yield from self.compose_username_step()
                 yield from self.compose_discovery_step()
                 yield from self.compose_remote_step()
                 yield from self.compose_upload_step()
                 yield from self.compose_done_step()
-        yield Footer()
+
+    def compose_loading_step(self) -> ComposeResult:
+        with Vertical(id="step-loading"):
+            yield Label("Setting things up...", classes="step-title")
+            yield Label(
+                "Checking if we can verify your uploads automatically.",
+                id="loading-status", classes="status",
+            )
 
     def compose_username_step(self) -> ComposeResult:
         with Vertical(id="step-username"):
@@ -201,33 +341,39 @@ class SetupApp(App[None]):
             yield Button("Start scanning", id="done-btn", variant="primary")
 
     def on_mount(self) -> None:
-        self.title = "cc-sentiment"
-        self.sub_title = "setup"
-        self.detect_username()
         table = self.query_one("#key-table", DataTable)
         table.add_columns("Type", "Fingerprint", "Email")
         table.display = False
         self.query_one("#key-select", RadioSet).display = False
+        self.try_auto_setup()
 
     @work(thread=True)
-    def detect_username(self) -> None:
-        for cmd in (
-            ["gh", "api", "user", "--jq", ".login"],
-            ["git", "config", "github.user"],
-        ):
-            if not shutil.which(cmd[0]):
-                continue
-            try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-                if result.returncode == 0 and result.stdout.strip():
-                    self.call_from_thread(self._set_detected_username, result.stdout.strip())
-                    return
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                continue
+    def try_auto_setup(self) -> None:
+        if auto_setup_silent(self.state):
+            self.app.call_from_thread(self._on_auto_setup_success)
+            return
+        username = detect_git_username()
+        self.app.call_from_thread(self._on_auto_setup_fail, username)
 
-    def _set_detected_username(self, username: str) -> None:
-        self.query_one("#username-input", Input).value = username
-        self.query_one("#username-status", Label).update(f"Auto-detected: {username}")
+    def _on_auto_setup_success(self) -> None:
+        config = self.state.config
+        assert config is not None
+        summary = self.query_one("#done-summary", Label)
+        match config:
+            case SSHConfig(contributor_id=cid, key_path=p):
+                summary.update(f"Signed in as [b]{cid}[/] using SSH key [dim]{p.name}[/]")
+            case GPGConfig(contributor_id=cid, fpr=f):
+                summary.update(f"Signed in as [b]{cid}[/] using GPG [dim]{f[-8:]}[/]")
+        self.query_one("#done-verify", Label).update(
+            "[green]Verified — the dashboard can confirm your uploads.[/]"
+        )
+        self.query_one(ContentSwitcher).current = "step-done"
+
+    def _on_auto_setup_fail(self, username: str | None) -> None:
+        if username:
+            self.query_one("#username-input", Input).value = username
+            self.query_one("#username-status", Label).update(f"Auto-detected: {username}")
+        self.query_one(ContentSwitcher).current = "step-username"
 
     @on(Button.Pressed, "#username-next")
     def on_username_next(self) -> None:
@@ -246,18 +392,16 @@ class SetupApp(App[None]):
     @work(thread=True)
     def validate_and_discover(self) -> None:
         status = self.query_one("#username-status", Label)
-        self.call_from_thread(status.update, f"Validating {self.username}...")
-
+        self.app.call_from_thread(status.update, f"Validating {self.username}...")
         try:
             response = httpx.get(f"https://api.github.com/users/{self.username}", timeout=10.0)
-            if response.status_code != 200:
-                self.call_from_thread(status.update, f"[red]GitHub user '{self.username}' not found[/]")
-                return
         except httpx.HTTPError:
-            self.call_from_thread(status.update, "[red]Could not reach GitHub API[/]")
+            self.app.call_from_thread(status.update, "[red]Could not reach GitHub API[/]")
             return
-
-        self.call_from_thread(self._switch_to_discovery)
+        if response.status_code != 200:
+            self.app.call_from_thread(status.update, f"[red]GitHub user '{self.username}' not found[/]")
+            return
+        self.app.call_from_thread(self._switch_to_discovery)
 
     def _switch_to_discovery(self) -> None:
         self.query_one(ContentSwitcher).current = "step-discovery"
@@ -267,19 +411,21 @@ class SetupApp(App[None]):
     def discover_keys(self) -> None:
         ssh_keys = KeyDiscovery.find_ssh_keys()
         gpg_keys = KeyDiscovery.find_gpg_keys()
-        self.call_from_thread(self._populate_key_table, ssh_keys, gpg_keys)
+        self.app.call_from_thread(self._populate_key_table, ssh_keys, gpg_keys)
 
-    def _populate_key_table(self, ssh_keys: tuple[SSHKeyInfo, ...], gpg_keys: tuple[GPGKeyInfo, ...]) -> None:
+    def _populate_key_table(
+        self,
+        ssh_keys: tuple[SSHKeyInfo, ...],
+        gpg_keys: tuple[GPGKeyInfo, ...],
+    ) -> None:
         table = self.query_one("#key-table", DataTable)
         radio = self.query_one("#key-select", RadioSet)
         status = self.query_one("#discovery-status", Label)
         no_keys = self.query_one("#no-keys-msg", Label)
 
-        if self.username:
-            all_keys: list[SSHKeyInfo | GPGKeyInfo] = [*ssh_keys, *gpg_keys]
-        else:
-            all_keys = list(gpg_keys)
-
+        all_keys: list[SSHKeyInfo | GPGKeyInfo] = (
+            [*ssh_keys, *gpg_keys] if self.username else list(gpg_keys)
+        )
         self._discovered_keys = all_keys
 
         if not all_keys:
@@ -331,7 +477,6 @@ class SetupApp(App[None]):
         if getattr(self, "_generate_gpg", False):
             self.generate_gpg_key()
             return
-
         radio = self.query_one("#key-select", RadioSet)
         idx = radio.pressed_index if radio.pressed_index >= 0 else 0
         self.selected_key = self._discovered_keys[idx]
@@ -341,7 +486,7 @@ class SetupApp(App[None]):
     @work(thread=True)
     def generate_gpg_key(self) -> None:
         status = self.query_one("#discovery-status", Label)
-        self.call_from_thread(status.update, "Creating a signing key for you...")
+        self.app.call_from_thread(status.update, "Creating a signing key for you...")
 
         email = self.username + "@users.noreply.github.com"
         batch_input = f"""%no-protection
@@ -361,18 +506,18 @@ Expire-Date: 0
             )
 
         if result.returncode != 0:
-            self.call_from_thread(status.update, f"[red]Key generation failed: {result.stderr.strip()}[/]")
+            self.app.call_from_thread(status.update, f"[red]Key generation failed: {result.stderr.strip()}[/]")
             return
 
         gpg_keys = KeyDiscovery.find_gpg_keys()
         new_key = next((k for k in gpg_keys if k.email == email), None)
         if not new_key:
-            self.call_from_thread(status.update, "[red]Key generated but not found in keyring[/]")
+            self.app.call_from_thread(status.update, "[red]Key generated but not found in keyring[/]")
             return
 
         self.selected_key = new_key
-        self.call_from_thread(status.update, f"[green]Generated key: {new_key.fpr[-8:]}[/]")
-        self.call_from_thread(self._go_to_remote)
+        self.app.call_from_thread(status.update, f"[green]Generated key: {new_key.fpr[-8:]}[/]")
+        self.app.call_from_thread(self._go_to_remote)
 
     def _go_to_remote(self) -> None:
         self.query_one(ContentSwitcher).current = "step-remote"
@@ -389,7 +534,7 @@ Expire-Date: 0
 
         match key:
             case SSHKeyInfo(path=p):
-                self.call_from_thread(checks_widget.update, "  [dim]...[/] Checking GitHub")
+                self.app.call_from_thread(checks_widget.update, "  [dim]...[/] Checking GitHub")
                 try:
                     github_keys = KeyDiscovery.fetch_github_ssh_keys(self.username)
                     local_fp = SSHBackend(private_key_path=p).fingerprint()
@@ -406,7 +551,7 @@ Expire-Date: 0
                 if self.username:
                     checks.append("  [dim]...[/] Checking GitHub")
                 checks.append("  [dim]...[/] Checking keys.openpgp.org")
-                self.call_from_thread(checks_widget.update, "\n".join(checks))
+                self.app.call_from_thread(checks_widget.update, "\n".join(checks))
 
                 if self.username:
                     try:
@@ -435,16 +580,16 @@ Expire-Date: 0
                 except httpx.HTTPError:
                     results.append("  [yellow]?[/] Couldn't reach keys.openpgp.org")
 
-        self.call_from_thread(checks_widget.update, "\n".join(results))
+        self.app.call_from_thread(checks_widget.update, "\n".join(results))
 
         if found:
-            self.call_from_thread(status.update, "[green]Key verified — the dashboard can confirm your uploads.[/]")
-            self.call_from_thread(self._enable_remote_next)
+            self.app.call_from_thread(status.update, "[green]Key verified — the dashboard can confirm your uploads.[/]")
+            self.app.call_from_thread(self._enable_remote_next)
             self._key_on_remote = True
         else:
             msg = "Not linked yet — no worries, we can set this up in the next step."
-            self.call_from_thread(status.update, msg)
-            self.call_from_thread(self._enable_remote_next)
+            self.app.call_from_thread(status.update, msg)
+            self.app.call_from_thread(self._enable_remote_next)
             self._key_on_remote = False
 
     def _enable_remote_next(self) -> None:
@@ -507,7 +652,9 @@ Expire-Date: 0
             case GPGKeyInfo(fpr=f):
                 pub_text = GPGBackend(fpr=f).public_key_text()
 
-        self.query_one("#upload-key-text", Label).update(f"[dim]{pub_text[:200]}...[/]" if len(pub_text) > 200 else f"[dim]{pub_text}[/]")
+        self.query_one("#upload-key-text", Label).update(
+            f"[dim]{pub_text[:200]}...[/]" if len(pub_text) > 200 else f"[dim]{pub_text}[/]"
+        )
         self.query_one("#upload-go", Button).disabled = False
 
     @on(Button.Pressed, "#upload-go")
@@ -539,10 +686,10 @@ Expire-Date: 0
                     capture_output=True, text=True, timeout=30,
                 )
                 if result.returncode == 0:
-                    self.call_from_thread(result_label.update, "[green]Key linked to GitHub — you're all set.[/]")
-                    self.call_from_thread(self._save_and_finish)
+                    self.app.call_from_thread(result_label.update, "[green]Key linked to GitHub — you're all set.[/]")
+                    self.app.call_from_thread(self._save_and_finish)
                 else:
-                    self.call_from_thread(result_label.update, f"[red]Something went wrong: {result.stderr.strip()}[/]")
+                    self.app.call_from_thread(result_label.update, f"[red]Something went wrong: {result.stderr.strip()}[/]")
 
             case "github-gpg":
                 assert isinstance(key, GPGKeyInfo)
@@ -556,57 +703,57 @@ Expire-Date: 0
                         capture_output=True, text=True, timeout=30,
                     )
                     if result.returncode == 0:
-                        self.call_from_thread(result_label.update, "[green]Key linked to GitHub — you're all set.[/]")
-                        self.call_from_thread(self._save_and_finish)
+                        self.app.call_from_thread(result_label.update, "[green]Key linked to GitHub — you're all set.[/]")
+                        self.app.call_from_thread(self._save_and_finish)
                     else:
-                        self.call_from_thread(result_label.update, f"[red]Something went wrong: {result.stderr.strip()}[/]")
+                        self.app.call_from_thread(result_label.update, f"[red]Something went wrong: {result.stderr.strip()}[/]")
                 finally:
                     tmp_path.unlink(missing_ok=True)
 
             case "openpgp":
                 assert isinstance(key, GPGKeyInfo)
-                self.call_from_thread(result_label.update, "Publishing to keys.openpgp.org...")
+                self.app.call_from_thread(result_label.update, "Publishing to keys.openpgp.org...")
                 try:
                     pub_text = GPGBackend(fpr=key.fpr).public_key_text()
                     token, statuses = KeyDiscovery.upload_openpgp_key(pub_text)
                     emails = [e for e, s in statuses.items() if s == "unpublished"]
                     if emails:
                         KeyDiscovery.request_openpgp_verify(token, emails)
-                        self.call_from_thread(
+                        self.app.call_from_thread(
                             result_label.update,
                             f"[yellow]Almost done — check your email ({', '.join(emails)}) "
                             f"for a verification link, then press Start scanning.[/]",
                         )
                     else:
-                        self.call_from_thread(result_label.update, "[green]Key already published — you're all set.[/]")
-                    self.call_from_thread(self._save_and_finish)
+                        self.app.call_from_thread(result_label.update, "[green]Key already published — you're all set.[/]")
+                    self.app.call_from_thread(self._save_and_finish)
                 except httpx.HTTPError as e:
-                    self.call_from_thread(result_label.update, f"[red]Couldn't reach keys.openpgp.org: {e}[/]")
+                    self.app.call_from_thread(result_label.update, f"[red]Couldn't reach keys.openpgp.org: {e}[/]")
 
             case "manual":
-                match key:
-                    case SSHKeyInfo():
-                        url = "https://github.com/settings/ssh/new"
-                    case GPGKeyInfo():
-                        url = "https://github.com/settings/gpg/new"
-                self.call_from_thread(result_label.update, f"Paste your public key at:\n{url}")
-                self.call_from_thread(self._save_and_finish)
+                assert key is not None
+                url = (
+                    "https://github.com/settings/ssh/new"
+                    if isinstance(key, SSHKeyInfo)
+                    else "https://github.com/settings/gpg/new"
+                )
+                self.app.call_from_thread(result_label.update, f"Paste your public key at:\n{url}")
+                self.app.call_from_thread(self._save_and_finish)
 
     def _save_and_finish(self) -> None:
-        state = AppState.load()
         key = self.selected_key
         identity = self.username
 
         match key:
             case SSHKeyInfo(path=p):
-                state.config = SSHConfig(contributor_id=ContributorId(identity), key_path=p)
+                self.state.config = SSHConfig(contributor_id=ContributorId(identity), key_path=p)
             case GPGKeyInfo(fpr=f):
                 if identity:
-                    state.config = GPGConfig(contributor_type="github", contributor_id=ContributorId(identity), fpr=f)
+                    self.state.config = GPGConfig(contributor_type="github", contributor_id=ContributorId(identity), fpr=f)
                 else:
-                    state.config = GPGConfig(contributor_type="gpg", contributor_id=ContributorId(f), fpr=f)
+                    self.state.config = GPGConfig(contributor_type="gpg", contributor_id=ContributorId(f), fpr=f)
 
-        state.save()
+        self.state.save()
 
         summary = self.query_one("#done-summary", Label)
         match key:
@@ -617,55 +764,38 @@ Expire-Date: 0
                 summary.update(f"Signed in as [b]{label}[/]")
 
         self.query_one(ContentSwitcher).current = "step-done"
-        self.verify_server_config(state)
+        self.verify_server_config()
 
     @work(thread=True)
-    def verify_server_config(self, state: AppState) -> None:
+    def verify_server_config(self) -> None:
         verify_label = self.query_one("#done-verify", Label)
-        self.call_from_thread(verify_label.update, "[dim]Verifying with dashboard...[/]")
+        self.app.call_from_thread(verify_label.update, "[dim]Verifying with dashboard...[/]")
 
-        assert state.config is not None
+        assert self.state.config is not None
         from cc_sentiment.upload import Uploader
-        if Uploader.verify_config(state.config):
-            self.call_from_thread(
+        if Uploader.verify_config(self.state.config):
+            self.app.call_from_thread(
                 verify_label.update,
                 "[green]Verified — the dashboard can confirm your uploads.[/]",
             )
         else:
-            self.call_from_thread(
+            self.app.call_from_thread(
                 verify_label.update,
                 "[yellow]We couldn't verify your setup just yet. This usually means:\n"
                 "  • If you uploaded to keys.openpgp.org — check your email for a verification link\n"
                 "  • If you just added a key to GitHub — it can take a minute to propagate\n"
-                "  • You can run cc-sentiment setup again anytime to retry[/]",
+                "  • You can run cc-sentiment again anytime to retry[/]",
             )
 
     @on(Button.Pressed, "#done-btn")
     def on_done(self) -> None:
-        self.exit()
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
 
 
-class ScoreBar(Static):
-    DEFAULT_CSS = """
-    ScoreBar { height: 1; }
-    """
-
-    def __init__(self, score: int) -> None:
-        super().__init__()
-        self.score = score
-
-    def render_bar(self, count: int, total: int, max_count: int) -> str:
-        pct = 100 * count / total if total else 0
-        bar_width = 40
-        bar_len = int(bar_width * count / max_count) if max_count else 0
-        color = SCORE_COLORS[self.score]
-        icon = SCORE_ICONS[self.score]
-        label = SCORE_LABELS[self.score]
-        bar = "━" * bar_len + "╺" + "─" * (bar_width - bar_len)
-        return f" {icon} {self.score} [{color}]{label:>11}[/]  [{color}]{bar}[/]  {pct:4.1f}%  ({count})"
-
-
-class ScanApp(App[None]):
+class CCSentimentApp(App[None]):
     CSS = """
     Screen { layout: vertical; background: $surface; }
     #main { height: 1fr; padding: 1 2; }
@@ -690,40 +820,33 @@ class ScanApp(App[None]):
     #cached-line { height: 1; color: $text-muted; }
     """
 
-    BINDINGS = [("q", "quit", "Quit"), ("escape", "quit", "Quit")]
+    BINDINGS = [
+        ("q", "quit", "Quit"),
+        ("escape", "quit", "Quit"),
+        ("r", "rescan", "Rescan"),
+    ]
 
     scored: reactive[int] = reactive(0)
     total: reactive[int] = reactive(0)
-    records: reactive[list] = reactive(list, init=False)
-    uploaded: reactive[int] = reactive(0)
     status_text: reactive[str] = reactive("Initializing...")
-    cached_buckets: reactive[int] = reactive(0)
 
-    def __init__(
-        self,
-        state: AppState,
-        engine: str,
-        model_repo: str | None,
-        limit: int | None,
-        do_upload: bool,
-    ) -> None:
+    def __init__(self, state: AppState, model_repo: str | None = None) -> None:
         super().__init__()
         self.state = state
-        self.engine = engine
         self.model_repo = model_repo
-        self.limit = limit
-        self.do_upload = do_upload
-        self.records = []
-        self._start_time = 0.0
+        self.records: list[SentimentRecord] = []
         self._score_history: list[float] = []
         self._score_bars: dict[int, ScoreBar] = {}
+        self._start_time = 0.0
+        self._rescan_armed = False
+        self._rescan_pending = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         with Vertical(id="main"):
             with Vertical(id="header-section"):
                 with Horizontal(id="title-row"):
-                    yield Static("[b]cc-sentiment[/b] scan", id="title-text")
+                    yield Static("[b]cc-sentiment[/b]", id="title-text")
                     yield Digits("-.--", id="score-digits")
 
             with Vertical(id="progress-section"):
@@ -767,78 +890,128 @@ class ScanApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        import time
         self.title = "cc-sentiment"
-        self.sub_title = "scan & upload"
         self._start_time = time.monotonic()
-        self.run_scan()
+        self._seed_from_state()
+        self.run_flow()
+
+    def _seed_from_state(self) -> None:
+        existing = [r for s in self.state.sessions.values() for r in s.records]
+        if not existing:
+            return
+        self.records = list(existing)
+        self._score_history = [float(r.sentiment_score) for r in existing]
+        self._render_scores()
 
     @work()
-    async def run_scan(self) -> None:
-        import time
-
-        import anyio
-
+    async def run_flow(self) -> None:
         from cc_sentiment.pipeline import Pipeline
         from cc_sentiment.upload import Uploader
 
-        self._update_status("[dim]Discovering transcripts...[/]")
-
-        new_transcripts = await anyio.to_thread.run_sync(Pipeline.discover_new_transcripts, self.state)
-        if self.limit is not None:
-            new_transcripts = new_transcripts[:self.limit]
-
-        if not new_transcripts:
-            self._update_status("[yellow]No new transcripts found. All up to date.[/]")
+        try:
+            engine = resolve_engine(None)
+        except RuntimeError as e:
+            await self.push_screen_wait(PlatformErrorScreen(str(e)))
+            self.exit()
             return
 
-        total_cached = sum(
-            len(self.state.processed_files[str(p)].scored_buckets)
-            for p, _ in new_transcripts
-            if str(p) in self.state.processed_files
-        )
-        if total_cached:
-            self.cached_buckets = total_cached
-            self.query_one("#cached-line", Static).update(
-                f"[dim]{total_cached} cached buckets will be skipped[/]",
+        self._update_status("[dim]Discovering transcripts...[/]")
+        transcripts = await anyio.to_thread.run_sync(Pipeline.discover_new_transcripts, self.state)
+        pending = Uploader.records_from_state(self.state)
+
+        if (transcripts or pending) and self.state.config is None:
+            ok = await self.push_screen_wait(SetupScreen(self.state))
+            if not ok:
+                self.exit()
+                return
+
+        if engine == "claude" and transcripts:
+            self._update_status("[dim]Counting new buckets for cost estimate...[/]")
+            bucket_count = await anyio.to_thread.run_sync(
+                Pipeline.count_new_buckets, self.state, transcripts
+            )
+            if bucket_count > 0:
+                ok = await self.push_screen_wait(
+                    CostReviewScreen(bucket_count, self.model_repo or HAIKU_MODEL)
+                )
+                if not ok:
+                    self.exit()
+                    return
+
+        if transcripts:
+            self._set_total(len(transcripts))
+            self._update_status(f"[dim]Loading {engine} engine...[/]")
+            await Pipeline.run(
+                self.state, engine, self.model_repo, transcripts, self._add_records,
             )
 
-        self._set_total(len(new_transcripts))
-        self._update_status(f"[dim]Loading {self.engine} engine...[/]")
-
-        all_records = await Pipeline.run(
-            self.state, self.engine, self.model_repo,
-            new_transcripts, self._add_records,
-        )
-
-        if self.do_upload and all_records:
+        pending = Uploader.records_from_state(self.state)
+        if pending:
             self._update_status("[dim]Uploading records...[/]")
             try:
-                uploader = Uploader()
-                pending = Uploader.records_from_state(self.state)
-                await uploader.upload(pending, self.state)
-                self._set_uploaded(len(pending))
-                self._update_status(f"[green bold]Done.[/] {len(pending)} records uploaded to dashboard.")
+                await Uploader().upload(pending, self.state)
             except Exception as e:
                 self._update_status(f"[red bold]Upload failed:[/] {e}")
-        elif self.do_upload and not all_records:
-            pending = Uploader.records_from_state(self.state)
-            if pending:
-                self._update_status("[dim]Uploading pending records...[/]")
-                try:
-                    uploader = Uploader()
-                    await uploader.upload(pending, self.state)
-                    self._set_uploaded(len(pending))
-                    self._update_status(f"[green bold]Done.[/] {len(pending)} pending records uploaded.")
-                except Exception as e:
-                    self._update_status(f"[red bold]Upload failed:[/] {e}")
-            else:
-                self._update_status("[yellow]No new buckets to score. All cached.[/]")
-        elif all_records:
-            elapsed = time.monotonic() - self._start_time
-            self._update_status(f"[green bold]Done.[/] {len(all_records)} records scored in {elapsed:.0f}s.")
+                self._rescan_armed = True
+                return
+
+        self._show_idle()
+        self._rescan_armed = True
+
+    def _show_idle(self) -> None:
+        total_buckets = sum(len(s.records) for s in self.state.sessions.values())
+        total_sessions = len(self.state.sessions)
+        total_files = len(self.state.processed_files)
+        self.query_one("#stat-buckets", Static).update(f"[b]{total_buckets}[/]")
+        self.query_one("#stat-sessions", Static).update(f"[b]{total_sessions}[/]")
+        self.query_one("#stat-files", Static).update(f"[b]{total_files}[/]")
+        if total_sessions == 0:
+            self._update_status("[green]All set — no conversations yet. Come back after using Claude Code.[/]")
         else:
-            self._update_status("[yellow]No new buckets to score.[/]")
+            self._update_status(
+                f"[green]All caught up.[/] "
+                f"{total_sessions} session{'s' if total_sessions != 1 else ''}, "
+                f"{total_buckets} bucket{'s' if total_buckets != 1 else ''} scored. "
+                f"[dim]Press R to rescan.[/]"
+            )
+
+    def action_rescan(self) -> None:
+        if not self._rescan_armed:
+            return
+        if self._rescan_pending:
+            self._rescan_pending = False
+            self._rescan_armed = False
+            self._reset_for_rescan()
+            self.run_flow()
+            return
+        self._rescan_pending = True
+        self._update_status(
+            "[yellow]Press R again within 5s to clear all state and rescan from scratch.[/]"
+        )
+        self.set_timer(RESCAN_CONFIRM_SECONDS, self._cancel_rescan)
+
+    def _cancel_rescan(self) -> None:
+        if self._rescan_pending:
+            self._rescan_pending = False
+            self._show_idle()
+
+    def _reset_for_rescan(self) -> None:
+        self.state.processed_files.clear()
+        self.state.sessions.clear()
+        self.state.save()
+        self.records = []
+        self._score_history = []
+        self.scored = 0
+        self.total = 0
+        self.query_one("#scan-progress", ProgressBar).update(total=100, progress=0)
+        self.query_one("#progress-label", Label).update("Preparing...")
+        self.query_one("#score-digits", Digits).update("-.--")
+        self.query_one("#score-sparkline", Sparkline).data = []
+        for s in range(1, 6):
+            self._score_bars[s].update("")
+        for stat_id in ("#stat-buckets", "#stat-sessions", "#stat-files", "#stat-rate"):
+            self.query_one(stat_id, Static).update("--")
+        self.query_one("#cached-line", Static).update("")
 
     def _set_total(self, total: int) -> None:
         self.total = total
@@ -846,8 +1019,6 @@ class ScanApp(App[None]):
         self.query_one("#progress-label", Label).update(f"[b]0[/]/{total} files")
 
     def _add_records(self, new_records: list[SentimentRecord]) -> None:
-        import time
-
         self.records.extend(new_records)
         self.scored += 1
         self.query_one("#scan-progress", ProgressBar).update(progress=self.scored)
@@ -861,9 +1032,6 @@ class ScanApp(App[None]):
         elapsed = time.monotonic() - self._start_time
         rate = len(self.records) / elapsed if elapsed > 0 else 0
         self.query_one("#stat-rate", Static).update(f"{rate:.1f}")
-
-    def _set_uploaded(self, count: int) -> None:
-        self.uploaded = count
 
     def _update_status(self, text: str) -> None:
         self.status_text = text
@@ -884,10 +1052,8 @@ class ScanApp(App[None]):
 
         avg = mean(scores)
         self.query_one("#score-digits", Digits).update(f"{avg:.2f}")
-
         self.query_one("#score-sparkline", Sparkline).data = self._score_history[-80:]
 
         sessions = len({r.conversation_id for r in self.records})
         self.query_one("#stat-buckets", Static).update(f"[b]{total}[/]")
         self.query_one("#stat-sessions", Static).update(f"[b]{sessions}[/]")
-        self.query_one("#stat-files", Static).update(f"[b]{self.scored}[/]")

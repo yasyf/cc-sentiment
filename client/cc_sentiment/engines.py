@@ -395,6 +395,22 @@ def default_engine() -> str:
             return "claude"
 
 
+PLATFORM_ERROR_MESSAGE = (
+    "Can't run sentiment analysis on this platform.\n"
+    "cc-sentiment needs Apple Silicon for local inference, "
+    "or the `claude` CLI as a fallback.\n\n"
+    "Install Claude Code from https://claude.com/claude-code, "
+    "then run `claude auth login` and try again."
+)
+
+
+def resolve_engine(requested: str | None) -> str:
+    engine = requested or default_engine()
+    if engine != "claude" or claude_cli_available():
+        return engine
+    raise RuntimeError(PLATFORM_ERROR_MESSAGE)
+
+
 class ClaudeCLIEngine:
     def __init__(self, model: str) -> None:
         if not shutil.which("claude"):
