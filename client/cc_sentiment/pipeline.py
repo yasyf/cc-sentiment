@@ -3,10 +3,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+import anyio
+import anyio.to_thread
+
 from cc_sentiment.engines import HAIKU_MODEL, ClaudeCLIEngine, InferenceEngine, OMLXEngine
 from cc_sentiment.models import (
     AppState,
     BucketKey,
+    ConversationBucket,
     ProcessedFile,
     ProcessedSession,
     SentimentRecord,
@@ -48,21 +52,28 @@ class Pipeline:
         )
 
     @staticmethod
+    def _parse_new_buckets(
+        path: Path, scored_buckets: frozenset[BucketKey]
+    ) -> list[ConversationBucket]:
+        messages = TranscriptParser.parse_file(path)
+        if not messages:
+            return []
+        return [
+            b for b in ConversationBucketer.bucket_messages(messages)
+            if BucketKey(session_id=b.session_id, bucket_index=b.bucket_index)
+            not in scored_buckets
+        ]
+
+    @classmethod
     async def process_transcript(
+        cls,
         path: Path,
         classifier: InferenceEngine,
         scored_buckets: frozenset[BucketKey] = frozenset(),
     ) -> list[SentimentRecord]:
-        messages = TranscriptParser.parse_file(path)
-        if not messages:
-            return []
-
-        all_buckets = ConversationBucketer.bucket_messages(messages)
-        new_buckets = [
-            b for b in all_buckets
-            if BucketKey(session_id=b.session_id, bucket_index=b.bucket_index) not in scored_buckets
-        ]
-
+        new_buckets = await anyio.to_thread.run_sync(
+            cls._parse_new_buckets, path, scored_buckets
+        )
         if not new_buckets:
             return []
 
@@ -126,7 +137,7 @@ class Pipeline:
                     else SentimentClassifier()
                 )
             case "omlx":
-                classifier = OMLXEngine(model_repo=model_repo)
+                classifier = await anyio.to_thread.run_sync(OMLXEngine, model_repo)
                 await classifier.warm_system_prompt()
             case "claude":
                 classifier = ClaudeCLIEngine(model=model_repo or HAIKU_MODEL)
@@ -145,7 +156,7 @@ class Pipeline:
                 scored_buckets = existing_file.scored_buckets if existing_file else frozenset()
                 records = await cls.process_transcript(path, classifier, scored_buckets)
                 all_records.extend(records)
-                cls.save_records(state, path, mtime, records)
+                await anyio.to_thread.run_sync(cls.save_records, state, path, mtime, records)
 
                 if on_records and records:
                     on_records(records)

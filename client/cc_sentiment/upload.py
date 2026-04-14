@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import anyio
+import anyio.to_thread
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
@@ -36,14 +36,6 @@ class Uploader:
         self.server_url = server_url
 
     @staticmethod
-    def verify_config(config: SSHConfig | GPGConfig, server_url: str = DEFAULT_SERVER_URL) -> bool:
-        try:
-            anyio.run(Uploader(server_url).verify_credentials, config)
-            return True
-        except Exception:
-            return False
-
-    @staticmethod
     def backend_from_config(config: SSHConfig | GPGConfig) -> SigningBackend:
         match config:
             case SSHConfig(key_path=p):
@@ -63,13 +55,14 @@ class Uploader:
     @_retry
     async def verify_credentials(self, config: SSHConfig | GPGConfig) -> None:
         backend = self.backend_from_config(config)
+        signature = await anyio.to_thread.run_sync(PayloadSigner.sign, TEST_PAYLOAD, backend)
         async with httpx.AsyncClient() as client:
             (await client.post(
                 f"{self.server_url}/verify",
                 json={
                     "contributor_type": config.contributor_type,
                     "contributor_id": config.contributor_id,
-                    "signature": PayloadSigner.sign(TEST_PAYLOAD, backend),
+                    "signature": signature,
                     "test_payload": TEST_PAYLOAD,
                 },
                 timeout=15.0,
@@ -80,10 +73,11 @@ class Uploader:
         assert state.config is not None, "Client not configured. Run 'cc-sentiment setup' first."
 
         backend = self.backend_from_config(state.config)
+        signature = await anyio.to_thread.run_sync(PayloadSigner.sign_records, records, backend)
         payload = UploadPayload(
             contributor_type=state.config.contributor_type,
             contributor_id=state.config.contributor_id,
-            signature=PayloadSigner.sign_records(records, backend),
+            signature=signature,
             records=tuple(records),
         )
 
@@ -97,4 +91,4 @@ class Uploader:
         for session_id in {r.conversation_id for r in records}:
             if session_id in state.sessions:
                 state.sessions[session_id] = state.sessions[session_id].model_copy(update={"uploaded": True})
-        state.save()
+        await anyio.to_thread.run_sync(state.save)

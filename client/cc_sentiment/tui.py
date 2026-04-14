@@ -38,6 +38,7 @@ from cc_sentiment.engines import (
     HAIKU_INPUT_USD_PER_MTOK,
     HAIKU_MODEL,
     HAIKU_OUTPUT_USD_PER_MTOK,
+    default_engine,
     estimate_claude_cost_usd,
     resolve_engine,
 )
@@ -79,41 +80,43 @@ def detect_git_username() -> str | None:
     return None
 
 
-def _try_config(state: AppState, config: SSHConfig | GPGConfig) -> bool:
+async def _try_config(state: AppState, config: SSHConfig | GPGConfig) -> bool:
     from cc_sentiment.upload import Uploader
-    if not Uploader.verify_config(config):
+    try:
+        await Uploader().verify_credentials(config)
+    except httpx.HTTPError:
         return False
     state.config = config
-    state.save()
+    await anyio.to_thread.run_sync(state.save)
     return True
 
 
-def auto_setup_silent(state: AppState) -> bool:
-    username = detect_git_username()
+async def auto_setup_silent(state: AppState) -> bool:
+    username = await anyio.to_thread.run_sync(detect_git_username)
 
     if username:
-        if backend := KeyDiscovery.match_ssh_key(username):
-            if _try_config(
+        if backend := await anyio.to_thread.run_sync(KeyDiscovery.match_ssh_key, username):
+            if await _try_config(
                 state,
                 SSHConfig(contributor_id=ContributorId(username), key_path=backend.private_key_path),
             ):
                 return True
-        if backend := KeyDiscovery.match_gpg_key(username):
-            if _try_config(
+        if backend := await anyio.to_thread.run_sync(KeyDiscovery.match_gpg_key, username):
+            if await _try_config(
                 state,
                 GPGConfig(contributor_type="github", contributor_id=ContributorId(username), fpr=backend.fpr),
             ):
                 return True
 
-    for info in KeyDiscovery.find_gpg_keys():
-        if not KeyDiscovery.fetch_openpgp_key(info.fpr):
+    for info in await anyio.to_thread.run_sync(KeyDiscovery.find_gpg_keys):
+        if not await anyio.to_thread.run_sync(KeyDiscovery.fetch_openpgp_key, info.fpr):
             continue
         config = (
             GPGConfig(contributor_type="github", contributor_id=ContributorId(username), fpr=info.fpr)
             if username
             else GPGConfig(contributor_type="gpg", contributor_id=ContributorId(info.fpr), fpr=info.fpr)
         )
-        if _try_config(state, config):
+        if await _try_config(state, config):
             return True
 
     return False
@@ -332,13 +335,35 @@ class SetupScreen(Screen[bool]):
             yield Label("You're all set", classes="step-title")
             yield Label("", id="done-summary", classes="success")
             yield Label("", id="done-verify", classes="status")
-            yield Label(
-                "[dim]Here's what gets sent to the dashboard: just a 1-5 score and "
-                "a timestamp for each conversation. All your actual conversation "
-                "text and code stays on your machine — nothing leaves.[/]",
-                classes="faq",
-            )
-            yield Button("Start scanning", id="done-btn", variant="primary")
+            yield Static("", id="done-identify", classes="faq")
+            yield Static("", id="done-process", classes="faq")
+            yield Static("", id="done-payload", classes="faq")
+            yield Button("Contribute my stats", id="done-btn", variant="primary")
+
+    def _populate_done_info(self) -> None:
+        self.query_one("#done-identify", Static).update(
+            "[b]How we know it's you:[/] each upload is signed locally with "
+            "your private key. The dashboard checks the signature against "
+            "your public key — no account, no password, no permissions."
+        )
+        process = self.query_one("#done-process", Static)
+        match default_engine():
+            case "omlx":
+                process.update(
+                    "[b]Where scoring happens:[/] entirely on your Mac. A "
+                    "small Gemma model runs on your Apple Silicon GPU; your "
+                    "conversation text never leaves the machine."
+                )
+            case "claude":
+                process.update(
+                    "[b]Where scoring happens:[/] on your machine via the "
+                    "`claude` CLI (no Apple Silicon here for local inference). "
+                    "Transcripts go to the Claude API, never to our dashboard."
+                )
+        self.query_one("#done-payload", Static).update(
+            "[b]What we receive:[/] just a 1–5 score, a timestamp, and the "
+            "Claude Code version for each conversation. Nothing else."
+        )
 
     def on_mount(self) -> None:
         table = self.query_one("#key-table", DataTable)
@@ -347,13 +372,13 @@ class SetupScreen(Screen[bool]):
         self.query_one("#key-select", RadioSet).display = False
         self.try_auto_setup()
 
-    @work(thread=True)
-    def try_auto_setup(self) -> None:
-        if auto_setup_silent(self.state):
-            self.app.call_from_thread(self._on_auto_setup_success)
+    @work()
+    async def try_auto_setup(self) -> None:
+        if await auto_setup_silent(self.state):
+            self._on_auto_setup_success()
             return
-        username = detect_git_username()
-        self.app.call_from_thread(self._on_auto_setup_fail, username)
+        username = await anyio.to_thread.run_sync(detect_git_username)
+        self._on_auto_setup_fail(username)
 
     def _on_auto_setup_success(self) -> None:
         config = self.state.config
@@ -367,6 +392,7 @@ class SetupScreen(Screen[bool]):
         self.query_one("#done-verify", Label).update(
             "[green]Verified — the dashboard can confirm your uploads.[/]"
         )
+        self._populate_done_info()
         self.query_one(ContentSwitcher).current = "step-done"
 
     def _on_auto_setup_fail(self, username: str | None) -> None:
@@ -600,14 +626,14 @@ Expire-Date: 0
         self.query_one(ContentSwitcher).current = "step-discovery"
 
     @on(Button.Pressed, "#remote-next")
-    def on_remote_next(self) -> None:
+    async def on_remote_next(self) -> None:
         if getattr(self, "_key_on_remote", False):
             self._save_and_finish()
         else:
             self.query_one(ContentSwitcher).current = "step-upload"
-            self._populate_upload_options()
+            await self._populate_upload_options()
 
-    def _populate_upload_options(self) -> None:
+    async def _populate_upload_options(self) -> None:
         radio = self.query_one("#upload-options", RadioSet)
         has_gh = shutil.which("gh") is not None
         key = self.selected_key
@@ -648,9 +674,9 @@ Expire-Date: 0
         pub_text = ""
         match key:
             case SSHKeyInfo(path=p):
-                pub_text = SSHBackend(private_key_path=p).public_key_text()
+                pub_text = await anyio.to_thread.run_sync(SSHBackend(private_key_path=p).public_key_text)
             case GPGKeyInfo(fpr=f):
-                pub_text = GPGBackend(fpr=f).public_key_text()
+                pub_text = await anyio.to_thread.run_sync(GPGBackend(fpr=f).public_key_text)
 
         self.query_one("#upload-key-text", Label).update(
             f"[dim]{pub_text[:200]}...[/]" if len(pub_text) > 200 else f"[dim]{pub_text}[/]"
@@ -753,8 +779,6 @@ Expire-Date: 0
                 else:
                     self.state.config = GPGConfig(contributor_type="gpg", contributor_id=ContributorId(f), fpr=f)
 
-        self.state.save()
-
         summary = self.query_one("#done-summary", Label)
         match key:
             case SSHKeyInfo(path=p):
@@ -763,28 +787,30 @@ Expire-Date: 0
                 label = identity or f"GPG {f[-8:]}"
                 summary.update(f"Signed in as [b]{label}[/]")
 
+        self._populate_done_info()
         self.query_one(ContentSwitcher).current = "step-done"
         self.verify_server_config()
 
-    @work(thread=True)
-    def verify_server_config(self) -> None:
+    @work()
+    async def verify_server_config(self) -> None:
+        from cc_sentiment.upload import Uploader
+        await anyio.to_thread.run_sync(self.state.save)
         verify_label = self.query_one("#done-verify", Label)
-        self.app.call_from_thread(verify_label.update, "[dim]Verifying with dashboard...[/]")
+        verify_label.update("[dim]Verifying with dashboard...[/]")
 
         assert self.state.config is not None
-        from cc_sentiment.upload import Uploader
-        if Uploader.verify_config(self.state.config):
-            self.app.call_from_thread(
-                verify_label.update,
-                "[green]Verified — the dashboard can confirm your uploads.[/]",
-            )
-        else:
-            self.app.call_from_thread(
-                verify_label.update,
+        try:
+            await Uploader().verify_credentials(self.state.config)
+        except httpx.HTTPError:
+            verify_label.update(
                 "[yellow]We couldn't verify your setup just yet. This usually means:\n"
                 "  • If you uploaded to keys.openpgp.org — check your email for a verification link\n"
                 "  • If you just added a key to GitHub — it can take a minute to propagate\n"
                 "  • You can run cc-sentiment again anytime to retry[/]",
+            )
+        else:
+            verify_label.update(
+                "[green]Verified — the dashboard can confirm your uploads.[/]",
             )
 
     @on(Button.Pressed, "#done-btn")
@@ -909,7 +935,7 @@ class CCSentimentApp(App[None]):
         from cc_sentiment.upload import Uploader
 
         try:
-            engine = resolve_engine(None)
+            engine = await anyio.to_thread.run_sync(resolve_engine, None)
         except RuntimeError as e:
             await self.push_screen_wait(PlatformErrorScreen(str(e)))
             self.exit()

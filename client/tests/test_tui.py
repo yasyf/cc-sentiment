@@ -33,8 +33,9 @@ class SetupHarness(App[None]):
 
 @pytest.fixture
 def no_auto_setup():
-    with patch("cc_sentiment.tui.auto_setup_silent", return_value=False), \
-         patch("cc_sentiment.tui.detect_git_username", return_value=None):
+    with patch("cc_sentiment.tui.auto_setup_silent", new_callable=AsyncMock, return_value=False), \
+         patch("cc_sentiment.tui.detect_git_username", return_value=None), \
+         patch("cc_sentiment.upload.Uploader.verify_credentials", new_callable=AsyncMock):
         yield
 
 
@@ -227,7 +228,7 @@ async def test_setup_upload_options_with_gh(no_auto_setup):
             screen.selected_key = ssh_key
             screen._discovered_keys = [ssh_key]
             screen.query_one(ContentSwitcher).current = "step-upload"
-            screen._populate_upload_options()
+            await screen._populate_upload_options()
             await pilot.pause()
 
             assert "github-ssh" in screen._upload_actions
@@ -246,7 +247,7 @@ async def test_setup_upload_options_gpg_shows_openpgp(no_auto_setup):
             screen.selected_key = gpg_key
             screen._discovered_keys = [gpg_key]
             screen.query_one(ContentSwitcher).current = "step-upload"
-            screen._populate_upload_options()
+            await screen._populate_upload_options()
             await pilot.pause()
 
             assert "github-gpg" in screen._upload_actions

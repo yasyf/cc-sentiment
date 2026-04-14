@@ -145,6 +145,10 @@ class ConversationBucketer:
                 grouped[idx].append(msg)
 
             for idx, bucket_msgs in sorted(grouped.items()):
+                if not any(isinstance(m, UserMessage) for m in bucket_msgs):
+                    continue
+                if not any(isinstance(m, AssistantMessage) for m in bucket_msgs):
+                    continue
                 bucket_start = session_start + timedelta(minutes=BUCKET_MINUTES * idx)
                 buckets.append(
                     ConversationBucket(
