@@ -42,7 +42,6 @@ def _make_message(role: str, content: str, i: int) -> TranscriptMessage:
                 uuid=f"uuid-{i}",
                 tool_names=(),
                 thinking_chars=0,
-                cc_version="",
                 claude_model="claude-sonnet-4-20250514",
             )
         case _:

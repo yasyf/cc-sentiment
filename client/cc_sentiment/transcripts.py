@@ -67,7 +67,7 @@ class TranscriptParser:
                     uuid=data["uuid"],
                     tool_names=(),
                     thinking_chars=0,
-                    cc_version=data.get("version", ""),
+                    cc_version=data["version"],
                 )
             case "assistant":
                 blocks = data["message"]["content"]
@@ -101,7 +101,6 @@ class TranscriptParser:
                     uuid=data["uuid"],
                     tool_names=tool_names,
                     thinking_chars=thinking_chars,
-                    cc_version="",
                     claude_model=data["message"]["model"],
                 )
             case _:
@@ -146,8 +145,6 @@ class ConversationBucketer:
                 grouped[idx].append(msg)
 
             for idx, bucket_msgs in sorted(grouped.items()):
-                if not any(isinstance(m, AssistantMessage) for m in bucket_msgs):
-                    continue
                 bucket_start = session_start + timedelta(minutes=BUCKET_MINUTES * idx)
                 buckets.append(
                     ConversationBucket(

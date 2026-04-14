@@ -14,6 +14,7 @@ from cc_sentiment.models import (
 )
 
 LABELED_CLAUDE_MODEL = "claude-sonnet-4-20250514"
+LABELED_CC_VERSION = "labeled-v1"
 
 
 class LabeledBucket(NamedTuple):
@@ -31,7 +32,7 @@ def _message(session_id: SessionId, uuid: str, ts: datetime, role: str, content:
                 uuid=uuid,
                 tool_names=(),
                 thinking_chars=0,
-                cc_version="",
+                cc_version=LABELED_CC_VERSION,
             )
         case "assistant":
             return AssistantMessage(
@@ -41,7 +42,6 @@ def _message(session_id: SessionId, uuid: str, ts: datetime, role: str, content:
                 uuid=uuid,
                 tool_names=(),
                 thinking_chars=0,
-                cc_version="",
                 claude_model=LABELED_CLAUDE_MODEL,
             )
         case _:

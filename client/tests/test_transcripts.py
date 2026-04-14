@@ -3,7 +3,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from cc_sentiment.models import SessionId
+import pytest
+
+from cc_sentiment.models import (
+    AssistantMessage,
+    BucketMetrics,
+    SessionId,
+    UserMessage,
+)
 from cc_sentiment.transcripts import (
     ASSISTANT_TRUNCATION,
     ConversationBucketer,
@@ -33,7 +40,7 @@ class TestTranscriptParser:
     def test_parses_assistant_text_blocks(self) -> None:
         messages = TranscriptParser.parse_file(FIXTURE_PATH)
         assistant_msgs = [m for m in messages if m.role == "assistant"]
-        assert len(assistant_msgs) == 3
+        assert len(assistant_msgs) == 5
         assert "thinking" not in assistant_msgs[0].content.lower()
         assert "I'll fix the login bug" in assistant_msgs[0].content
 
@@ -51,7 +58,7 @@ class TestTranscriptParser:
     def test_preserves_timestamps(self) -> None:
         messages = TranscriptParser.parse_file(FIXTURE_PATH)
         assert messages[0].timestamp == datetime(
-            2026, 4, 10, 7, 39, 20, tzinfo=timezone.utc
+            2026, 4, 10, 7, 36, 0, tzinfo=timezone.utc
         )
 
     def test_truncates_long_assistant_messages(self) -> None:
@@ -85,12 +92,6 @@ class TestConversationBucketer:
             assert bucket.bucket_start.microsecond == 0
             assert bucket.bucket_start.minute % 5 == 0
 
-    def test_drops_user_only_buckets(self) -> None:
-        messages = TranscriptParser.parse_file(FIXTURE_PATH)
-        buckets = ConversationBucketer.bucket_messages(messages)
-        for bucket in buckets:
-            assert any(m.role == "assistant" for m in bucket.messages)
-
     def test_messages_in_correct_buckets(self) -> None:
         messages = TranscriptParser.parse_file(FIXTURE_PATH)
         buckets = ConversationBucketer.bucket_messages(messages)
@@ -107,3 +108,48 @@ class TestConversationBucketer:
             b for b in buckets if b.session_id == SessionId("session-bbb")
         ]
         assert len(session_bbb_buckets) == 1
+
+
+class TestBucketMetrics:
+    @staticmethod
+    def _user(cc_version: str = "2.1.92") -> UserMessage:
+        return UserMessage(
+            content="hi",
+            timestamp=datetime(2026, 4, 10, 7, 36, 0, tzinfo=timezone.utc),
+            session_id=SessionId("s"),
+            uuid="u",
+            tool_names=(),
+            thinking_chars=0,
+            cc_version=cc_version,
+        )
+
+    @staticmethod
+    def _assistant(claude_model: str = "claude-sonnet-4-20250514") -> AssistantMessage:
+        return AssistantMessage(
+            content="ok",
+            timestamp=datetime(2026, 4, 10, 7, 36, 30, tzinfo=timezone.utc),
+            session_id=SessionId("s"),
+            uuid="a",
+            tool_names=(),
+            thinking_chars=0,
+            claude_model=claude_model,
+        )
+
+    def test_requires_assistant(self) -> None:
+        with pytest.raises(ValueError, match="both user and assistant"):
+            BucketMetrics.from_messages((self._user(),))
+
+    def test_requires_user(self) -> None:
+        with pytest.raises(ValueError, match="both user and assistant"):
+            BucketMetrics.from_messages((self._assistant(),))
+
+    def test_carries_last_user_cc_version_and_last_assistant_model(self) -> None:
+        metrics = BucketMetrics.from_messages((
+            self._user(cc_version="2.1.0"),
+            self._assistant(claude_model="claude-opus-4-6"),
+            self._user(cc_version="2.1.92"),
+            self._assistant(claude_model="claude-sonnet-4-20250514"),
+        ))
+        assert metrics.cc_version == "2.1.92"
+        assert metrics.claude_model == "claude-sonnet-4-20250514"
+        assert metrics.turn_count == 2

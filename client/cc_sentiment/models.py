@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal, NewType
@@ -25,11 +26,11 @@ class BaseMessage(BaseModel, frozen=True):
     uuid: str
     tool_names: tuple[str, ...]
     thinking_chars: int
-    cc_version: str
 
 
 class UserMessage(BaseMessage, frozen=True):
     role: Literal["user"] = "user"
+    cc_version: str
 
 
 class AssistantMessage(BaseMessage, frozen=True):
@@ -54,43 +55,24 @@ class BucketMetrics(BaseModel, frozen=True):
 
     @staticmethod
     def from_messages(messages: tuple[TranscriptMessage, ...]) -> BucketMetrics:
-        tool_counts: dict[str, int] = {}
-        total_thinking_chars = 0
-        thinking_present = False
-        turn_count = 0
-        cc_version = ""
-        claude_model: str | None = None
+        users = tuple(m for m in messages if isinstance(m, UserMessage))
+        assistants = tuple(m for m in messages if isinstance(m, AssistantMessage))
+        if not users or not assistants:
+            raise ValueError("bucket must have both user and assistant messages")
 
-        for msg in messages:
-            match msg:
-                case UserMessage():
-                    turn_count += 1
-                    if msg.cc_version:
-                        cc_version = msg.cc_version
-                case AssistantMessage():
-                    claude_model = msg.claude_model
-            for name in msg.tool_names:
-                tool_counts[name] = tool_counts.get(name, 0) + 1
-            if msg.thinking_chars > 0:
-                thinking_present = True
-                total_thinking_chars += msg.thinking_chars
-
-        assert claude_model is not None, (
-            "bucket has no assistant message — cannot be scored"
-        )
-
-        read_ops = sum(tool_counts.get(t, 0) for t in ("Read", "Grep", "Glob"))
-        write_ops = sum(tool_counts.get(t, 0) for t in ("Edit", "Write"))
-        read_edit_ratio = read_ops / write_ops if write_ops > 0 else None
+        tool_counts = Counter(name for m in messages for name in m.tool_names)
+        read_ops = sum(tool_counts[t] for t in ("Read", "Grep", "Glob"))
+        write_ops = sum(tool_counts[t] for t in ("Edit", "Write"))
+        thinking = sum(m.thinking_chars for m in messages)
 
         return BucketMetrics(
-            tool_counts=tool_counts,
-            read_edit_ratio=read_edit_ratio,
-            turn_count=turn_count,
-            thinking_present=thinking_present,
-            thinking_chars=total_thinking_chars,
-            cc_version=cc_version,
-            claude_model=claude_model,
+            tool_counts=dict(tool_counts),
+            read_edit_ratio=read_ops / write_ops if write_ops else None,
+            turn_count=len(users),
+            thinking_present=thinking > 0,
+            thinking_chars=thinking,
+            cc_version=users[-1].cc_version,
+            claude_model=assistants[-1].claude_model,
         )
 
 
