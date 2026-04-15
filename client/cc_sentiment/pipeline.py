@@ -10,6 +10,7 @@ from cc_sentiment.engines import HAIKU_MODEL, ClaudeCLIEngine, InferenceEngine, 
 from cc_sentiment.models import (
     AppState,
     BucketKey,
+    BucketMetrics,
     ConversationBucket,
     ProcessedFile,
     ProcessedSession,
@@ -52,17 +53,42 @@ class Pipeline:
         )
 
     @staticmethod
-    def _parse_new_buckets(
+    def _parse_buckets_with_metrics(
         path: Path, scored_buckets: frozenset[BucketKey]
-    ) -> list[ConversationBucket]:
+    ) -> tuple[list[ConversationBucket], dict[BucketKey, BucketMetrics]]:
         messages = TranscriptParser.parse_file(path)
         if not messages:
-            return []
-        return [
-            b for b in ConversationBucketer.bucket_messages(messages)
+            return [], {}
+        all_buckets = ConversationBucketer.bucket_messages(messages)
+
+        by_session: dict[SessionId, list[ConversationBucket]] = {}
+        for b in all_buckets:
+            by_session.setdefault(b.session_id, []).append(b)
+
+        metrics_by_key: dict[BucketKey, BucketMetrics] = {}
+        for session_buckets in by_session.values():
+            session_buckets.sort(key=lambda b: b.bucket_index)
+            reads_so_far: set[str] = set()
+            for bucket in session_buckets:
+                metrics = BucketMetrics.from_messages_with_history(
+                    bucket.messages, frozenset(reads_so_far)
+                )
+                metrics_by_key[
+                    BucketKey(session_id=bucket.session_id, bucket_index=bucket.bucket_index)
+                ] = metrics
+                reads_so_far.update(
+                    c.file_path
+                    for m in bucket.messages
+                    for c in m.tool_calls
+                    if c.name == "Read" and c.file_path
+                )
+
+        new_buckets = [
+            b for b in all_buckets
             if BucketKey(session_id=b.session_id, bucket_index=b.bucket_index)
             not in scored_buckets
         ]
+        return new_buckets, metrics_by_key
 
     @classmethod
     async def process_transcript(
@@ -71,8 +97,8 @@ class Pipeline:
         classifier: InferenceEngine,
         scored_buckets: frozenset[BucketKey] = frozenset(),
     ) -> list[SentimentRecord]:
-        new_buckets = await anyio.to_thread.run_sync(
-            cls._parse_new_buckets, path, scored_buckets
+        new_buckets, metrics_by_key = await anyio.to_thread.run_sync(
+            cls._parse_buckets_with_metrics, path, scored_buckets
         )
         if not new_buckets:
             return []
@@ -85,7 +111,15 @@ class Pipeline:
                 conversation_id=bucket.session_id,
                 bucket_index=bucket.bucket_index,
                 sentiment_score=score,
-                read_edit_ratio=(m := bucket.metrics).read_edit_ratio,
+                read_edit_ratio=(
+                    m := metrics_by_key[
+                        BucketKey(session_id=bucket.session_id, bucket_index=bucket.bucket_index)
+                    ]
+                ).read_edit_ratio,
+                edits_without_prior_read_ratio=m.edits_without_prior_read_ratio,
+                write_edit_ratio=m.write_edit_ratio,
+                tool_calls_per_turn=m.tool_calls_per_turn,
+                subagent_count=m.subagent_count,
                 turn_count=m.turn_count,
                 thinking_present=m.thinking_present,
                 thinking_chars=m.thinking_chars,

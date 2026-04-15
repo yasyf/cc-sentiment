@@ -20,6 +20,10 @@ VALID_RECORD: dict = {
     "claude_model": "claude-sonnet-4-20250514",
     "client_version": "0.1.0",
     "read_edit_ratio": None,
+    "edits_without_prior_read_ratio": None,
+    "write_edit_ratio": None,
+    "tool_calls_per_turn": 0.0,
+    "subagent_count": 0,
     "turn_count": 1,
     "thinking_present": False,
     "thinking_chars": 0,
@@ -254,7 +258,9 @@ class TestData:
             time=now, conversation_id="c1", bucket_index=0,
             sentiment_score=3, prompt_version="v1",
             claude_model="claude-sonnet-4-20250514", client_version="0.1.0",
-            read_edit_ratio=None, turn_count=1,
+            read_edit_ratio=None, edits_without_prior_read_ratio=None,
+            write_edit_ratio=None, tool_calls_per_turn=0.0, subagent_count=0,
+            turn_count=1,
             thinking_present=False, thinking_chars=0, cc_version="2.1.92",
         )]
         await db.ingest(records, "octocat", "github")
@@ -266,7 +272,9 @@ class TestData:
             time=now, conversation_id="c2", bucket_index=0,
             sentiment_score=4, prompt_version="v1",
             claude_model="claude-sonnet-4-20250514", client_version="0.1.0",
-            read_edit_ratio=None, turn_count=1,
+            read_edit_ratio=None, edits_without_prior_read_ratio=None,
+            write_edit_ratio=None, tool_calls_per_turn=0.0, subagent_count=0,
+            turn_count=1,
             thinking_present=False, thinking_chars=0, cc_version="2.1.92",
         )], "octocat", "github")
 

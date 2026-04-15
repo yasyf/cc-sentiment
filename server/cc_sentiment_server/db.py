@@ -29,6 +29,10 @@ CREATE TABLE IF NOT EXISTS sentiment (
     claude_model TEXT NOT NULL,
     client_version TEXT NOT NULL,
     read_edit_ratio FLOAT,
+    edits_without_prior_read_ratio FLOAT,
+    write_edit_ratio FLOAT,
+    tool_calls_per_turn FLOAT NOT NULL,
+    subagent_count SMALLINT NOT NULL,
     turn_count SMALLINT NOT NULL,
     thinking_present BOOLEAN NOT NULL,
     thinking_chars INT NOT NULL,
@@ -61,7 +65,9 @@ WITH (timescaledb.continuous) AS
 SELECT time_bucket('1 hour', time) AS bucket,
        AVG(sentiment_score)::float AS avg_score,
        COUNT(*)::int AS count,
-       AVG(read_edit_ratio)::float AS avg_read_edit_ratio
+       AVG(read_edit_ratio)::float AS avg_read_edit_ratio,
+       AVG(edits_without_prior_read_ratio)::float AS avg_edits_without_prior_read_ratio,
+       AVG(tool_calls_per_turn)::float AS avg_tool_calls_per_turn
 FROM sentiment
 GROUP BY bucket
 WITH NO DATA
@@ -102,15 +108,20 @@ SEED_STATEMENTS = [
 INGEST_SQL = """
 INSERT INTO sentiment (time, conversation_id, bucket_index, contributor_type, contributor_id,
                        sentiment_score, prompt_version, claude_model, client_version,
-                       read_edit_ratio, turn_count, thinking_present, thinking_chars, cc_version)
+                       read_edit_ratio, edits_without_prior_read_ratio, write_edit_ratio,
+                       tool_calls_per_turn, subagent_count,
+                       turn_count, thinking_present, thinking_chars, cc_version)
 VALUES (%(time)s, %(conversation_id)s, %(bucket_index)s, %(contributor_type)s, %(contributor_id)s,
         %(sentiment_score)s, %(prompt_version)s, %(claude_model)s, %(client_version)s,
-        %(read_edit_ratio)s, %(turn_count)s, %(thinking_present)s, %(thinking_chars)s, %(cc_version)s)
+        %(read_edit_ratio)s, %(edits_without_prior_read_ratio)s, %(write_edit_ratio)s,
+        %(tool_calls_per_turn)s, %(subagent_count)s,
+        %(turn_count)s, %(thinking_present)s, %(thinking_chars)s, %(cc_version)s)
 ON CONFLICT DO NOTHING
 """
 
 TIMELINE_SQL = """
-SELECT bucket AS time, avg_score, count, avg_read_edit_ratio
+SELECT bucket AS time, avg_score, count, avg_read_edit_ratio,
+       avg_edits_without_prior_read_ratio, avg_tool_calls_per_turn
 FROM sentiment_hourly
 WHERE bucket > NOW() - make_interval(days => %(days)s)
 ORDER BY bucket
@@ -172,18 +183,24 @@ WHERE time BETWEEN NOW() - make_interval(days => %(days_double)s)
 
 MODEL_BREAKDOWN_SQL = """
 SELECT claude_model, AVG(sentiment_score)::float AS avg_score,
-       COUNT(*)::int AS count, AVG(read_edit_ratio)::float AS avg_read_edit_ratio
+       COUNT(*)::int AS count,
+       AVG(read_edit_ratio)::float AS avg_read_edit_ratio,
+       AVG(write_edit_ratio)::float AS avg_write_edit_ratio,
+       AVG(subagent_count)::float AS avg_subagent_count
 FROM sentiment
 WHERE time > NOW() - make_interval(days => %(days)s)
 GROUP BY claude_model
 ORDER BY count DESC
 """
 
-AVG_READ_EDIT_SQL = """
-SELECT AVG(read_edit_ratio)::float
+SUMMARY_AVERAGES_SQL = """
+SELECT AVG(read_edit_ratio)::float AS avg_read_edit_ratio,
+       AVG(edits_without_prior_read_ratio)::float AS avg_edits_without_prior_read_ratio,
+       AVG(tool_calls_per_turn)::float AS avg_tool_calls_per_turn,
+       AVG(write_edit_ratio)::float AS avg_write_edit_ratio,
+       AVG(subagent_count)::float AS avg_subagent_count
 FROM sentiment
 WHERE time > NOW() - make_interval(days => %(days)s)
-  AND read_edit_ratio IS NOT NULL
 """
 
 
@@ -219,6 +236,10 @@ class Database:
                             "claude_model": r.claude_model,
                             "client_version": r.client_version,
                             "read_edit_ratio": r.read_edit_ratio,
+                            "edits_without_prior_read_ratio": r.edits_without_prior_read_ratio,
+                            "write_edit_ratio": r.write_edit_ratio,
+                            "tool_calls_per_turn": r.tool_calls_per_turn,
+                            "subagent_count": r.subagent_count,
                             "turn_count": r.turn_count,
                             "thinking_present": r.thinking_present,
                             "thinking_chars": r.thinking_chars,
@@ -231,7 +252,14 @@ class Database:
     async def query_all(self, days: int = 7) -> DataResponse:
         async with self.pool.connection() as conn:
             timeline = [
-                TimelinePoint(time=row[0], avg_score=row[1], count=row[2], avg_read_edit_ratio=row[3])
+                TimelinePoint(
+                    time=row[0],
+                    avg_score=row[1],
+                    count=row[2],
+                    avg_read_edit_ratio=row[3],
+                    avg_edits_without_prior_read_ratio=row[4],
+                    avg_tool_calls_per_turn=row[5],
+                )
                 for row in await (await conn.execute(TIMELINE_SQL, {"days": days})).fetchall()
             ]
             hourly = [
@@ -256,11 +284,18 @@ class Database:
 
             model_rows = await (await conn.execute(MODEL_BREAKDOWN_SQL, {"days": days})).fetchall()
             model_breakdown = [
-                ModelBreakdown(claude_model=row[0], avg_score=row[1], count=row[2], avg_read_edit_ratio=row[3])
+                ModelBreakdown(
+                    claude_model=row[0],
+                    avg_score=row[1],
+                    count=row[2],
+                    avg_read_edit_ratio=row[3],
+                    avg_write_edit_ratio=row[4],
+                    avg_subagent_count=row[5],
+                )
                 for row in model_rows
             ]
 
-            avg_re = (await (await conn.execute(AVG_READ_EDIT_SQL, {"days": days})).fetchone())[0]
+            summary = await (await conn.execute(SUMMARY_AVERAGES_SQL, {"days": days})).fetchone()
 
         trend = TrendComparison(
             sentiment_current=trend_current[0] or 0.0,
@@ -282,5 +317,9 @@ class Database:
             last_updated=last_updated or datetime.now(timezone.utc),
             trend=trend,
             model_breakdown=model_breakdown,
-            avg_read_edit_ratio=avg_re,
+            avg_read_edit_ratio=summary[0],
+            avg_edits_without_prior_read_ratio=summary[1],
+            avg_tool_calls_per_turn=summary[2],
+            avg_write_edit_ratio=summary[3],
+            avg_subagent_count=summary[4],
         )

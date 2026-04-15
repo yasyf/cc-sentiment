@@ -11,6 +11,7 @@ from cc_sentiment.models import (
     BucketIndex,
     ConversationBucket,
     SessionId,
+    ToolCall,
     TranscriptMessage,
     UserMessage,
 )
@@ -65,7 +66,7 @@ class TranscriptParser:
                     timestamp=datetime.fromisoformat(data["timestamp"]),
                     session_id=SessionId(data["sessionId"]),
                     uuid=data["uuid"],
-                    tool_names=(),
+                    tool_calls=(),
                     thinking_chars=0,
                     cc_version=data["version"],
                 )
@@ -76,8 +77,11 @@ class TranscriptParser:
                     for block in blocks
                     if isinstance(block, dict) and block.get("type") == "text"
                 ]
-                tool_names = tuple(
-                    block["name"]
+                tool_calls = tuple(
+                    ToolCall(
+                        name=block["name"],
+                        file_path=block.get("input", {}).get("file_path"),
+                    )
                     for block in blocks
                     if isinstance(block, dict) and block.get("type") == "tool_use"
                 )
@@ -86,7 +90,7 @@ class TranscriptParser:
                     for block in blocks
                     if isinstance(block, dict) and block.get("type") == "thinking"
                 )
-                if not text_blocks and not tool_names:
+                if not text_blocks and not tool_calls:
                     return None
                 combined = " ".join(text_blocks)
                 truncated = (
@@ -99,7 +103,7 @@ class TranscriptParser:
                     timestamp=datetime.fromisoformat(data["timestamp"]),
                     session_id=SessionId(data["sessionId"]),
                     uuid=data["uuid"],
-                    tool_names=tool_names,
+                    tool_calls=tool_calls,
                     thinking_chars=thinking_chars,
                     claude_model=data["message"]["model"],
                 )

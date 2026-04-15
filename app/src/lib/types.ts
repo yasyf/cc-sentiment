@@ -3,6 +3,8 @@ export interface TimelinePoint {
 	avg_score: number;
 	count: number;
 	avg_read_edit_ratio: number | null;
+	avg_edits_without_prior_read_ratio: number | null;
+	avg_tool_calls_per_turn: number | null;
 }
 
 export interface HourlyPoint {
@@ -36,6 +38,8 @@ export interface ModelBreakdown {
 	avg_score: number;
 	count: number;
 	avg_read_edit_ratio: number | null;
+	avg_write_edit_ratio: number | null;
+	avg_subagent_count: number | null;
 }
 
 export interface DataResponse {
@@ -50,4 +54,8 @@ export interface DataResponse {
 	trend: TrendComparison;
 	model_breakdown: ModelBreakdown[];
 	avg_read_edit_ratio: number | null;
+	avg_edits_without_prior_read_ratio: number | null;
+	avg_tool_calls_per_turn: number | null;
+	avg_write_edit_ratio: number | null;
+	avg_subagent_count: number | null;
 }

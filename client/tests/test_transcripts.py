@@ -9,6 +9,7 @@ from cc_sentiment.models import (
     AssistantMessage,
     BucketMetrics,
     SessionId,
+    ToolCall,
     UserMessage,
 )
 from cc_sentiment.transcripts import (
@@ -118,19 +119,22 @@ class TestBucketMetrics:
             timestamp=datetime(2026, 4, 10, 7, 36, 0, tzinfo=timezone.utc),
             session_id=SessionId("s"),
             uuid="u",
-            tool_names=(),
+            tool_calls=(),
             thinking_chars=0,
             cc_version=cc_version,
         )
 
     @staticmethod
-    def _assistant(claude_model: str = "claude-sonnet-4-20250514") -> AssistantMessage:
+    def _assistant(
+        claude_model: str = "claude-sonnet-4-20250514",
+        tool_calls: tuple[ToolCall, ...] = (),
+    ) -> AssistantMessage:
         return AssistantMessage(
             content="ok",
             timestamp=datetime(2026, 4, 10, 7, 36, 30, tzinfo=timezone.utc),
             session_id=SessionId("s"),
             uuid="a",
-            tool_names=(),
+            tool_calls=tool_calls,
             thinking_chars=0,
             claude_model=claude_model,
         )
@@ -153,3 +157,61 @@ class TestBucketMetrics:
         assert metrics.cc_version == "2.1.92"
         assert metrics.claude_model == "claude-sonnet-4-20250514"
         assert metrics.turn_count == 2
+
+    def test_tool_calls_per_turn_and_subagent_count(self) -> None:
+        metrics = BucketMetrics.from_messages((
+            self._user(),
+            self._assistant(tool_calls=(
+                ToolCall(name="Read", file_path="/a.py"),
+                ToolCall(name="Task"),
+                ToolCall(name="Task"),
+            )),
+        ))
+        assert metrics.tool_calls_per_turn == 3.0
+        assert metrics.subagent_count == 2
+
+    def test_write_edit_ratio(self) -> None:
+        metrics = BucketMetrics.from_messages((
+            self._user(),
+            self._assistant(tool_calls=(
+                ToolCall(name="Write", file_path="/a.py"),
+                ToolCall(name="Write", file_path="/b.py"),
+                ToolCall(name="Edit", file_path="/c.py"),
+            )),
+        ))
+        assert metrics.write_edit_ratio == 2 / 3
+
+    def test_write_edit_ratio_none_when_no_writes_or_edits(self) -> None:
+        metrics = BucketMetrics.from_messages((
+            self._user(),
+            self._assistant(tool_calls=(ToolCall(name="Read", file_path="/a.py"),)),
+        ))
+        assert metrics.write_edit_ratio is None
+
+    def test_edits_without_prior_read_within_bucket(self) -> None:
+        metrics = BucketMetrics.from_messages((
+            self._user(),
+            self._assistant(tool_calls=(
+                ToolCall(name="Read", file_path="/a.py"),
+                ToolCall(name="Edit", file_path="/a.py"),
+                ToolCall(name="Edit", file_path="/b.py"),
+            )),
+        ))
+        assert metrics.edits_without_prior_read_ratio == 0.5
+
+    def test_edits_without_prior_read_uses_history(self) -> None:
+        metrics = BucketMetrics.from_messages_with_history(
+            (
+                self._user(),
+                self._assistant(tool_calls=(ToolCall(name="Edit", file_path="/a.py"),)),
+            ),
+            frozenset({"/a.py"}),
+        )
+        assert metrics.edits_without_prior_read_ratio == 0.0
+
+    def test_edits_without_prior_read_none_when_no_edits(self) -> None:
+        metrics = BucketMetrics.from_messages((
+            self._user(),
+            self._assistant(tool_calls=(ToolCall(name="Read", file_path="/a.py"),)),
+        ))
+        assert metrics.edits_without_prior_read_ratio is None

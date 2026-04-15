@@ -30,7 +30,7 @@ def _make_message(role: str, content: str, i: int) -> TranscriptMessage:
                 timestamp=datetime(2026, 4, 10, 7, 35, i, tzinfo=timezone.utc),
                 session_id=SessionId("test-session"),
                 uuid=f"uuid-{i}",
-                tool_names=(),
+                tool_calls=(),
                 thinking_chars=0,
                 cc_version="2.1.92",
             )
@@ -40,7 +40,7 @@ def _make_message(role: str, content: str, i: int) -> TranscriptMessage:
                 timestamp=datetime(2026, 4, 10, 7, 35, i, tzinfo=timezone.utc),
                 session_id=SessionId("test-session"),
                 uuid=f"uuid-{i}",
-                tool_names=(),
+                tool_calls=(),
                 thinking_chars=0,
                 claude_model="claude-sonnet-4-20250514",
             )

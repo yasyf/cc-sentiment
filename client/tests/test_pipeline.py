@@ -143,6 +143,35 @@ class TestBucketCaching:
         assert BucketKey(session_id=SessionId("session-1"), bucket_index=BucketIndex(0)) in pf.scored_buckets
 
 
+class TestCrossBucketReadHistory:
+    def test_read_in_earlier_bucket_counts_for_later_bucket(self, tmp_path: Path) -> None:
+        path = tmp_path / "cross.jsonl"
+        path.write_text(
+            "\n".join([
+                '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"open it"},"uuid":"u1","timestamp":"2026-04-10T07:36:00.000Z","sessionId":"session-cross","version":"2.1.92"}',
+                '{"parentUuid":"u1","message":{"model":"claude-sonnet-4-20250514","type":"message","role":"assistant","content":[{"type":"text","text":"reading"},{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/a.py"}}]},"type":"assistant","uuid":"a1","timestamp":"2026-04-10T07:36:30.000Z","sessionId":"session-cross"}',
+                '{"parentUuid":"a1","isSidechain":false,"type":"user","message":{"role":"user","content":"now edit it"},"uuid":"u2","timestamp":"2026-04-10T07:46:00.000Z","sessionId":"session-cross","version":"2.1.92"}',
+                '{"parentUuid":"u2","message":{"model":"claude-sonnet-4-20250514","type":"message","role":"assistant","content":[{"type":"text","text":"editing"},{"type":"tool_use","id":"t2","name":"Edit","input":{"file_path":"/a.py"}}]},"type":"assistant","uuid":"a2","timestamp":"2026-04-10T07:46:30.000Z","sessionId":"session-cross"}',
+            ])
+        )
+
+        new_buckets, metrics_by_key = Pipeline._parse_buckets_with_metrics(path, frozenset())
+        assert len(new_buckets) == 2
+        bucket_1_key = BucketKey(session_id=SessionId("session-cross"), bucket_index=BucketIndex(2))
+        assert metrics_by_key[bucket_1_key].edits_without_prior_read_ratio == 0.0
+
+    def test_edit_without_any_prior_read_marked(self, tmp_path: Path) -> None:
+        path = tmp_path / "noread.jsonl"
+        path.write_text(
+            '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"edit"},"uuid":"u1","timestamp":"2026-04-10T07:36:00.000Z","sessionId":"session-x","version":"2.1.92"}\n'
+            '{"parentUuid":"u1","message":{"model":"claude-sonnet-4-20250514","type":"message","role":"assistant","content":[{"type":"text","text":"k"},{"type":"tool_use","id":"t","name":"Edit","input":{"file_path":"/a.py"}}]},"type":"assistant","uuid":"a1","timestamp":"2026-04-10T07:36:30.000Z","sessionId":"session-x"}'
+        )
+
+        _, metrics_by_key = Pipeline._parse_buckets_with_metrics(path, frozenset())
+        bucket_key = BucketKey(session_id=SessionId("session-x"), bucket_index=BucketIndex(0))
+        assert metrics_by_key[bucket_key].edits_without_prior_read_ratio == 1.0
+
+
 class TestPipelineStateUpdate:
     def test_state_updated_with_records(self) -> None:
         state = AppState()

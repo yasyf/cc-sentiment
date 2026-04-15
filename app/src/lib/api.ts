@@ -5,7 +5,14 @@ import type { DataResponse } from './types.js';
 const API_BASE_URL = 'https://anetaco--cc-sentiment-api-serve.modal.run';
 
 const DataResponseSchema = z.object({
-	timeline: z.array(z.object({ time: z.string(), avg_score: z.number(), count: z.number(), avg_read_edit_ratio: z.number().nullable().default(null) })),
+	timeline: z.array(z.object({
+		time: z.string(),
+		avg_score: z.number(),
+		count: z.number(),
+		avg_read_edit_ratio: z.number().nullable().default(null),
+		avg_edits_without_prior_read_ratio: z.number().nullable().default(null),
+		avg_tool_calls_per_turn: z.number().nullable().default(null)
+	})),
 	hourly: z.array(z.object({ hour: z.number(), avg_score: z.number(), count: z.number() })),
 	weekday: z.array(z.object({ dow: z.number(), avg_score: z.number(), count: z.number() })),
 	distribution: z.array(z.object({ score: z.number(), count: z.number() })),
@@ -25,9 +32,15 @@ const DataResponseSchema = z.object({
 		claude_model: z.string(),
 		avg_score: z.number(),
 		count: z.number(),
-		avg_read_edit_ratio: z.number().nullable()
+		avg_read_edit_ratio: z.number().nullable(),
+		avg_write_edit_ratio: z.number().nullable().default(null),
+		avg_subagent_count: z.number().nullable().default(null)
 	})).default([]),
-	avg_read_edit_ratio: z.number().nullable().default(null)
+	avg_read_edit_ratio: z.number().nullable().default(null),
+	avg_edits_without_prior_read_ratio: z.number().nullable().default(null),
+	avg_tool_calls_per_turn: z.number().nullable().default(null),
+	avg_write_edit_ratio: z.number().nullable().default(null),
+	avg_subagent_count: z.number().nullable().default(null)
 });
 
 export async function fetchData(fetch: typeof globalThis.fetch): Promise<DataResponse> {

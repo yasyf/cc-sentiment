@@ -32,6 +32,10 @@ class SentimentRecord(BaseModel):
     claude_model: str = Field(min_length=1)
     client_version: str = Field(min_length=1)
     read_edit_ratio: float | None
+    edits_without_prior_read_ratio: float | None
+    write_edit_ratio: float | None
+    tool_calls_per_turn: float = Field(ge=0)
+    subagent_count: int = Field(ge=0)
     turn_count: int = Field(ge=0)
     thinking_present: bool
     thinking_chars: int = Field(ge=0)
@@ -76,6 +80,8 @@ class TimelinePoint(BaseModel):
     avg_score: float
     count: int
     avg_read_edit_ratio: float | None
+    avg_edits_without_prior_read_ratio: float | None
+    avg_tool_calls_per_turn: float | None
 
 
 class HourlyPoint(BaseModel):
@@ -119,6 +125,8 @@ class ModelBreakdown(BaseModel):
     avg_score: float
     count: int
     avg_read_edit_ratio: float | None
+    avg_write_edit_ratio: float | None
+    avg_subagent_count: float | None
 
 
 class DataResponse(BaseModel):
@@ -135,3 +143,7 @@ class DataResponse(BaseModel):
     trend: TrendComparison
     model_breakdown: list[ModelBreakdown]
     avg_read_edit_ratio: float | None
+    avg_edits_without_prior_read_ratio: float | None
+    avg_tool_calls_per_turn: float | None
+    avg_write_edit_ratio: float | None
+    avg_subagent_count: float | None

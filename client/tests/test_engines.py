@@ -38,7 +38,7 @@ def make_message(role: str, content: str) -> TranscriptMessage:
                 timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
                 session_id=SessionId("test"),
                 uuid="u1",
-                tool_names=(),
+                tool_calls=(),
                 thinking_chars=0,
                 cc_version="2.1.92",
             )
@@ -48,7 +48,7 @@ def make_message(role: str, content: str) -> TranscriptMessage:
                 timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
                 session_id=SessionId("test"),
                 uuid="u1",
-                tool_names=(),
+                tool_calls=(),
                 thinking_chars=0,
                 claude_model="claude-sonnet-4-20250514",
             )

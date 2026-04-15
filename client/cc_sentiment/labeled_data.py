@@ -30,7 +30,7 @@ def _message(session_id: SessionId, uuid: str, ts: datetime, role: str, content:
                 timestamp=ts,
                 session_id=session_id,
                 uuid=uuid,
-                tool_names=(),
+                tool_calls=(),
                 thinking_chars=0,
                 cc_version=LABELED_CC_VERSION,
             )
@@ -40,7 +40,7 @@ def _message(session_id: SessionId, uuid: str, ts: datetime, role: str, content:
                 timestamp=ts,
                 session_id=session_id,
                 uuid=uuid,
-                tool_names=(),
+                tool_calls=(),
                 thinking_chars=0,
                 claude_model=LABELED_CLAUDE_MODEL,
             )

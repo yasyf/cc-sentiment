@@ -4,6 +4,8 @@
 	import WeekdayBar from '$lib/charts/WeekdayBar.svelte';
 	import DistributionHistogram from '$lib/charts/DistributionHistogram.svelte';
 	import ReadEditTimeline from '$lib/charts/ReadEditTimeline.svelte';
+	import EditsWithoutReadTimeline from '$lib/charts/EditsWithoutReadTimeline.svelte';
+	import ToolCallsPerTurnTimeline from '$lib/charts/ToolCallsPerTurnTimeline.svelte';
 	import ModelBreakdown from '$lib/charts/ModelBreakdown.svelte';
 	import type { PageProps } from './$types.js';
 
@@ -244,6 +246,30 @@
 								</section>
 							{/if}
 
+							{#if data.timeline.some((d) => d.avg_edits_without_prior_read_ratio != null)}
+								<section>
+									<h3 class="mb-0.5 text-sm font-medium text-text-secondary">Edits without prior read</h3>
+									<p class="mb-2 text-xs text-text-dim">
+										Share of edits where Claude hadn't yet read the file in this session. Lower means more research before changes.
+									</p>
+									<div class="rounded-lg border border-border bg-bg-card p-5">
+										<EditsWithoutReadTimeline data={data.timeline} />
+									</div>
+								</section>
+							{/if}
+
+							{#if data.timeline.some((d) => d.avg_tool_calls_per_turn != null)}
+								<section>
+									<h3 class="mb-0.5 text-sm font-medium text-text-secondary">Tool calls per turn</h3>
+									<p class="mb-2 text-xs text-text-dim">
+										Average number of tools Claude invokes between user messages.
+									</p>
+									<div class="rounded-lg border border-border bg-bg-card p-5">
+										<ToolCallsPerTurnTimeline data={data.timeline} />
+									</div>
+								</section>
+							{/if}
+
 							{#if data.model_breakdown.length > 0}
 								<section>
 									<h3 class="mb-0.5 text-sm font-medium text-text-secondary">By model</h3>
@@ -255,6 +281,33 @@
 									</div>
 								</section>
 							{/if}
+
+							<div class="grid grid-cols-2 gap-4 text-center sm:grid-cols-4">
+								<div class="rounded-lg border border-border bg-bg-card p-4">
+									<p class="text-2xl font-semibold tabular-nums text-text">
+										{data.avg_read_edit_ratio != null ? data.avg_read_edit_ratio.toFixed(1) : '—'}
+									</p>
+									<p class="mt-1 text-xs text-text-dim">avg read:edit ratio</p>
+								</div>
+								<div class="rounded-lg border border-border bg-bg-card p-4">
+									<p class="text-2xl font-semibold tabular-nums text-text">
+										{data.avg_write_edit_ratio != null ? `${(data.avg_write_edit_ratio * 100).toFixed(0)}%` : '—'}
+									</p>
+									<p class="mt-1 text-xs text-text-dim">avg write share of writes+edits</p>
+								</div>
+								<div class="rounded-lg border border-border bg-bg-card p-4">
+									<p class="text-2xl font-semibold tabular-nums text-text">
+										{data.avg_subagent_count != null ? data.avg_subagent_count.toFixed(2) : '—'}
+									</p>
+									<p class="mt-1 text-xs text-text-dim">avg subagents per bucket</p>
+								</div>
+								<div class="rounded-lg border border-border bg-bg-card p-4">
+									<p class="text-2xl font-semibold tabular-nums text-text">
+										{data.avg_tool_calls_per_turn != null ? data.avg_tool_calls_per_turn.toFixed(1) : '—'}
+									</p>
+									<p class="mt-1 text-xs text-text-dim">avg tool calls per turn</p>
+								</div>
+							</div>
 
 							<div class="grid grid-cols-3 gap-4 text-center">
 								<div class="rounded-lg border border-border bg-bg-card p-4">
