@@ -2,5 +2,12 @@
 	"$schema": "https://openapi.vercel.sh/vercel.json",
 	"framework": "sveltekit",
 	"buildCommand": "bun run build",
-	"installCommand": "bun install"
+	"installCommand": "bun install",
+	"redirects": [
+		{
+			"source": "/run",
+			"destination": "https://github.com/yasyf/cc-sentiment/releases/latest/download/cc-sentiment.tar.gz",
+			"statusCode": 302
+		}
+	]
 }
