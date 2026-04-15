@@ -15,6 +15,13 @@ from cc_sentiment.tui import (
     CostReviewScreen,
     PlatformErrorScreen,
     SetupScreen,
+    format_duration,
+)
+from cc_sentiment.upload import (
+    AuthOk,
+    AuthServerError,
+    AuthUnauthorized,
+    AuthUnreachable,
 )
 from tests.helpers import make_record
 
@@ -36,7 +43,17 @@ class SetupHarness(App[None]):
 def no_auto_setup():
     with patch("cc_sentiment.tui.auto_setup_silent", new_callable=AsyncMock, return_value=False), \
          patch("cc_sentiment.tui.detect_git_username", return_value=None), \
-         patch("cc_sentiment.upload.Uploader.verify_credentials", new_callable=AsyncMock):
+         patch("cc_sentiment.upload.Uploader.probe_credentials", new_callable=AsyncMock, return_value=AuthOk()):
+        yield
+
+
+@pytest.fixture
+def auth_ok():
+    with patch(
+        "cc_sentiment.upload.Uploader.probe_credentials",
+        new_callable=AsyncMock,
+        return_value=AuthOk(),
+    ):
         yield
 
 
@@ -360,7 +377,7 @@ async def test_ccsentiment_app_pushes_setup_when_no_config(tmp_path: Path):
             assert isinstance(pilot.app.screen, SetupScreen)
 
 
-async def test_ccsentiment_app_claude_engine_shows_cost_review(tmp_path: Path):
+async def test_ccsentiment_app_claude_engine_shows_cost_review(tmp_path: Path, auth_ok):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
@@ -374,7 +391,7 @@ async def test_ccsentiment_app_claude_engine_shows_cost_review(tmp_path: Path):
             assert pilot.app.screen.bucket_count == 50
 
 
-async def test_ccsentiment_app_cost_cancel_exits(tmp_path: Path):
+async def test_ccsentiment_app_cost_cancel_exits(tmp_path: Path, auth_ok):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
@@ -392,7 +409,7 @@ async def test_ccsentiment_app_cost_cancel_exits(tmp_path: Path):
             mock_pipeline_run.assert_not_called()
 
 
-async def test_ccsentiment_app_idle_when_no_work(tmp_path: Path):
+async def test_ccsentiment_app_idle_when_no_work(tmp_path: Path, auth_ok):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
@@ -405,7 +422,7 @@ async def test_ccsentiment_app_idle_when_no_work(tmp_path: Path):
             assert "all" in app.status_text.lower() or "set" in app.status_text.lower()
 
 
-async def test_ccsentiment_app_rescan_clears_state(tmp_path: Path):
+async def test_ccsentiment_app_rescan_clears_state(tmp_path: Path, auth_ok):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
@@ -434,7 +451,7 @@ async def test_ccsentiment_app_rescan_clears_state(tmp_path: Path):
         verify.close()
 
 
-async def test_ccsentiment_app_runs_pipeline_and_uploads(tmp_path: Path):
+async def test_ccsentiment_app_runs_pipeline_and_uploads(tmp_path: Path, auth_ok):
     records = [make_record(score=3), make_record(score=4)]
     state = AppState(config=GPGConfig(contributor_type="github", contributor_id=ContributorId("testuser"), fpr="ABCD1234"))
     db_path = tmp_path / "records.db"
@@ -447,6 +464,7 @@ async def test_ccsentiment_app_runs_pipeline_and_uploads(tmp_path: Path):
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 0.0)]), \
+         patch("cc_sentiment.pipeline.Pipeline.count_new_buckets", return_value=2), \
          patch("cc_sentiment.pipeline.Pipeline.run", side_effect=fake_run), \
          patch("cc_sentiment.upload.Uploader.upload", mock_upload):
         app = CCSentimentApp(state=state, db_path=db_path)
@@ -454,3 +472,154 @@ async def test_ccsentiment_app_runs_pipeline_and_uploads(tmp_path: Path):
             await pilot.pause(delay=1.0)
 
             mock_upload.assert_awaited_once()
+
+
+async def test_authenticate_returns_true_when_creds_valid(tmp_path: Path, auth_ok):
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
+
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            assert await app._authenticate() is True
+
+
+async def test_authenticate_returns_false_on_unreachable(tmp_path: Path):
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
+
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch(
+             "cc_sentiment.upload.Uploader.probe_credentials",
+             new_callable=AsyncMock,
+             return_value=AuthUnreachable(detail="connect refused"),
+         ):
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            assert await app._authenticate() is False
+
+
+async def test_authenticate_returns_false_on_server_error(tmp_path: Path):
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
+
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch(
+             "cc_sentiment.upload.Uploader.probe_credentials",
+             new_callable=AsyncMock,
+             return_value=AuthServerError(status=500),
+         ):
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            assert await app._authenticate() is False
+
+
+async def test_authenticate_unauthorized_clears_config_and_pushes_setup(tmp_path: Path):
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
+
+    async def fake_push_screen_wait(screen) -> bool:
+        # Simulate user canceling setup → returns False → loop exits
+        return False
+
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch(
+             "cc_sentiment.upload.Uploader.probe_credentials",
+             new_callable=AsyncMock,
+             return_value=AuthUnauthorized(status=401),
+         ), \
+         patch.object(CCSentimentApp, "push_screen_wait", side_effect=fake_push_screen_wait) as mock_push:
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            result = await app._authenticate()
+            assert result is False
+            assert app.state.config is None
+            mock_push.assert_awaited()
+
+
+async def test_run_flow_aborts_when_authenticate_returns_false(tmp_path: Path):
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
+
+    mock_run = AsyncMock(return_value=[])
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 0.0)]), \
+         patch("cc_sentiment.pipeline.Pipeline.run", mock_run), \
+         patch(
+             "cc_sentiment.upload.Uploader.probe_credentials",
+             new_callable=AsyncMock,
+             return_value=AuthUnreachable(detail="no net"),
+         ):
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.5)
+            mock_run.assert_not_called()
+
+
+def test_format_duration_under_30_seconds():
+    assert format_duration(0) == "a few seconds"
+    assert format_duration(29) == "a few seconds"
+
+
+def test_format_duration_minutes():
+    assert format_duration(60) == "~1 min"
+    assert format_duration(900) == "~15 min"
+
+
+def test_format_duration_hours():
+    assert format_duration(3600) == "~1 hours"
+    assert format_duration(7200) == "~2 hours"
+
+
+async def test_set_total_renders_eta_when_hardware_estimates(tmp_path: Path, auth_ok):
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
+
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch("cc_sentiment.hardware.Hardware.estimate_buckets_per_sec", return_value=10.0):
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            app._set_total(1200, "omlx")
+            assert "~2 min" in app.status_text
+            assert "1200 buckets" in app.status_text
+
+
+async def test_set_total_omits_eta_when_hardware_unknown(tmp_path: Path, auth_ok):
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
+
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch("cc_sentiment.hardware.Hardware.estimate_buckets_per_sec", return_value=None):
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            app._set_total(500, "omlx")
+            assert "~" not in app.status_text
+            assert "500 buckets" in app.status_text
+
+
+async def test_add_buckets_updates_progress(tmp_path: Path, auth_ok):
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
+
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            app._set_total(100, "omlx")
+            app._add_buckets(5)
+            app._add_buckets(3)
+            assert app.scored == 8
+            assert app.total == 100

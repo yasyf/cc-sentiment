@@ -65,6 +65,14 @@ SCORE_ICONS = {1: "😤", 2: "😒", 3: "😐", 4: "😊", 5: "🤩"}
 RESCAN_CONFIRM_SECONDS = 5.0
 
 
+def format_duration(seconds: float) -> str:
+    if seconds < 30:
+        return "a few seconds"
+    if seconds < 3600:
+        return f"~{max(1, round(seconds / 60))} min"
+    return f"~{max(1, round(seconds / 3600))} hours"
+
+
 def detect_git_username() -> str | None:
     for cmd in (
         ["gh", "api", "user", "--jq", ".login"],
@@ -81,11 +89,9 @@ def detect_git_username() -> str | None:
     return None
 
 
-async def _try_config(state: AppState, config: SSHConfig | GPGConfig) -> bool:
-    from cc_sentiment.upload import Uploader
-    try:
-        await Uploader().verify_credentials(config)
-    except httpx.HTTPError:
+async def _save_if_ok(state: AppState, config: SSHConfig | GPGConfig) -> bool:
+    from cc_sentiment.upload import AuthOk, Uploader
+    if not isinstance(await Uploader().probe_credentials(config), AuthOk):
         return False
     state.config = config
     await anyio.to_thread.run_sync(state.save)
@@ -97,13 +103,13 @@ async def auto_setup_silent(state: AppState) -> bool:
 
     if username:
         if backend := await anyio.to_thread.run_sync(KeyDiscovery.match_ssh_key, username):
-            if await _try_config(
+            if await _save_if_ok(
                 state,
                 SSHConfig(contributor_id=ContributorId(username), key_path=backend.private_key_path),
             ):
                 return True
         if backend := await anyio.to_thread.run_sync(KeyDiscovery.match_gpg_key, username):
-            if await _try_config(
+            if await _save_if_ok(
                 state,
                 GPGConfig(contributor_type="github", contributor_id=ContributorId(username), fpr=backend.fpr),
             ):
@@ -117,7 +123,7 @@ async def auto_setup_silent(state: AppState) -> bool:
             if username
             else GPGConfig(contributor_type="gpg", contributor_id=ContributorId(info.fpr), fpr=info.fpr)
         )
-        if await _try_config(state, config):
+        if await _save_if_ok(state, config):
             return True
 
     return False
@@ -582,17 +588,11 @@ Expire-Date: 0
 
                 if self.username:
                     try:
-                        armor = KeyDiscovery.fetch_github_gpg_keys(self.username)
-                        if armor:
-                            import gnupg
-                            imported = gnupg.GPG().import_keys(armor)
-                            if f in set(imported.fingerprints):
-                                results.append("  [green]✓[/] Found on GitHub")
-                                found = True
-                            else:
-                                results.append("  [yellow]—[/] Not on GitHub yet")
+                        if KeyDiscovery.gpg_key_on_github(self.username, f):
+                            results.append("  [green]✓[/] Found on GitHub")
+                            found = True
                         else:
-                            results.append("  [yellow]—[/] No keys on GitHub yet")
+                            results.append("  [yellow]—[/] Not on GitHub yet")
                     except httpx.HTTPError:
                         results.append("  [yellow]?[/] Couldn't reach GitHub")
 
@@ -794,24 +794,22 @@ Expire-Date: 0
 
     @work()
     async def verify_server_config(self) -> None:
-        from cc_sentiment.upload import Uploader
+        from cc_sentiment.upload import AuthOk, Uploader
         await anyio.to_thread.run_sync(self.state.save)
         verify_label = self.query_one("#done-verify", Label)
         verify_label.update("[dim]Verifying with dashboard...[/]")
 
         assert self.state.config is not None
-        try:
-            await Uploader().verify_credentials(self.state.config)
-        except httpx.HTTPError:
+        if isinstance(await Uploader().probe_credentials(self.state.config), AuthOk):
+            verify_label.update(
+                "[green]Verified — the dashboard can confirm your uploads.[/]",
+            )
+        else:
             verify_label.update(
                 "[yellow]We couldn't verify your setup just yet. This usually means:\n"
                 "  • If you uploaded to keys.openpgp.org — check your email for a verification link\n"
                 "  • If you just added a key to GitHub — it can take a minute to propagate\n"
                 "  • You can run cc-sentiment again anytime to retry[/]",
-            )
-        else:
-            verify_label.update(
-                "[green]Verified — the dashboard can confirm your uploads.[/]",
             )
 
     @on(Button.Pressed, "#done-btn")
@@ -943,6 +941,38 @@ class CCSentimentApp(App[None]):
         self._score_history = [float(r.sentiment_score) for r in existing]
         self._render_scores()
 
+    async def _authenticate(self) -> bool:
+        from cc_sentiment.upload import (
+            AuthOk,
+            AuthServerError,
+            AuthUnauthorized,
+            AuthUnreachable,
+            Uploader,
+        )
+        while True:
+            if self.state.config is None:
+                ok = await self.push_screen_wait(SetupScreen(self.state))
+                if not ok:
+                    return False
+                continue
+            self._update_status("[dim]Verifying key...[/]")
+            match await Uploader().probe_credentials(self.state.config):
+                case AuthOk():
+                    return True
+                case AuthUnauthorized():
+                    self._update_status(
+                        "[yellow]Server doesn't recognize this key. Let's try setup again.[/]"
+                    )
+                    self.state.config = None
+                    await anyio.to_thread.run_sync(self.state.save)
+                    continue
+                case AuthUnreachable(detail=d):
+                    self._update_status(f"[red]Couldn't reach the server.[/] [dim]{d}[/]")
+                    return False
+                case AuthServerError(status=s):
+                    self._update_status(f"[red]Server error verifying key ({s}).[/]")
+                    return False
+
     @work()
     async def run_flow(self) -> None:
         from cc_sentiment.pipeline import Pipeline
@@ -961,30 +991,32 @@ class CCSentimentApp(App[None]):
         transcripts = await anyio.to_thread.run_sync(Pipeline.discover_new_transcripts, self.repo)
         pending = await anyio.to_thread.run_sync(self.repo.pending_records)
 
-        if (transcripts or pending) and self.state.config is None:
-            ok = await self.push_screen_wait(SetupScreen(self.state))
+        if (transcripts or pending) and not await self._authenticate():
+            self.exit()
+            return
+
+        bucket_count = 0
+        if transcripts:
+            self._update_status("[dim]Counting work...[/]")
+            bucket_count = await anyio.to_thread.run_sync(
+                Pipeline.count_new_buckets, self.repo, transcripts
+            )
+
+        if engine == "claude" and bucket_count > 0:
+            ok = await self.push_screen_wait(
+                CostReviewScreen(bucket_count, self.model_repo or HAIKU_MODEL)
+            )
             if not ok:
                 self.exit()
                 return
 
-        if engine == "claude" and transcripts:
-            self._update_status("[dim]Counting new buckets for cost estimate...[/]")
-            bucket_count = await anyio.to_thread.run_sync(
-                Pipeline.count_new_buckets, self.repo, transcripts
-            )
-            if bucket_count > 0:
-                ok = await self.push_screen_wait(
-                    CostReviewScreen(bucket_count, self.model_repo or HAIKU_MODEL)
-                )
-                if not ok:
-                    self.exit()
-                    return
-
-        if transcripts:
-            self._set_total(len(transcripts))
+        if transcripts and bucket_count > 0:
+            self._set_total(bucket_count, engine)
             self._update_status(f"[dim]Loading {engine} engine...[/]")
+            on_bucket = lambda n: self.call_from_thread(self._add_buckets, n)
             await Pipeline.run(
-                self.repo, engine, self.model_repo, transcripts, self._add_records,
+                self.repo, engine, self.model_repo, transcripts,
+                self._add_records, on_bucket,
             )
 
         pending = await anyio.to_thread.run_sync(self.repo.pending_records)
@@ -995,7 +1027,7 @@ class CCSentimentApp(App[None]):
             except httpx.HTTPStatusError as e:
                 if e.response.status_code in (401, 403):
                     self._update_status(
-                        "[red bold]Server didn't recognize your key.[/] "
+                        f"[red bold]Server rejected upload ({e.response.status_code}).[/] "
                         "Run [b]cc-sentiment setup[/] again, or upload your key to GitHub/keys.openpgp.org."
                     )
                 else:
@@ -1065,6 +1097,7 @@ class CCSentimentApp(App[None]):
         self._score_history = []
         self.scored = 0
         self.total = 0
+        self._start_time = time.monotonic()
         self.query_one("#scan-progress", ProgressBar).update(total=100, progress=0)
         self.query_one("#progress-label", Label).update("Preparing...")
         self.query_one("#score-digits", Digits).update("-.--")
@@ -1075,25 +1108,40 @@ class CCSentimentApp(App[None]):
             self.query_one(stat_id, Static).update("--")
         self.query_one("#cached-line", Static).update("")
 
-    def _set_total(self, total: int) -> None:
+    def _set_total(self, total: int, engine: str) -> None:
+        from cc_sentiment.hardware import Hardware
+
         self.total = total
+        self.scored = 0
         self.query_one("#scan-progress", ProgressBar).update(total=total, progress=0)
-        self.query_one("#progress-label", Label).update(f"[b]0[/]/{total} files")
+        self.query_one("#progress-label", Label).update(f"[b]0[/]/{total} buckets")
+
+        rate = Hardware.estimate_buckets_per_sec(engine)
+        if rate and rate > 0:
+            self._update_status(
+                f"[dim]Scoring {total} buckets — {format_duration(total / rate)}.[/]"
+            )
+        else:
+            self._update_status(f"[dim]Scoring {total} buckets...[/]")
+
+    def _add_buckets(self, n: int) -> None:
+        self.scored += n
+        self.query_one("#scan-progress", ProgressBar).update(progress=self.scored)
+        self.query_one("#progress-label", Label).update(
+            f"[b]{self.scored}[/]/{self.total} buckets"
+        )
+
+        elapsed = time.monotonic() - self._start_time
+        rate = self.scored / elapsed if elapsed > 0 else 0
+        self.query_one("#stat-rate", Static).update(f"{rate:.1f}")
 
     def _add_records(self, new_records: list[SentimentRecord]) -> None:
         self.records.extend(new_records)
-        self.scored += 1
-        self.query_one("#scan-progress", ProgressBar).update(progress=self.scored)
-        self.query_one("#progress-label", Label).update(f"[b]{self.scored}[/]/{self.total} files")
 
         for r in new_records:
             self._score_history.append(float(r.sentiment_score))
 
         self._render_scores()
-
-        elapsed = time.monotonic() - self._start_time
-        rate = len(self.records) / elapsed if elapsed > 0 else 0
-        self.query_one("#stat-rate", Static).update(f"{rate:.1f}")
 
     def _update_status(self, text: str) -> None:
         self.status_text = text

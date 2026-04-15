@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import anyio.to_thread
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
@@ -31,6 +33,29 @@ _retry = retry(
 )
 
 
+@dataclass(frozen=True)
+class AuthOk:
+    pass
+
+
+@dataclass(frozen=True)
+class AuthUnauthorized:
+    status: int
+
+
+@dataclass(frozen=True)
+class AuthUnreachable:
+    detail: str
+
+
+@dataclass(frozen=True)
+class AuthServerError:
+    status: int
+
+
+AuthResult = AuthOk | AuthUnauthorized | AuthUnreachable | AuthServerError
+
+
 class Uploader:
     def __init__(self, server_url: str = DEFAULT_SERVER_URL) -> None:
         self.server_url = server_url
@@ -44,7 +69,7 @@ class Uploader:
                 return GPGBackend(fpr=f)
 
     @_retry
-    async def verify_credentials(self, config: SSHConfig | GPGConfig) -> None:
+    async def _verify_credentials(self, config: SSHConfig | GPGConfig) -> None:
         backend = self.backend_from_config(config)
         signature = await anyio.to_thread.run_sync(PayloadSigner.sign, TEST_PAYLOAD, backend)
         async with httpx.AsyncClient() as client:
@@ -58,6 +83,17 @@ class Uploader:
                 },
                 timeout=15.0,
             )).raise_for_status()
+
+    async def probe_credentials(self, config: SSHConfig | GPGConfig) -> AuthResult:
+        try:
+            await self._verify_credentials(config)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (401, 403):
+                return AuthUnauthorized(status=e.response.status_code)
+            return AuthServerError(status=e.response.status_code)
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            return AuthUnreachable(detail=str(e))
+        return AuthOk()
 
     @_retry
     async def upload(

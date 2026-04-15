@@ -10,9 +10,9 @@ from anyio import to_thread
 from cc_sentiment.engines import (
     DEFAULT_MODEL,
     SYSTEM_PROMPT,
-    check_frustration,
     extract_score,
     format_conversation,
+    partition_frustration,
 )
 from cc_sentiment.models import (
     ConversationBucket,
@@ -101,14 +101,7 @@ class SentimentClassifier:
     ) -> list[SentimentScore]:
         from mlx_lm import batch_generate
 
-        scores: list[SentimentScore] = [SentimentScore(0)] * len(buckets)
-        to_infer: list[tuple[int, ConversationBucket]] = []
-
-        for i, bucket in enumerate(buckets):
-            if check_frustration(bucket):
-                scores[i] = SentimentScore(1)
-            else:
-                to_infer.append((i, bucket))
+        scores, to_infer = partition_frustration(buckets, on_progress)
 
         for chunk_start in range(0, len(to_infer), batch_size):
             chunk = to_infer[chunk_start : chunk_start + batch_size]

@@ -89,6 +89,7 @@ class Pipeline:
         path: Path,
         classifier: InferenceEngine,
         scored_buckets: frozenset[BucketKey] = frozenset(),
+        on_bucket: Callable[[int], None] | None = None,
     ) -> list[SentimentRecord]:
         new_buckets, metrics_by_key = await anyio.to_thread.run_sync(
             cls._parse_buckets_with_metrics, path, scored_buckets
@@ -96,7 +97,7 @@ class Pipeline:
         if not new_buckets:
             return []
 
-        scores = await classifier.score(new_buckets)
+        scores = await classifier.score(new_buckets, on_progress=on_bucket)
 
         return [
             SentimentRecord(
@@ -130,6 +131,7 @@ class Pipeline:
         model_repo: str | None = None,
         new_transcripts: list[tuple[Path, float]] | None = None,
         on_records: Callable[[list[SentimentRecord]], None] | None = None,
+        on_bucket: Callable[[int], None] | None = None,
     ) -> list[SentimentRecord]:
         match engine:
             case "mlx":
@@ -159,7 +161,9 @@ class Pipeline:
                 scored_buckets = await anyio.to_thread.run_sync(
                     repo.scored_buckets_for, str(path)
                 )
-                records = await cls.process_transcript(path, classifier, scored_buckets)
+                records = await cls.process_transcript(
+                    path, classifier, scored_buckets, on_bucket=on_bucket
+                )
                 all_records.extend(records)
                 await anyio.to_thread.run_sync(repo.save_records, str(path), mtime, records)
 

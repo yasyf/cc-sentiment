@@ -196,3 +196,44 @@ class TestPipelineStateUpdate:
         assert pending[0] == record
         assert str(Path("/fake.jsonl")) in repo.file_mtimes()
         assert len(result) == 1
+
+
+class TestOnBucketPlumbing:
+    def test_process_transcript_passes_on_bucket_to_classifier(self) -> None:
+        classifier = MagicMock()
+        classifier.score = AsyncMock(return_value=[SentimentScore(3)] * 2)
+        classifier.close = AsyncMock()
+
+        cb = MagicMock()
+
+        async def run() -> None:
+            await Pipeline.process_transcript(FIXTURE_PATH, classifier, on_bucket=cb)
+
+        anyio.run(run)
+        _, kwargs = classifier.score.call_args
+        assert kwargs.get("on_progress") is cb
+
+    def test_run_threads_on_bucket_through_to_process_transcript(self, repo: Repository) -> None:
+        cb = MagicMock()
+        captured: dict[str, object] = {}
+
+        async def fake_process(path, classifier, scored_buckets=frozenset(), on_bucket=None):
+            captured["on_bucket"] = on_bucket
+            return []
+
+        classifier = MagicMock()
+        classifier.close = AsyncMock()
+        classifier.warm_system_prompt = AsyncMock()
+
+        async def run() -> None:
+            with patch("cc_sentiment.pipeline.OMLXEngine", return_value=classifier), \
+                 patch.object(Pipeline, "process_transcript", new=fake_process):
+                await Pipeline.run(
+                    repo,
+                    engine="omlx",
+                    new_transcripts=[(FIXTURE_PATH, 1.0)],
+                    on_bucket=cb,
+                )
+
+        anyio.run(run)
+        assert captured["on_bucket"] is cb

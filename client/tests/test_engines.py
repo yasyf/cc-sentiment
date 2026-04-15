@@ -218,3 +218,70 @@ class TestClaudeCLIEngine:
         with patch("cc_sentiment.engines.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)), \
              pytest.raises(RuntimeError, match="claude -p failed"):
             asyncio.run(engine.score([make_bucket("please help me fix this")]))
+
+
+class TestPartitionFrustration:
+    def test_separates_frustrated_from_non_frustrated(self) -> None:
+        from cc_sentiment.engines import partition_frustration
+
+        buckets = [
+            make_bucket("this is fucking broken"),
+            make_bucket("please help me fix the login form"),
+            make_bucket("wtf is this"),
+        ]
+        scores, to_infer = partition_frustration(buckets)
+
+        assert scores[0] == SentimentScore(1)
+        assert scores[1] == SentimentScore(0)  # placeholder, filled by inference later
+        assert scores[2] == SentimentScore(1)
+        assert [idx for idx, _ in to_infer] == [1]
+
+    def test_fires_on_progress_only_for_frustration_hits(self) -> None:
+        from cc_sentiment.engines import partition_frustration
+
+        calls: list[int] = []
+        buckets = [
+            make_bucket("wtf is this"),
+            make_bucket("please fix this"),
+            make_bucket("I give up"),
+        ]
+        partition_frustration(buckets, on_progress=calls.append)
+        assert calls == [1, 1]
+
+    def test_handles_empty_input(self) -> None:
+        from cc_sentiment.engines import partition_frustration
+
+        scores, to_infer = partition_frustration([])
+        assert scores == []
+        assert to_infer == []
+
+
+class TestClaudeCLIEngineProgress:
+    def test_score_fires_on_progress_for_frustration_skip(self) -> None:
+        import asyncio
+
+        with patch("cc_sentiment.engines.shutil.which", return_value="/usr/bin/claude"):
+            engine = ClaudeCLIEngine(model="claude-haiku-4-5")
+
+        calls: list[int] = []
+        asyncio.run(engine.score([make_bucket("wtf is this")], on_progress=calls.append))
+        assert calls == [1]
+
+    def test_score_fires_on_progress_for_inference_path(self) -> None:
+        import asyncio
+        response = json.dumps({
+            "type": "result",
+            "is_error": False,
+            "result": "4",
+            "total_cost_usd": 0.0025,
+            "usage": {"input_tokens": 2500, "output_tokens": 1},
+        }).encode()
+        proc = MagicMock(returncode=0, communicate=AsyncMock(return_value=(response, b"")))
+
+        with patch("cc_sentiment.engines.shutil.which", return_value="/usr/bin/claude"):
+            engine = ClaudeCLIEngine(model="claude-haiku-4-5")
+
+        calls: list[int] = []
+        with patch("cc_sentiment.engines.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+            asyncio.run(engine.score([make_bucket("please help me")], on_progress=calls.append))
+        assert calls == [1]

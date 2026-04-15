@@ -180,34 +180,6 @@ class BenchmarkRunner:
                 f"{r.buckets_per_sec:>5.1f} | {r.peak_memory_gb:>6.2f}GB"
             )
 
-    @staticmethod
-    def save_results(results: dict[str, EngineResult]) -> Path:
-        output_dir = Path.home() / ".cc-sentiment"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / "benchmark_results.json"
-
-        output_path.write_text(json.dumps({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "engines": {
-                name: {
-                    "load_time": r.load_time,
-                    "wall_time": r.wall_time,
-                    "buckets_scored": r.buckets_scored,
-                    "buckets_per_sec": r.buckets_per_sec,
-                    "peak_memory_gb": r.peak_memory_gb,
-                    "scores": [
-                        {"session_id": br.session_id, "bucket_index": br.bucket_index, "score": br.score}
-                        for br in r.bucket_results
-                    ],
-                }
-                for name, r in results.items()
-            },
-        }, indent=2))
-
-        click.echo(f"\nResults saved to {output_path}")
-        return output_path
-
-
 def run_benchmark(
     max_transcripts: int,
     runs: int,
@@ -245,7 +217,6 @@ def run_benchmark(
         BenchmarkRunner.print_per_bucket(results, buckets)
 
     BenchmarkRunner.print_performance(results)
-    BenchmarkRunner.save_results(results)
 
 
 def run_accuracy_test(

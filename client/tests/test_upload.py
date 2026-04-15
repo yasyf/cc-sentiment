@@ -14,8 +14,17 @@ from cc_sentiment.models import (
     SSHConfig,
 )
 from cc_sentiment.repo import Repository
-from cc_sentiment.upload import Uploader
+from cc_sentiment.upload import (
+    AuthOk,
+    AuthServerError,
+    AuthUnauthorized,
+    AuthUnreachable,
+    Uploader,
+)
 from tests.helpers import make_record
+
+
+import httpx
 
 
 @pytest.fixture
@@ -96,3 +105,70 @@ class TestUpload:
             anyio.run(do_upload)
 
         assert repo.pending_records() == []
+
+
+class TestProbeCredentials:
+    def test_returns_ok_on_2xx(self) -> None:
+        config = SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519"))
+        uploader = Uploader()
+
+        async def run() -> object:
+            with patch.object(Uploader, "_verify_credentials", new=AsyncMock()):
+                return await uploader.probe_credentials(config)
+
+        assert isinstance(anyio.run(run), AuthOk)
+
+    @pytest.mark.parametrize("status", [401, 403])
+    def test_returns_unauthorized_on_401_403(self, status: int) -> None:
+        config = SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519"))
+        uploader = Uploader()
+        response = MagicMock()
+        response.status_code = status
+        error = httpx.HTTPStatusError("denied", request=MagicMock(), response=response)
+
+        async def run() -> object:
+            with patch.object(Uploader, "_verify_credentials", new=AsyncMock(side_effect=error)):
+                return await uploader.probe_credentials(config)
+
+        result = anyio.run(run)
+        assert isinstance(result, AuthUnauthorized)
+        assert result.status == status
+
+    def test_returns_server_error_on_500(self) -> None:
+        config = SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519"))
+        uploader = Uploader()
+        response = MagicMock()
+        response.status_code = 500
+        error = httpx.HTTPStatusError("boom", request=MagicMock(), response=response)
+
+        async def run() -> object:
+            with patch.object(Uploader, "_verify_credentials", new=AsyncMock(side_effect=error)):
+                return await uploader.probe_credentials(config)
+
+        result = anyio.run(run)
+        assert isinstance(result, AuthServerError)
+        assert result.status == 500
+
+    def test_returns_unreachable_on_connect_error(self) -> None:
+        config = SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519"))
+        uploader = Uploader()
+
+        async def run() -> object:
+            err = httpx.ConnectError("refused")
+            with patch.object(Uploader, "_verify_credentials", new=AsyncMock(side_effect=err)):
+                return await uploader.probe_credentials(config)
+
+        result = anyio.run(run)
+        assert isinstance(result, AuthUnreachable)
+        assert "refused" in result.detail
+
+    def test_returns_unreachable_on_timeout(self) -> None:
+        config = SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519"))
+        uploader = Uploader()
+
+        async def run() -> object:
+            err = httpx.TimeoutException("slow")
+            with patch.object(Uploader, "_verify_credentials", new=AsyncMock(side_effect=err)):
+                return await uploader.probe_credentials(config)
+
+        assert isinstance(anyio.run(run), AuthUnreachable)

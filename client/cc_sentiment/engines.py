@@ -78,6 +78,22 @@ def check_frustration(bucket: ConversationBucket) -> bool:
     )
 
 
+def partition_frustration(
+    buckets: list[ConversationBucket],
+    on_progress: Callable[[int], None] | None = None,
+) -> tuple[list[SentimentScore], list[tuple[int, ConversationBucket]]]:
+    scores: list[SentimentScore] = [SentimentScore(0)] * len(buckets)
+    to_infer: list[tuple[int, ConversationBucket]] = []
+    for i, bucket in enumerate(buckets):
+        if check_frustration(bucket):
+            scores[i] = SentimentScore(1)
+            if on_progress:
+                on_progress(1)
+        else:
+            to_infer.append((i, bucket))
+    return scores, to_infer
+
+
 def format_conversation(bucket: ConversationBucket) -> str:
     full = "\n".join(
         f"{'DEVELOPER' if msg.role == 'user' else 'AI'}: {msg.content}"
@@ -269,14 +285,7 @@ class OMLXEngine:
         buckets: list[ConversationBucket],
         on_progress: Callable[[int], None] | None = None,
     ) -> list[SentimentScore]:
-        scores: list[SentimentScore] = [SentimentScore(0)] * len(buckets)
-        to_infer: list[tuple[int, ConversationBucket]] = []
-
-        for i, bucket in enumerate(buckets):
-            if check_frustration(bucket):
-                scores[i] = SentimentScore(1)
-            else:
-                to_infer.append((i, bucket))
+        scores, to_infer = partition_frustration(buckets, on_progress)
 
         for chunk_start in range(0, len(to_infer), SERVER_RESTART_THRESHOLD):
             if chunk_start > 0:
@@ -451,18 +460,19 @@ class ClaudeCLIEngine:
         buckets: list[ConversationBucket],
         on_progress: Callable[[int], None] | None = None,
     ) -> list[SentimentScore]:
+        scores, to_infer = partition_frustration(buckets, on_progress)
         sem = asyncio.Semaphore(CLAUDE_CLI_CONCURRENCY)
 
-        async def score_bucket(bucket: ConversationBucket) -> SentimentScore:
-            if check_frustration(bucket):
-                return SentimentScore(1)
+        async def score_bucket(idx: int, bucket: ConversationBucket) -> tuple[int, SentimentScore]:
             async with sem:
                 score = await self.score_one(bucket)
             if on_progress:
                 on_progress(1)
-            return score
+            return idx, score
 
-        return list(await asyncio.gather(*map(score_bucket, buckets)))
+        for idx, score in await asyncio.gather(*(score_bucket(i, b) for i, b in to_infer)):
+            scores[idx] = score
+        return scores
 
     def peak_memory_gb(self) -> float:
         return 0.0
