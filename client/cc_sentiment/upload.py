@@ -8,10 +8,10 @@ from cc_sentiment.models import (
     AppState,
     GPGConfig,
     SentimentRecord,
-    SessionId,
     SSHConfig,
     UploadPayload,
 )
+from cc_sentiment.repo import Repository
 from cc_sentiment.signing import GPGBackend, PayloadSigner, SigningBackend, SSHBackend
 
 DEFAULT_SERVER_URL = "https://anetaco--cc-sentiment-api-serve.modal.run"
@@ -43,15 +43,6 @@ class Uploader:
             case GPGConfig(fpr=f):
                 return GPGBackend(fpr=f)
 
-    @staticmethod
-    def records_from_state(state: AppState) -> list[SentimentRecord]:
-        return [
-            record
-            for session in state.sessions.values()
-            if not session.uploaded
-            for record in session.records
-        ]
-
     @_retry
     async def verify_credentials(self, config: SSHConfig | GPGConfig) -> None:
         backend = self.backend_from_config(config)
@@ -69,7 +60,9 @@ class Uploader:
             )).raise_for_status()
 
     @_retry
-    async def upload(self, records: list[SentimentRecord], state: AppState) -> None:
+    async def upload(
+        self, records: list[SentimentRecord], state: AppState, repo: Repository
+    ) -> None:
         assert state.config is not None, "Client not configured. Run 'cc-sentiment setup' first."
 
         backend = self.backend_from_config(state.config)
@@ -88,7 +81,6 @@ class Uploader:
                 timeout=30.0,
             )).raise_for_status()
 
-        for session_id in {r.conversation_id for r in records}:
-            if session_id in state.sessions:
-                state.sessions[session_id] = state.sessions[session_id].model_copy(update={"uploaded": True})
-        await anyio.to_thread.run_sync(state.save)
+        await anyio.to_thread.run_sync(
+            repo.mark_sessions_uploaded, {r.conversation_id for r in records}
+        )

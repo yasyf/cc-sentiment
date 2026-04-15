@@ -3,9 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-from pydantic import ValidationError
-
 from cc_sentiment.models import (
     AppState,
     BucketIndex,
@@ -13,8 +10,6 @@ from cc_sentiment.models import (
     ContributorId,
     GPGConfig,
     PROMPT_VERSION,
-    ProcessedFile,
-    ProcessedSession,
     SentimentRecord,
     SentimentScore,
     SessionId,
@@ -26,31 +21,31 @@ from tests.helpers import make_record
 class TestAppState:
     def test_load_save_roundtrip(self, tmp_path: Path) -> None:
         state_file = tmp_path / "state.json"
-        record = make_record()
         state = AppState(
-            sessions={
-                SessionId("s1"): ProcessedSession(records=(record,)),
-            },
+            config=SSHConfig(
+                contributor_id=ContributorId("testuser"),
+                key_path=Path("/home/.ssh/id_ed25519"),
+            ),
         )
         with patch.object(AppState, "state_path", return_value=state_file):
             state.save()
             loaded = AppState.load()
-        assert loaded.sessions[SessionId("s1")].records == (record,)
-        assert loaded.sessions[SessionId("s1")].uploaded is False
+        assert isinstance(loaded.config, SSHConfig)
+        assert loaded.config.contributor_id == ContributorId("testuser")
 
     def test_load_missing_file_returns_default(self, tmp_path: Path) -> None:
         with patch.object(AppState, "state_path", return_value=tmp_path / "nope.json"):
             loaded = AppState.load()
-        assert loaded.sessions == {}
-        assert loaded.processed_files == {}
         assert loaded.config is None
 
-
-class TestProcessedSession:
-    def test_frozen_immutability(self) -> None:
-        session = ProcessedSession(records=(make_record(),))
-        with pytest.raises(ValidationError):
-            session.uploaded = True
+    def test_load_ignores_unknown_legacy_keys(self, tmp_path: Path) -> None:
+        state_file = tmp_path / "state.json"
+        state_file.write_text(
+            '{"config": null, "sessions": {"s1": {"records": []}}, "processed_files": {}}'
+        )
+        with patch.object(AppState, "state_path", return_value=state_file):
+            loaded = AppState.load()
+        assert loaded.config is None
 
 
 class TestSentimentRecord:
@@ -62,13 +57,6 @@ class TestSentimentRecord:
         assert restored.prompt_version == PROMPT_VERSION
         assert restored.claude_model == "claude-sonnet-4-20250514"
         assert restored.client_version == CLIENT_VERSION
-
-
-class TestProcessedFile:
-    def test_frozen(self) -> None:
-        pf = ProcessedFile(mtime=1234.5)
-        with pytest.raises(ValidationError):
-            pf.mtime = 9999.0
 
 
 class TestClientConfig:

@@ -137,7 +137,7 @@ All rules from root `AGENTS.md` apply, plus:
 
 - **MLX isolated in `sentiment.py`.** No MLX imports leak into other modules. Keeps the CLI testable on non-Apple-Silicon (mock sentiment module).
 - **Subprocess calls use explicit argument lists.** Never `shell=True`. Always `subprocess.run(["ssh-keygen", "-Y", "sign", ...])`.
-- **Local state is a single JSON file.** `~/.cc-sentiment/state.json` for processed transcripts and pending uploads. No database for the client.
+- **Local state is split between JSON and SQLite.** `~/.cc-sentiment/state.json` holds only the signing config. Derived state (records, sessions, scored buckets, file mtimes) lives in `~/.cc-sentiment/records.db` via stdlib `sqlite3` wrapped in `anyio.to_thread.run_sync`.
 - **CLI commands are thin.** Parse args, call library modules, format output. No business logic in CLI handlers.
 - **All network calls through `upload.py`.** Single module owns the HTTP client, base URL, retry logic.
 - **Fail loudly on wrong platform.** If MLX unavailable (not Apple Silicon), crash at import time with a clear message.

@@ -49,6 +49,7 @@ from cc_sentiment.models import (
     SentimentRecord,
     SSHConfig,
 )
+from cc_sentiment.repo import Repository
 from cc_sentiment.signing import (
     GPGBackend,
     GPGKeyInfo,
@@ -856,10 +857,17 @@ class CCSentimentApp(App[None]):
     total: reactive[int] = reactive(0)
     status_text: reactive[str] = reactive("Initializing...")
 
-    def __init__(self, state: AppState, model_repo: str | None = None) -> None:
+    def __init__(
+        self,
+        state: AppState,
+        model_repo: str | None = None,
+        db_path: Path | None = None,
+    ) -> None:
         super().__init__()
         self.state = state
         self.model_repo = model_repo
+        self.db_path = db_path or Repository.default_path()
+        self.repo: Repository | None = None
         self.records: list[SentimentRecord] = []
         self._score_history: list[float] = []
         self._score_bars: dict[int, ScoreBar] = {}
@@ -915,14 +923,20 @@ class CCSentimentApp(App[None]):
             yield Label("", id="status-line")
         yield Footer()
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self.title = "cc-sentiment"
         self._start_time = time.monotonic()
-        self._seed_from_state()
+        self.repo = await anyio.to_thread.run_sync(Repository.open, self.db_path)
+        await self._seed_from_repo()
         self.run_flow()
 
-    def _seed_from_state(self) -> None:
-        existing = [r for s in self.state.sessions.values() for r in s.records]
+    async def on_unmount(self) -> None:
+        if self.repo:
+            await anyio.to_thread.run_sync(self.repo.close)
+
+    async def _seed_from_repo(self) -> None:
+        assert self.repo is not None
+        existing = await anyio.to_thread.run_sync(self.repo.all_records)
         if not existing:
             return
         self.records = list(existing)
@@ -934,6 +948,8 @@ class CCSentimentApp(App[None]):
         from cc_sentiment.pipeline import Pipeline
         from cc_sentiment.upload import Uploader
 
+        assert self.repo is not None
+
         try:
             engine = await anyio.to_thread.run_sync(resolve_engine, None)
         except RuntimeError as e:
@@ -942,8 +958,8 @@ class CCSentimentApp(App[None]):
             return
 
         self._update_status("[dim]Discovering transcripts...[/]")
-        transcripts = await anyio.to_thread.run_sync(Pipeline.discover_new_transcripts, self.state)
-        pending = Uploader.records_from_state(self.state)
+        transcripts = await anyio.to_thread.run_sync(Pipeline.discover_new_transcripts, self.repo)
+        pending = await anyio.to_thread.run_sync(self.repo.pending_records)
 
         if (transcripts or pending) and self.state.config is None:
             ok = await self.push_screen_wait(SetupScreen(self.state))
@@ -954,7 +970,7 @@ class CCSentimentApp(App[None]):
         if engine == "claude" and transcripts:
             self._update_status("[dim]Counting new buckets for cost estimate...[/]")
             bucket_count = await anyio.to_thread.run_sync(
-                Pipeline.count_new_buckets, self.state, transcripts
+                Pipeline.count_new_buckets, self.repo, transcripts
             )
             if bucket_count > 0:
                 ok = await self.push_screen_wait(
@@ -968,26 +984,27 @@ class CCSentimentApp(App[None]):
             self._set_total(len(transcripts))
             self._update_status(f"[dim]Loading {engine} engine...[/]")
             await Pipeline.run(
-                self.state, engine, self.model_repo, transcripts, self._add_records,
+                self.repo, engine, self.model_repo, transcripts, self._add_records,
             )
 
-        pending = Uploader.records_from_state(self.state)
+        pending = await anyio.to_thread.run_sync(self.repo.pending_records)
         if pending:
             self._update_status("[dim]Uploading records...[/]")
             try:
-                await Uploader().upload(pending, self.state)
+                await Uploader().upload(pending, self.state, self.repo)
             except Exception as e:
                 self._update_status(f"[red bold]Upload failed:[/] {e}")
                 self._rescan_armed = True
                 return
 
-        self._show_idle()
+        await self._show_idle()
         self._rescan_armed = True
 
-    def _show_idle(self) -> None:
-        total_buckets = sum(len(s.records) for s in self.state.sessions.values())
-        total_sessions = len(self.state.sessions)
-        total_files = len(self.state.processed_files)
+    async def _show_idle(self) -> None:
+        assert self.repo is not None
+        total_buckets, total_sessions, total_files = await anyio.to_thread.run_sync(
+            self.repo.stats
+        )
         self.query_one("#stat-buckets", Static).update(f"[b]{total_buckets}[/]")
         self.query_one("#stat-sessions", Static).update(f"[b]{total_sessions}[/]")
         self.query_one("#stat-files", Static).update(f"[b]{total_files}[/]")
@@ -1001,13 +1018,13 @@ class CCSentimentApp(App[None]):
                 f"[dim]Press R to rescan.[/]"
             )
 
-    def action_rescan(self) -> None:
+    async def action_rescan(self) -> None:
         if not self._rescan_armed:
             return
         if self._rescan_pending:
             self._rescan_pending = False
             self._rescan_armed = False
-            self._reset_for_rescan()
+            await self._reset_for_rescan()
             self.run_flow()
             return
         self._rescan_pending = True
@@ -1016,15 +1033,14 @@ class CCSentimentApp(App[None]):
         )
         self.set_timer(RESCAN_CONFIRM_SECONDS, self._cancel_rescan)
 
-    def _cancel_rescan(self) -> None:
+    async def _cancel_rescan(self) -> None:
         if self._rescan_pending:
             self._rescan_pending = False
-            self._show_idle()
+            await self._show_idle()
 
-    def _reset_for_rescan(self) -> None:
-        self.state.processed_files.clear()
-        self.state.sessions.clear()
-        self.state.save()
+    async def _reset_for_rescan(self) -> None:
+        assert self.repo is not None
+        await anyio.to_thread.run_sync(self.repo.clear_all)
         self.records = []
         self._score_history = []
         self.scored = 0

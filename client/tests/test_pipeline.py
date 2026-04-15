@@ -1,52 +1,57 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import anyio
+import pytest
 
 from cc_sentiment.models import (
-    AppState,
     BucketIndex,
     BucketKey,
-    ProcessedFile,
     SentimentRecord,
     SentimentScore,
     SessionId,
 )
 from cc_sentiment.pipeline import Pipeline
+from cc_sentiment.repo import Repository
 from tests.helpers import make_record
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "sample_transcript.jsonl"
 
 
+@pytest.fixture
+def repo(tmp_path: Path) -> Iterator[Repository]:
+    r = Repository.open(tmp_path / "records.db")
+    try:
+        yield r
+    finally:
+        r.close()
+
+
 class TestDiscoverNewTranscripts:
-    def test_finds_new_files(self) -> None:
-        state = AppState()
+    def test_finds_new_files(self, repo: Repository) -> None:
         fake_path = Path("/fake/transcript.jsonl")
         with patch("cc_sentiment.transcripts.TranscriptDiscovery.find_transcripts", return_value=[fake_path]), \
              patch("cc_sentiment.transcripts.TranscriptDiscovery.transcript_mtime", return_value=100.0):
-            result = Pipeline.discover_new_transcripts(state)
+            result = Pipeline.discover_new_transcripts(repo)
         assert len(result) == 1
         assert result[0] == (fake_path, 100.0)
 
-    def test_skips_unchanged_files(self) -> None:
-        state = AppState(
-            processed_files={"/fake/transcript.jsonl": ProcessedFile(mtime=100.0)},
-        )
+    def test_skips_unchanged_files(self, repo: Repository) -> None:
+        repo.save_records("/fake/transcript.jsonl", 100.0, [])
         with patch("cc_sentiment.transcripts.TranscriptDiscovery.find_transcripts", return_value=[Path("/fake/transcript.jsonl")]), \
              patch("cc_sentiment.transcripts.TranscriptDiscovery.transcript_mtime", return_value=100.0):
-            result = Pipeline.discover_new_transcripts(state)
+            result = Pipeline.discover_new_transcripts(repo)
         assert result == []
 
-    def test_reprocesses_updated_files(self) -> None:
-        state = AppState(
-            processed_files={"/fake/transcript.jsonl": ProcessedFile(mtime=100.0)},
-        )
+    def test_reprocesses_updated_files(self, repo: Repository) -> None:
+        repo.save_records("/fake/transcript.jsonl", 100.0, [])
         with patch("cc_sentiment.transcripts.TranscriptDiscovery.find_transcripts", return_value=[Path("/fake/transcript.jsonl")]), \
              patch("cc_sentiment.transcripts.TranscriptDiscovery.transcript_mtime", return_value=200.0):
-            result = Pipeline.discover_new_transcripts(state)
+            result = Pipeline.discover_new_transcripts(repo)
         assert len(result) == 1
         assert result[0][1] == 200.0
 
@@ -89,7 +94,7 @@ class TestBucketCaching:
         async def run() -> list[SentimentRecord]:
             return await Pipeline.process_transcript(FIXTURE_PATH, classifier, scored_buckets=cached)
 
-        result = anyio.run(run)
+        anyio.run(run)
         called_buckets = classifier.score.call_args[0][0]
         assert all(
             BucketKey(session_id=b.session_id, bucket_index=b.bucket_index) not in cached
@@ -116,31 +121,22 @@ class TestBucketCaching:
         assert result == []
         classifier.score.assert_not_called()
 
-    def test_save_records_persists_bucket_keys(self) -> None:
-        state = AppState()
+    def test_save_records_persists_bucket_keys(self, repo: Repository) -> None:
         record = make_record()
-        path = Path("/fake.jsonl")
+        repo.save_records("/fake.jsonl", 100.0, [record])
 
-        with patch.object(AppState, "save"):
-            Pipeline.save_records(state, path, 100.0, [record])
+        scored = repo.scored_buckets_for("/fake.jsonl")
+        assert BucketKey(session_id=SessionId("session-1"), bucket_index=BucketIndex(0)) in scored
 
-        pf = state.processed_files[str(path)]
-        assert BucketKey(session_id=SessionId("session-1"), bucket_index=BucketIndex(0)) in pf.scored_buckets
+    def test_save_records_merges_bucket_keys(self, repo: Repository) -> None:
+        first = make_record(session_id="old", bucket_index=99)
+        second = make_record()
+        repo.save_records("/fake.jsonl", 50.0, [first])
+        repo.save_records("/fake.jsonl", 100.0, [second])
 
-    def test_save_records_merges_bucket_keys(self) -> None:
-        existing_key = BucketKey(session_id=SessionId("old"), bucket_index=BucketIndex(99))
-        state = AppState(
-            processed_files={"/fake.jsonl": ProcessedFile(mtime=50.0, scored_buckets=frozenset({existing_key}))},
-        )
-        record = make_record()
-        path = Path("/fake.jsonl")
-
-        with patch.object(AppState, "save"):
-            Pipeline.save_records(state, path, 100.0, [record])
-
-        pf = state.processed_files[str(path)]
-        assert existing_key in pf.scored_buckets
-        assert BucketKey(session_id=SessionId("session-1"), bucket_index=BucketIndex(0)) in pf.scored_buckets
+        scored = repo.scored_buckets_for("/fake.jsonl")
+        assert BucketKey(session_id=SessionId("old"), bucket_index=BucketIndex(99)) in scored
+        assert BucketKey(session_id=SessionId("session-1"), bucket_index=BucketIndex(0)) in scored
 
 
 class TestCrossBucketReadHistory:
@@ -173,8 +169,7 @@ class TestCrossBucketReadHistory:
 
 
 class TestPipelineStateUpdate:
-    def test_state_updated_with_records(self) -> None:
-        state = AppState()
+    def test_repo_updated_with_records(self, repo: Repository) -> None:
         record = make_record()
 
         mock_classifier = MagicMock()
@@ -186,16 +181,18 @@ class TestPipelineStateUpdate:
 
         with patch.dict(sys.modules, {"cc_sentiment.sentiment": mock_sentiment_mod}), \
              patch.object(Pipeline, "discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 100.0)]), \
-             patch.object(Pipeline, "process_transcript", new_callable=AsyncMock, return_value=[record]), \
-             patch.object(AppState, "save"):
+             patch.object(Pipeline, "process_transcript", new_callable=AsyncMock, return_value=[record]):
 
             async def do_run() -> list[SentimentRecord]:
-                return await Pipeline.run(state, engine="mlx")
+                return await Pipeline.run(repo, engine="mlx")
 
             result = anyio.run(do_run)
 
-        assert SessionId("session-1") in state.sessions
-        assert state.sessions[SessionId("session-1")].records == (record,)
-        assert state.sessions[SessionId("session-1")].uploaded is False
-        assert str(Path("/fake.jsonl")) in state.processed_files
+        all_records = repo.all_records()
+        assert len(all_records) == 1
+        assert all_records[0].conversation_id == SessionId("session-1")
+        pending = repo.pending_records()
+        assert len(pending) == 1
+        assert pending[0] == record
+        assert str(Path("/fake.jsonl")) in repo.file_mtimes()
         assert len(result) == 1

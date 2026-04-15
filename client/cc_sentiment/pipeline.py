@@ -8,15 +8,13 @@ import anyio.to_thread
 
 from cc_sentiment.engines import HAIKU_MODEL, ClaudeCLIEngine, InferenceEngine, OMLXEngine
 from cc_sentiment.models import (
-    AppState,
     BucketKey,
     BucketMetrics,
     ConversationBucket,
-    ProcessedFile,
-    ProcessedSession,
     SentimentRecord,
     SessionId,
 )
+from cc_sentiment.repo import Repository
 from cc_sentiment.transcripts import (
     ConversationBucketer,
     TranscriptDiscovery,
@@ -26,30 +24,25 @@ from cc_sentiment.transcripts import (
 
 class Pipeline:
     @staticmethod
-    def discover_new_transcripts(state: AppState) -> list[tuple[Path, float]]:
+    def discover_new_transcripts(repo: Repository) -> list[tuple[Path, float]]:
+        known = repo.file_mtimes()
         return [
             (path, mtime)
             for path in TranscriptDiscovery.find_transcripts()
             if (mtime := TranscriptDiscovery.transcript_mtime(path))
-            and (
-                (key := str(path)) not in state.processed_files
-                or state.processed_files[key].mtime < mtime
-            )
+            and (str(path) not in known or known[str(path)] < mtime)
         ]
 
     @staticmethod
-    def count_new_buckets(state: AppState, transcripts: list[tuple[Path, float]]) -> int:
+    def count_new_buckets(repo: Repository, transcripts: list[tuple[Path, float]]) -> int:
         return sum(
             sum(
-                BucketKey(session_id=b.session_id, bucket_index=b.bucket_index) not in (
-                    state.processed_files[key].scored_buckets
-                    if (key := str(path)) in state.processed_files
-                    else frozenset()
-                )
+                BucketKey(session_id=b.session_id, bucket_index=b.bucket_index) not in scored
                 for b in ConversationBucketer.bucket_messages(messages)
             )
             for path, _ in transcripts
             if (messages := TranscriptParser.parse_file(path))
+            if (scored := repo.scored_buckets_for(str(path))) is not None
         )
 
     @staticmethod
@@ -129,35 +122,10 @@ class Pipeline:
             for bucket, score in zip(new_buckets, scores)
         ]
 
-    @staticmethod
-    def save_records(state: AppState, path: Path, mtime: float, records: list[SentimentRecord]) -> None:
-        existing_file = state.processed_files.get(str(path))
-        prev_buckets = existing_file.scored_buckets if existing_file else frozenset()
-        new_bucket_keys = frozenset(
-            BucketKey(session_id=r.conversation_id, bucket_index=r.bucket_index)
-            for r in records
-        )
-        state.processed_files[str(path)] = ProcessedFile(
-            mtime=mtime,
-            scored_buckets=prev_buckets | new_bucket_keys,
-        )
-        by_session: dict[SessionId, list[SentimentRecord]] = {}
-        for record in records:
-            by_session.setdefault(record.conversation_id, []).append(record)
-        for session_id, session_records in by_session.items():
-            existing = state.sessions.get(session_id)
-            merged = list(existing.records) if existing else []
-            merged.extend(session_records)
-            state.sessions[session_id] = ProcessedSession(
-                records=tuple(merged),
-                uploaded=False,
-            )
-        state.save()
-
     @classmethod
     async def run(
         cls,
-        state: AppState,
+        repo: Repository,
         engine: str = "omlx",
         model_repo: str | None = None,
         new_transcripts: list[tuple[Path, float]] | None = None,
@@ -178,7 +146,9 @@ class Pipeline:
             case _:
                 raise ValueError(f"Unknown engine: {engine}")
 
-        transcripts = new_transcripts or cls.discover_new_transcripts(state)
+        transcripts = new_transcripts or await anyio.to_thread.run_sync(
+            cls.discover_new_transcripts, repo
+        )
         if not transcripts:
             return []
 
@@ -186,11 +156,12 @@ class Pipeline:
 
         try:
             for path, mtime in transcripts:
-                existing_file = state.processed_files.get(str(path))
-                scored_buckets = existing_file.scored_buckets if existing_file else frozenset()
+                scored_buckets = await anyio.to_thread.run_sync(
+                    repo.scored_buckets_for, str(path)
+                )
                 records = await cls.process_transcript(path, classifier, scored_buckets)
                 all_records.extend(records)
-                await anyio.to_thread.run_sync(cls.save_records, state, path, mtime, records)
+                await anyio.to_thread.run_sync(repo.save_records, str(path), mtime, records)
 
                 if on_records and records:
                     on_records(records)

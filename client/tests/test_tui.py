@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from textual.app import App
 from textual.widgets import Button, ContentSwitcher, DataTable, Input, Label
 
 from cc_sentiment.models import AppState, ContributorId, GPGConfig, SSHConfig
+from cc_sentiment.repo import Repository
 from cc_sentiment.signing import GPGKeyInfo, SSHKeyInfo
 from cc_sentiment.tui import (
     CCSentimentApp,
@@ -334,54 +335,55 @@ async def test_platform_error_quit_dismisses():
         assert harness.dismissed is None
 
 
-async def test_ccsentiment_app_engine_failure_shows_error_and_exits():
+async def test_ccsentiment_app_engine_failure_shows_error_and_exits(tmp_path: Path):
     state = AppState()
+    db_path = tmp_path / "records.db"
     with patch("cc_sentiment.tui.resolve_engine", side_effect=RuntimeError("no engine")), \
          patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
-        app = CCSentimentApp(state=state)
+        app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
             assert isinstance(pilot.app.screen, PlatformErrorScreen)
 
 
-async def test_ccsentiment_app_pushes_setup_when_no_config():
+async def test_ccsentiment_app_pushes_setup_when_no_config(tmp_path: Path):
     state = AppState()
+    db_path = tmp_path / "records.db"
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 0.0)]), \
          patch("cc_sentiment.tui.auto_setup_silent", return_value=False), \
-         patch("cc_sentiment.tui.detect_git_username", return_value=None), \
-         patch("cc_sentiment.upload.Uploader.records_from_state", return_value=[]):
-        app = CCSentimentApp(state=state)
+         patch("cc_sentiment.tui.detect_git_username", return_value=None):
+        app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.5)
             assert isinstance(pilot.app.screen, SetupScreen)
 
 
-async def test_ccsentiment_app_claude_engine_shows_cost_review():
+async def test_ccsentiment_app_claude_engine_shows_cost_review(tmp_path: Path):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="claude"), \
          patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 0.0)]), \
-         patch("cc_sentiment.pipeline.Pipeline.count_new_buckets", return_value=50), \
-         patch("cc_sentiment.upload.Uploader.records_from_state", return_value=[]):
-        app = CCSentimentApp(state=state)
+         patch("cc_sentiment.pipeline.Pipeline.count_new_buckets", return_value=50):
+        app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.5)
             assert isinstance(pilot.app.screen, CostReviewScreen)
             assert pilot.app.screen.bucket_count == 50
 
 
-async def test_ccsentiment_app_cost_cancel_exits():
+async def test_ccsentiment_app_cost_cancel_exits(tmp_path: Path):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
 
     mock_pipeline_run = AsyncMock(return_value=[])
     with patch("cc_sentiment.tui.resolve_engine", return_value="claude"), \
          patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 0.0)]), \
          patch("cc_sentiment.pipeline.Pipeline.count_new_buckets", return_value=50), \
-         patch("cc_sentiment.pipeline.Pipeline.run", mock_pipeline_run), \
-         patch("cc_sentiment.upload.Uploader.records_from_state", return_value=[]):
-        app = CCSentimentApp(state=state)
+         patch("cc_sentiment.pipeline.Pipeline.run", mock_pipeline_run):
+        app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.5)
             assert isinstance(pilot.app.screen, CostReviewScreen)
@@ -390,28 +392,30 @@ async def test_ccsentiment_app_cost_cancel_exits():
             mock_pipeline_run.assert_not_called()
 
 
-async def test_ccsentiment_app_idle_when_no_work():
+async def test_ccsentiment_app_idle_when_no_work(tmp_path: Path):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
-         patch("cc_sentiment.upload.Uploader.records_from_state", return_value=[]):
-        app = CCSentimentApp(state=state)
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
+        app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.5)
             assert app._rescan_armed is True
             assert "all" in app.status_text.lower() or "set" in app.status_text.lower()
 
 
-async def test_ccsentiment_app_rescan_clears_state():
+async def test_ccsentiment_app_rescan_clears_state(tmp_path: Path):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
-    state.processed_files = {"/fake.jsonl": MagicMock()}
+    db_path = tmp_path / "records.db"
+
+    seed = Repository.open(db_path)
+    seed.save_records("/fake.jsonl", 1.0, [make_record()])
+    seed.close()
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
-         patch("cc_sentiment.upload.Uploader.records_from_state", return_value=[]), \
-         patch.object(AppState, "save"):
-        app = CCSentimentApp(state=state)
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
+        app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.5)
             assert app._rescan_armed is True
@@ -422,24 +426,31 @@ async def test_ccsentiment_app_rescan_clears_state():
 
             await pilot.press("r")
             await pilot.pause(delay=0.3)
-            assert state.processed_files == {}
+
+    verify = Repository.open(db_path)
+    try:
+        assert verify.stats() == (0, 0, 0)
+    finally:
+        verify.close()
 
 
-async def test_ccsentiment_app_runs_pipeline_and_uploads():
+async def test_ccsentiment_app_runs_pipeline_and_uploads(tmp_path: Path):
     records = [make_record(score=3), make_record(score=4)]
     state = AppState(config=GPGConfig(contributor_type="github", contributor_id=ContributorId("testuser"), fpr="ABCD1234"))
+    db_path = tmp_path / "records.db"
 
-    mock_pipeline_run = AsyncMock(return_value=records)
+    async def fake_run(repo, *args, **kwargs):
+        repo.save_records("/fake.jsonl", 0.0, records)
+        return records
+
     mock_upload = AsyncMock()
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 0.0)]), \
-         patch("cc_sentiment.pipeline.Pipeline.run", mock_pipeline_run), \
-         patch("cc_sentiment.upload.Uploader.records_from_state", side_effect=[[], records]), \
+         patch("cc_sentiment.pipeline.Pipeline.run", side_effect=fake_run), \
          patch("cc_sentiment.upload.Uploader.upload", mock_upload):
-        app = CCSentimentApp(state=state)
+        app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=1.0)
 
-            mock_pipeline_run.assert_awaited_once()
             mock_upload.assert_awaited_once()

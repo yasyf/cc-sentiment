@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal, NewType
 
-from pydantic import BaseModel, Discriminator, Field, Tag
+from pydantic import BaseModel, Discriminator, Tag
 
 SessionId = NewType("SessionId", str)
 BucketIndex = NewType("BucketIndex", int)
@@ -180,19 +180,9 @@ class BucketKey(BaseModel, frozen=True):
     bucket_index: BucketIndex
 
 
-class ProcessedFile(BaseModel, frozen=True):
-    mtime: float
-    scored_buckets: frozenset[BucketKey] = frozenset()
-
-
-class ProcessedSession(BaseModel, frozen=True):
-    records: tuple[SentimentRecord, ...]
-    uploaded: bool = False
-
-
 class AppState(BaseModel):
-    processed_files: dict[str, ProcessedFile] = Field(default_factory=dict)
-    sessions: dict[SessionId, ProcessedSession] = Field(default_factory=dict)
+    model_config = {"extra": "ignore"}
+
     config: ClientConfig | None = None
 
     @classmethod
