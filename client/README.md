@@ -4,23 +4,15 @@ A macOS CLI that scores your Claude Code conversations on-device and contributes
 
 Your conversations stay on your Mac. Only anonymous numeric scores are uploaded.
 
-## Install & run
-
-The fast path — keeps the [omlx](https://github.com/jundot/omlx) grammar-constrained inference engine:
+## Run it
 
 ```bash
 uvx --from https://sentiments.cc/run cc-sentiment
 ```
 
-Or from PyPI (falls back to the pure `mlx-lm` engine):
+Also installable from PyPI as `cc-sentiment`. The command above installs faster.
 
-```bash
-uvx cc-sentiment
-```
-
-Requires macOS on Apple Silicon, Python 3.13+, and [uv](https://docs.astral.sh/uv/).
-
-The bare command walks you through setup (linking your GitHub account so uploads are attributable), scores your transcripts, and uploads the scores.
+Needs macOS on Apple Silicon, Python 3.13+, and [uv](https://docs.astral.sh/uv/). The first run links your GitHub account, scores transcripts in `~/.claude/projects/`, and uploads the numbers.
 
 ## What gets uploaded
 

@@ -5,60 +5,46 @@
 [![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-black.svg)](https://www.apple.com/mac/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](client/LICENSE)
 
-An open experiment in Claude Code sentiment — does it vary by time of day, day of week, or model?
-
-Contributors run a local CLI that scores their Claude Code transcripts on-device with Gemma 4 via MLX, then uploads only the numeric scores (not the conversations) to a shared dashboard at [sentiments.cc](https://sentiments.cc).
+An open experiment in Claude Code behavior. Contributors run a CLI on their Mac that scores their own Claude Code transcripts locally, and uploads the numbers to a shared dashboard at [sentiments.cc](https://sentiments.cc).
 
 ![Dashboard](docs/dashboard.png)
 
-## Why this exists
+## Why
 
-Threads like [anthropics/claude-code#42796](https://github.com/anthropics/claude-code/issues/42796) catalogued sharp shifts in Claude Code behavior — read:edit ratios collapsing, edits landing without prior reads, more lazy patches than research. Those shifts were felt across the community but hard to measure outside one person's terminal.
+Claude Code threads like [anthropics/claude-code#42796](https://github.com/anthropics/claude-code/issues/42796) describe behavior that shifted in measurable ways: fewer reads before edits, more lazy patches, different tool patterns. Everyone sees their own slice. This pools the numbers so they can be looked at together.
 
-This is a community experiment to measure those signals continuously, on real conversations, and put the numbers somewhere everyone can see.
-
-## Quick start
-
-Two paths, same CLI.
-
-**Fast path (recommended)** — keeps the [omlx](https://github.com/jundot/omlx) grammar-constrained inference engine:
+## Run it
 
 ```bash
 uvx --from https://sentiments.cc/run cc-sentiment
 ```
 
-**PyPI** — discoverable but skips the omlx fast engine in favor of `mlx-lm` fallback (PyPI rejects direct git URLs in dependencies):
+Also published to PyPI as `cc-sentiment`. The command above installs faster.
 
-```bash
-uvx cc-sentiment
-```
+Needs macOS on Apple Silicon, Python 3.13+, and [uv](https://docs.astral.sh/uv/). The first run links your GitHub account, scores any transcripts it finds in `~/.claude/projects/`, and uploads the numbers.
 
-Requires macOS on Apple Silicon, Python 3.13+, and [uv](https://docs.astral.sh/uv/).
+## What gets uploaded
 
-The bare command walks you through setup (linking your GitHub account so uploads are attributable), scores your transcripts, and uploads the scores.
-
-## What we measure
-
-Per 5-minute bucket of each conversation:
+Per 5-minute slice of each conversation:
 
 | Metric | What it captures |
 |---|---|
-| Sentiment score | 1–5 Likert, scored locally by Gemma 4 |
-| Read:edit ratio | How many files Claude reads before making an edit |
-| Edits without prior read % | Share of edits where Claude hadn't yet read the file in this session |
-| Write:edit ratio | Share of file writes vs. surgical edits |
-| Tool calls per turn | How many tools Claude invokes between user messages |
+| Sentiment score | 1–5, scored locally |
+| Read:edit ratio | Files Claude reads before editing |
+| Edits without prior read % | Edits to files Claude hadn't read this session |
+| Write:edit ratio | File rewrites vs. surgical edits |
+| Tool calls per turn | Tools invoked between user messages |
 | Subagent spawns | How often Claude delegates to a subagent |
-| Turn count | Number of user → assistant exchanges |
+| Turn count | User → assistant exchanges |
 | Thinking present / chars | Whether and how much Claude wrote extended thinking |
 | Claude model | Which model produced the assistant turns |
-| `cc_version` | Claude Code CLI version on the user's machine |
+| `cc_version` | Claude Code CLI version |
 
-Plus the contributor's GitHub handle, so uploads are attributable.
+Plus your GitHub handle, so uploads are attributable.
 
-## What stays on your machine
+## What stays on your Mac
 
-Conversation text, file contents, file paths, tool inputs, and tool outputs **never leave your Mac**. Only numbers, timestamps, and the metadata above are uploaded. Scoring runs locally on Apple Silicon — no inference traffic leaves the device.
+Conversation text, file contents, file paths, tool inputs, and tool outputs never leave the device. Scoring is local. Only the numbers above are uploaded.
 
 ## Architecture
 
@@ -75,7 +61,7 @@ Conversation text, file contents, file paths, tool inputs, and tool outputs **ne
 | Command | Description |
 |---------|-------------|
 | `cc-sentiment` | Run the whole flow — set up if needed, then scan and upload |
-| `cc-sentiment setup` | Link your GitHub account for attributable uploads |
+| `cc-sentiment setup` | Link your GitHub account |
 | `cc-sentiment scan --upload` | Score new transcripts and upload |
 | `cc-sentiment scan` | Score transcripts without uploading |
 | `cc-sentiment upload` | Upload previously scored results |
@@ -83,10 +69,7 @@ Conversation text, file contents, file paths, tool inputs, and tool outputs **ne
 
 ## Development
 
-See `AGENTS.md` for conventions. Each component has its own:
-- `server/AGENTS.md` — Modal backend, TimescaleDB, GPG/SSH verification
-- `app/AGENTS.md` — SvelteKit, Chart.js, Vercel
-- `client/AGENTS.md` — macOS CLI, MLX inference, signing
+See `AGENTS.md` for conventions. Each component has its own: `server/AGENTS.md`, `app/AGENTS.md`, `client/AGENTS.md`.
 
 ## License
 
