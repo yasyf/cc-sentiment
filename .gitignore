@@ -17,9 +17,6 @@ venv/
 .env
 .env.*
 
-# uv
-uv.lock
-
 # pytest / coverage
 .pytest_cache/
 htmlcov/
