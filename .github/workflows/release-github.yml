@@ -24,7 +24,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.13"
-          cache-dependency-glob: client/uv.lock
+          enable-cache: false
 
       - name: Patch version
         env:
