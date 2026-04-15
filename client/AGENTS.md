@@ -6,7 +6,7 @@ macOS Apple Silicon CLI tool. Discovers Claude Code conversation transcripts, ru
 
 - **Runtime**: Python 3.12+, macOS Apple Silicon only
 - **ML inference**: MLX (`mlx-lm`) for local Gemma 4 inference on Apple Silicon GPU
-- **Model**: `mlx-community/gemma-4-e4b-it-4bit` (4-bit quantized, ~2.5GB) — also benchmark `unsloth/gemma-4-E4B-it-UD-MLX-4bit`
+- **Model**: `unsloth/gemma-4-E2B-it-UD-MLX-4bit` (4-bit quantized, ~2.5GB)
 - **CLI**: `click` or `typer`
 - **HTTP**: `httpx` for async uploads
 - **Signing**: `ssh-keygen -Y sign` via subprocess
@@ -68,7 +68,7 @@ Extract user messages (`type: "human"`) as the primary sentiment signal. Error t
 ```python
 from mlx_lm import load, generate
 
-model, tokenizer = load("mlx-community/gemma-4-e4b-it-4bit")
+model, tokenizer = load("unsloth/gemma-4-E2B-it-UD-MLX-4bit")
 ```
 
 Model is downloaded once and cached in `~/.cache/huggingface/`.
