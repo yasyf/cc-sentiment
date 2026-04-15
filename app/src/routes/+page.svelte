@@ -24,11 +24,11 @@
 	});
 
 	const verdict = $derived.by(() => {
-		if (overallAvg < 2.0) return { text: 'Claude Code is in trouble.', color: 'text-sentiment-1' };
-		if (overallAvg < 2.5) return { text: 'Claude Code is struggling.', color: 'text-sentiment-2' };
-		if (overallAvg < 3.5) return { text: 'Claude Code is... okay.', color: 'text-sentiment-3' };
-		if (overallAvg < 4.0) return { text: 'Claude Code is doing well.', color: 'text-sentiment-4' };
-		return { text: 'Claude Code is thriving.', color: 'text-sentiment-5' };
+		if (overallAvg < 2.0) return { text: 'Developers are frustrated.', color: 'text-sentiment-1' };
+		if (overallAvg < 2.5) return { text: 'Developers are struggling.', color: 'text-sentiment-2' };
+		if (overallAvg < 3.5) return { text: 'Developers are getting by.', color: 'text-sentiment-3' };
+		if (overallAvg < 4.0) return { text: 'Developers are happy.', color: 'text-sentiment-4' };
+		return { text: 'Developers are thriving.', color: 'text-sentiment-5' };
 	});
 
 	const sentimentLabel = $derived.by(() => {
@@ -87,13 +87,13 @@
 </script>
 
 <svelte:head>
-	<title>cc-sentiment — {verdict.text}</title>
-	<meta name="description" content="{verdict.text} Sentiment is {overallAvg.toFixed(1)}/5 across {data.total_sessions.toLocaleString()} sessions. Live data scored on-device." />
-	<meta property="og:title" content="cc-sentiment — {verdict.text}" />
-	<meta property="og:description" content="{overallAvg.toFixed(1)}/5 across {data.total_sessions.toLocaleString()} sessions — {trendDescription} vs last week." />
-	<meta property="og:type" content="website" />
+	<title>cc-sentiment</title>
+	<meta name="description" content="{verdict.text} Average sentiment is {overallAvg.toFixed(1)}/5 across {data.total_sessions.toLocaleString()} sessions. Live data scored on-device." />
+	<meta property="og:title" content="cc-sentiment" />
+	<meta property="og:description" content="{verdict.text} {overallAvg.toFixed(1)}/5 across {data.total_sessions.toLocaleString()} sessions — {trendDescription} vs last week." />
 	<meta property="og:image" content="/og" />
-	<meta name="twitter:card" content="summary_large_image" />
+	<meta name="twitter:title" content="cc-sentiment" />
+	<meta name="twitter:description" content="{verdict.text} {overallAvg.toFixed(1)}/5 across {data.total_sessions.toLocaleString()} sessions — {trendDescription} vs last week." />
 </svelte:head>
 
 <div class="min-h-screen bg-bg">
@@ -118,7 +118,7 @@
 				{overallAvg.toFixed(1)}/5 across {data.total_sessions.toLocaleString()} sessions this week — {trendDescription}.
 			</p>
 			<p class="mt-1 max-w-2xl text-sm text-text-dim">
-				An open experiment: does Claude Code sentiment vary with time of day, day of week, or model?
+				An open experiment: does developer sentiment with Claude Code vary by time of day, day of week, or model?
 				Anyone can contribute — scores are generated on your Mac and only the numbers leave.
 			</p>
 		</div>

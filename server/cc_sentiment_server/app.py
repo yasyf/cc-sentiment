@@ -5,6 +5,7 @@ import os
 import time
 from typing import Callable, Protocol
 
+import httpx
 import modal
 from fastapi import FastAPI, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -106,6 +107,7 @@ def create_app(
             return JSONResponse({"detail": "Signature verification failed"}, status_code=401)
 
         await db.ingest(payload.records, payload.contributor_id, payload.contributor_type)
+        await revalidate_dashboard.spawn.aio("dashboard")
         return UploadResponse(ingested=len(payload.records))
 
     @web_app.get("/data")
@@ -177,6 +179,24 @@ async def seed() -> None:
         print("Seed complete: table, hypertable, indexes, continuous aggregate, compression policy.")
     finally:
         await db.close()
+
+
+@app.function(image=image, secrets=[modal.Secret.from_name("cc-sentiment-vercel")])
+@modal.batched(max_batch_size=100, wait_ms=60_000)
+async def revalidate_dashboard(tags: list[str]) -> list[bool]:
+    unique = sorted(set(tags))
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(
+            "https://api.vercel.com/v1/edge-cache/invalidate-by-tags",
+            params={
+                "projectIdOrName": os.environ["VERCEL_PROJECT_ID"],
+                "teamId": os.environ["VERCEL_TEAM_ID"],
+            },
+            headers={"Authorization": f"Bearer {os.environ['VERCEL_API_TOKEN']}"},
+            json={"tags": unique, "target": "production"},
+        )
+        response.raise_for_status()
+    return [True] * len(tags)
 
 
 @app.local_entrypoint()

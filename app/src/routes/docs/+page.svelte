@@ -1,6 +1,9 @@
 <svelte:head>
-	<title>Contribute -- cc-sentiment</title>
+	<title>Contribute — cc-sentiment</title>
 	<meta name="description" content="Add your Claude Code sessions to the public sentiment dashboard. One command, fully local scoring, nothing leaves your machine." />
+	<meta property="og:title" content="Contribute — cc-sentiment" />
+	<meta property="og:description" content="One command, fully local scoring, nothing leaves your machine." />
+	<meta property="og:image" content="/og" />
 </svelte:head>
 
 <div class="min-h-screen bg-bg">

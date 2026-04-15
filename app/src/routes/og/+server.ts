@@ -1,8 +1,12 @@
 import { ImageResponse } from '@vercel/og';
+import { addCacheTag } from '@vercel/functions';
 import { fetchData } from '$lib/api.js';
 import type { RequestHandler } from './$types.js';
 
+export const config = { isr: { expiration: 3600 } };
+
 export const GET: RequestHandler = async ({ fetch }) => {
+	addCacheTag('dashboard');
 	const data = await fetchData(fetch);
 
 	const total = data.distribution.reduce((s, d) => s + d.count, 0);
@@ -13,11 +17,11 @@ export const GET: RequestHandler = async ({ fetch }) => {
 	const numAvg = Number(avg);
 
 	const verdict =
-		numAvg < 2.0 ? 'Claude Code is in trouble.' :
-		numAvg < 2.5 ? 'Claude Code is struggling.' :
-		numAvg < 3.5 ? 'Claude Code is... okay.' :
-		numAvg < 4.0 ? 'Claude Code is doing well.' :
-		'Claude Code is thriving.';
+		numAvg < 2.0 ? 'Developers are frustrated.' :
+		numAvg < 2.5 ? 'Developers are struggling.' :
+		numAvg < 3.5 ? 'Developers are getting by.' :
+		numAvg < 4.0 ? 'Developers are happy.' :
+		'Developers are thriving.';
 
 	const verdictColor =
 		numAvg < 2.0 ? '#dc2626' :
