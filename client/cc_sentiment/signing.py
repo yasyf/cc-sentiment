@@ -204,17 +204,25 @@ class KeyDiscovery:
                 return SSHBackend(private_key_path=info.path)
         return None
 
+    @staticmethod
+    def parse_armored_fingerprints(armor: str) -> frozenset[str]:
+        return frozenset(gnupg.GPG().scan_keys_mem(armor).fingerprints)
+
     @classmethod
     def match_gpg_key(cls, username: str) -> GPGBackend | None:
-        github_gpg_armor = cls.fetch_github_gpg_keys(username)
-        if not github_gpg_armor:
+        armor = cls.fetch_github_gpg_keys(username)
+        if not armor:
             return None
-        imported = gnupg.GPG().import_keys(github_gpg_armor)
-        github_fprs = set(imported.fingerprints)
-        for info in cls.find_gpg_keys():
-            if info.fpr in github_fprs:
-                return GPGBackend(fpr=info.fpr)
-        return None
+        github_fprs = cls.parse_armored_fingerprints(armor)
+        return next(
+            (GPGBackend(fpr=info.fpr) for info in cls.find_gpg_keys() if info.fpr in github_fprs),
+            None,
+        )
+
+    @classmethod
+    def gpg_key_on_github(cls, username: str, fpr: str) -> bool:
+        armor = cls.fetch_github_gpg_keys(username)
+        return bool(armor) and fpr in cls.parse_armored_fingerprints(armor)
 
 
 class PayloadSigner:

@@ -86,6 +86,79 @@ class TestKeyDiscovery:
         assert KeyDiscovery.has_tool("python3") is True
         assert KeyDiscovery.has_tool("nonexistent_tool_xyz") is False
 
+    def test_parse_armored_fingerprints_extracts_all_keys(self) -> None:
+        armor = (Path(__file__).parent / "fixtures" / "two_gpg_keys.asc").read_text()
+        fprs = KeyDiscovery.parse_armored_fingerprints(armor)
+        assert "DFB010ADAD7C0FB9478A2C29DCDEBE62BE2C9A3D" in fprs
+        assert "F1B9460D42F7A68B0EAC73F07BAE3C9D5A4A029A" in fprs
+        assert len(fprs) == 2
+
+    def test_parse_armored_fingerprints_empty_armor(self) -> None:
+        assert KeyDiscovery.parse_armored_fingerprints("") == frozenset()
+
+    def test_parse_armored_fingerprints_does_not_pollute_keyring(self, tmp_path: Path) -> None:
+        import gnupg
+        armor = (Path(__file__).parent / "fixtures" / "two_gpg_keys.asc").read_text()
+
+        gpg_home = tmp_path / "gnupg"
+        gpg_home.mkdir(mode=0o700)
+
+        real_gpg_cls = gnupg.GPG
+        def make_gpg(*args, **kwargs):
+            kwargs.setdefault("gnupghome", str(gpg_home))
+            return real_gpg_cls(*args, **kwargs)
+
+        with patch("cc_sentiment.signing.gnupg.GPG", side_effect=make_gpg):
+            KeyDiscovery.parse_armored_fingerprints(armor)
+
+        keys = real_gpg_cls(gnupghome=str(gpg_home)).list_keys()
+        assert list(keys) == []
+
+    @patch.object(KeyDiscovery, "fetch_github_gpg_keys")
+    @patch.object(KeyDiscovery, "find_gpg_keys")
+    @patch.object(KeyDiscovery, "parse_armored_fingerprints")
+    def test_match_gpg_key_finds_local_key_published_on_github(
+        self, mock_parse: MagicMock, mock_find: MagicMock, mock_fetch: MagicMock
+    ) -> None:
+        mock_fetch.return_value = "-----BEGIN PGP PUBLIC KEY BLOCK-----\n..."
+        mock_parse.return_value = frozenset(["F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A"])
+        mock_find.return_value = (
+            GPGKeyInfo(fpr="F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A", email="me@example.com", algo="rsa4096"),
+        )
+        result = KeyDiscovery.match_gpg_key("testuser")
+        assert result is not None
+        assert result.fpr == "F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A"
+
+    @patch.object(KeyDiscovery, "fetch_github_gpg_keys")
+    @patch.object(KeyDiscovery, "find_gpg_keys")
+    @patch.object(KeyDiscovery, "parse_armored_fingerprints")
+    def test_match_gpg_key_returns_none_when_no_overlap(
+        self, mock_parse: MagicMock, mock_find: MagicMock, mock_fetch: MagicMock
+    ) -> None:
+        mock_fetch.return_value = "-----BEGIN PGP PUBLIC KEY BLOCK-----\n..."
+        mock_parse.return_value = frozenset(["AAAA1111AAAA1111AAAA1111AAAA1111AAAA1111"])
+        mock_find.return_value = (
+            GPGKeyInfo(fpr="BBBB2222BBBB2222BBBB2222BBBB2222BBBB2222", email="me@example.com", algo="rsa4096"),
+        )
+        assert KeyDiscovery.match_gpg_key("testuser") is None
+
+    @patch.object(KeyDiscovery, "fetch_github_gpg_keys", return_value="")
+    def test_match_gpg_key_returns_none_when_github_empty(self, mock_fetch: MagicMock) -> None:
+        assert KeyDiscovery.match_gpg_key("testuser") is None
+
+    @patch.object(KeyDiscovery, "fetch_github_gpg_keys")
+    @patch.object(KeyDiscovery, "parse_armored_fingerprints")
+    def test_gpg_key_on_github_returns_true_when_published(
+        self, mock_parse: MagicMock, mock_fetch: MagicMock
+    ) -> None:
+        mock_fetch.return_value = "-----BEGIN PGP PUBLIC KEY BLOCK-----\n..."
+        mock_parse.return_value = frozenset(["F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A"])
+        assert KeyDiscovery.gpg_key_on_github("testuser", "F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A") is True
+
+    @patch.object(KeyDiscovery, "fetch_github_gpg_keys", return_value="")
+    def test_gpg_key_on_github_returns_false_when_github_empty(self, mock_fetch: MagicMock) -> None:
+        assert KeyDiscovery.gpg_key_on_github("testuser", "ABCD1234") is False
+
 
 class TestPayloadSigner:
     def test_canonical_json_deterministic(self) -> None:

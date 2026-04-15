@@ -27,7 +27,7 @@ dependencies = [
     "tenacity>=8.0",
     "orjson>=3.10",
     "textual>=3.0",
-    "python-gnupg>=0.5",
+    "python-gnupg>=0.5.4",
     "omlx[grammar] @ git+https://github.com/jundot/omlx.git",
 ]
 
