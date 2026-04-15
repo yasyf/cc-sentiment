@@ -2,6 +2,20 @@
 name = "cc-sentiment"
 version = "0.1.0"
 description = "macOS CLI for Claude Code conversation sentiment analysis"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Yasyf Mohamedali", email = "yasyfm@gmail.com" }]
+keywords = ["claude-code", "sentiment", "mlx", "apple-silicon"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 requires-python = ">=3.13.11"
 dependencies = [
     "mlx-lm>=0.20",
@@ -19,6 +33,11 @@ dependencies = [
 
 [project.scripts]
 cc-sentiment = "cc_sentiment.cli:main"
+
+[project.urls]
+Homepage = "https://sentiments.cc"
+Repository = "https://github.com/yasyf/cc-sentiment"
+Issues = "https://github.com/yasyf/cc-sentiment/issues"
 
 [build-system]
 requires = ["hatchling"]
