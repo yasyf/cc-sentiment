@@ -1,0 +1,54 @@
+name: Release (PyPI)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - client/**
+      - .github/workflows/release-pypi.yml
+
+concurrency:
+  group: release-pypi
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+
+      - name: Patch version, strip omlx, drop hatch.metadata
+        env:
+          VERSION: "0.1.${{ github.run_number }}"
+        run: |
+          uv run --no-project --with tomli-w python - <<'PY'
+          import os, tomllib, tomli_w
+          from pathlib import Path
+          path = Path("client/pyproject.toml")
+          data = tomllib.loads(path.read_text())
+          data["project"]["version"] = os.environ["VERSION"]
+          data["project"]["dependencies"] = [
+              d for d in data["project"]["dependencies"]
+              if not d.startswith("omlx")
+          ]
+          data.get("tool", {}).get("hatch", {}).pop("metadata", None)
+          path.write_text(tomli_w.dumps(data))
+          PY
+
+      - name: Build
+        working-directory: client
+        run: uv build
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: client/dist
