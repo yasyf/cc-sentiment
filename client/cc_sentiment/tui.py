@@ -992,6 +992,26 @@ class CCSentimentApp(App[None]):
             self._update_status("[dim]Uploading records...[/]")
             try:
                 await Uploader().upload(pending, self.state, self.repo)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (401, 403):
+                    self._update_status(
+                        "[red bold]Server didn't recognize your key.[/] "
+                        "Run [b]cc-sentiment setup[/] again, or upload your key to GitHub/keys.openpgp.org."
+                    )
+                else:
+                    self._update_status(
+                        f"[red bold]Server rejected upload ({e.response.status_code}).[/] "
+                        f"Records kept locally — press R to retry."
+                    )
+                self._rescan_armed = True
+                return
+            except (httpx.ConnectError, httpx.TimeoutException):
+                self._update_status(
+                    "[red bold]Couldn't reach the server.[/] "
+                    "Records kept locally — press R to retry once you're back online."
+                )
+                self._rescan_armed = True
+                return
             except Exception as e:
                 self._update_status(f"[red bold]Upload failed:[/] {e}")
                 self._rescan_armed = True

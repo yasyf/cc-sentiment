@@ -146,15 +146,15 @@ class Pipeline:
             case _:
                 raise ValueError(f"Unknown engine: {engine}")
 
-        transcripts = new_transcripts or await anyio.to_thread.run_sync(
-            cls.discover_new_transcripts, repo
-        )
-        if not transcripts:
-            return []
-
-        all_records: list[SentimentRecord] = []
-
         try:
+            transcripts = new_transcripts or await anyio.to_thread.run_sync(
+                cls.discover_new_transcripts, repo
+            )
+            if not transcripts:
+                return []
+
+            all_records: list[SentimentRecord] = []
+
             for path, mtime in transcripts:
                 scored_buckets = await anyio.to_thread.run_sync(
                     repo.scored_buckets_for, str(path)
@@ -165,7 +165,7 @@ class Pipeline:
 
                 if on_records and records:
                     on_records(records)
+
+            return all_records
         finally:
             await classifier.close()
-
-        return all_records
