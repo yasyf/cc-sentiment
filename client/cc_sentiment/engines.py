@@ -22,13 +22,6 @@ from cc_sentiment.models import ConversationBucket, SentimentScore
 DEFAULT_MODEL = "unsloth/gemma-4-E2B-it-UD-MLX-4bit"
 MAX_CONVERSATION_CHARS = 8192
 
-HAIKU_MODEL = "claude-haiku-4-5"
-HAIKU_INPUT_USD_PER_MTOK = 1.0
-HAIKU_OUTPUT_USD_PER_MTOK = 5.0
-CLAUDE_EST_INPUT_TOKENS_PER_BUCKET = 2650
-CLAUDE_EST_OUTPUT_TOKENS_PER_BUCKET = 1
-CLAUDE_CLI_CONCURRENCY = 4
-
 FRUSTRATION_PATTERN = re.compile(
     r"\b("
     r"wtf|wth|ffs|omfg|"
@@ -134,15 +127,15 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
-STALL_TIMEOUT = 10.0
-SERVER_RESTART_THRESHOLD = 350
-
-
 class StallDetected(Exception):
     pass
 
 
 class OMLXEngine:
+    STALL_TIMEOUT = 10.0
+    RESTART_THRESHOLD = 350
+    CONCURRENCY = 8
+
     def __init__(self, model_repo: str | None = None) -> None:
         HF_MODEL_DIR = Path.home() / ".cache" / "huggingface" / "hub"
 
@@ -292,15 +285,15 @@ class OMLXEngine:
         scores: list[SentimentScore] = [SentimentScore(0)] * len(buckets)
         indexed = list(enumerate(buckets))
 
-        for chunk_start in range(0, len(indexed), SERVER_RESTART_THRESHOLD):
+        for chunk_start in range(0, len(indexed), self.RESTART_THRESHOLD):
             if chunk_start > 0:
                 await self._rotate_server()
-            if chunk_start + SERVER_RESTART_THRESHOLD < len(indexed):
+            if chunk_start + self.RESTART_THRESHOLD < len(indexed):
                 self._start_next_server_background()
 
-            remaining = indexed[chunk_start : chunk_start + SERVER_RESTART_THRESHOLD]
+            remaining = indexed[chunk_start : chunk_start + self.RESTART_THRESHOLD]
             while remaining:
-                sem = asyncio.Semaphore(8)
+                sem = asyncio.Semaphore(self.CONCURRENCY)
                 stalled = False
 
                 async def bounded(idx: int, b: ConversationBucket) -> tuple[int, SentimentScore | None]:
@@ -338,7 +331,7 @@ class OMLXEngine:
         try:
             resp = await asyncio.wait_for(
                 self.client.post("/v1/chat/completions", json=body),
-                timeout=STALL_TIMEOUT,
+                timeout=self.STALL_TIMEOUT,
             )
         except (TimeoutError, asyncio.TimeoutError):
             raise StallDetected
@@ -374,26 +367,6 @@ class OMLXEngine:
         self._shutdown()
 
 
-def estimate_claude_cost_usd(bucket_count: int) -> float:
-    return bucket_count * (
-        CLAUDE_EST_INPUT_TOKENS_PER_BUCKET * HAIKU_INPUT_USD_PER_MTOK
-        + CLAUDE_EST_OUTPUT_TOKENS_PER_BUCKET * HAIKU_OUTPUT_USD_PER_MTOK
-    ) / 1_000_000
-
-
-def claude_cli_available() -> bool:
-    if not shutil.which("claude"):
-        return False
-    try:
-        result = subprocess.run(
-            ["claude", "auth", "status"],
-            capture_output=True, text=True, timeout=10, check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return False
-    return result.returncode == 0
-
-
 def default_engine() -> str:
     match (sys.platform, platform.machine()):
         case ("darwin", "arm64"):
@@ -402,23 +375,27 @@ def default_engine() -> str:
             return "claude"
 
 
-PLATFORM_ERROR_MESSAGE = (
-    "Can't run sentiment analysis on this platform.\n"
-    "cc-sentiment needs Apple Silicon for local inference, "
-    "or the `claude` CLI as a fallback.\n\n"
-    "Install Claude Code from https://claude.com/claude-code, "
-    "then run `claude auth login` and try again."
-)
-
-
 def resolve_engine(requested: str | None) -> str:
     engine = requested or default_engine()
-    if engine != "claude" or claude_cli_available():
+    if engine != "claude" or ClaudeCLIEngine.is_available():
         return engine
-    raise RuntimeError(PLATFORM_ERROR_MESSAGE)
+    raise RuntimeError(
+        "Can't run sentiment analysis on this platform.\n"
+        "cc-sentiment needs Apple Silicon for local inference, "
+        "or the `claude` CLI as a fallback.\n\n"
+        "Install Claude Code from https://claude.com/claude-code, "
+        "then run `claude auth login` and try again."
+    )
 
 
 class ClaudeCLIEngine:
+    HAIKU_MODEL = "claude-haiku-4-5"
+    HAIKU_INPUT_USD_PER_MTOK = 1.0
+    HAIKU_OUTPUT_USD_PER_MTOK = 5.0
+    EST_INPUT_TOKENS_PER_BUCKET = 2650
+    EST_OUTPUT_TOKENS_PER_BUCKET = 1
+    CONCURRENCY = 4
+
     def __init__(self, model: str) -> None:
         if not shutil.which("claude"):
             raise RuntimeError(
@@ -428,6 +405,26 @@ class ClaudeCLIEngine:
         self.total_cost_usd = 0.0
         self.total_input_tokens = 0
         self.total_output_tokens = 0
+
+    @classmethod
+    def estimate_cost_usd(cls, bucket_count: int) -> float:
+        return bucket_count * (
+            cls.EST_INPUT_TOKENS_PER_BUCKET * cls.HAIKU_INPUT_USD_PER_MTOK
+            + cls.EST_OUTPUT_TOKENS_PER_BUCKET * cls.HAIKU_OUTPUT_USD_PER_MTOK
+        ) / 1_000_000
+
+    @staticmethod
+    def is_available() -> bool:
+        if not shutil.which("claude"):
+            return False
+        try:
+            result = subprocess.run(
+                ["claude", "auth", "status"],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return False
+        return result.returncode == 0
 
     async def score_one(self, bucket: ConversationBucket) -> SentimentScore:
         proc = await asyncio.create_subprocess_exec(
@@ -458,7 +455,7 @@ class ClaudeCLIEngine:
         buckets: list[ConversationBucket],
         on_progress: Callable[[int], None] = NOOP_PROGRESS,
     ) -> list[SentimentScore]:
-        sem = asyncio.Semaphore(CLAUDE_CLI_CONCURRENCY)
+        sem = asyncio.Semaphore(self.CONCURRENCY)
 
         async def one(bucket: ConversationBucket) -> SentimentScore:
             async with sem:
@@ -487,7 +484,7 @@ async def build_engine(kind: str, model_repo: str | None = None) -> InferenceEng
             await omlx.warm_system_prompt()
             inner = omlx
         case "claude":
-            inner = ClaudeCLIEngine(model=model_repo or HAIKU_MODEL)
+            inner = ClaudeCLIEngine(model=model_repo or ClaudeCLIEngine.HAIKU_MODEL)
         case _:
             raise ValueError(f"Unknown engine: {kind}")
     return FrustrationFilter(inner)

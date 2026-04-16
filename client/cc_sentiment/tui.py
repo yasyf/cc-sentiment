@@ -39,11 +39,8 @@ from textual.widgets import (
 
 from cc_sentiment.daemon import LaunchAgent
 from cc_sentiment.engines import (
-    HAIKU_INPUT_USD_PER_MTOK,
-    HAIKU_MODEL,
-    HAIKU_OUTPUT_USD_PER_MTOK,
+    ClaudeCLIEngine,
     default_engine,
-    estimate_claude_cost_usd,
     resolve_engine,
 )
 from cc_sentiment.models import (
@@ -326,7 +323,7 @@ class CostReviewScreen(Screen[bool]):
         super().__init__()
         self.bucket_count = bucket_count
         self.model = model
-        self.cost = estimate_claude_cost_usd(bucket_count)
+        self.cost = ClaudeCLIEngine.estimate_cost_usd(bucket_count)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="cost-box"):
@@ -338,8 +335,8 @@ class CostReviewScreen(Screen[bool]):
             )
             yield Label(
                 f"Estimated cost: about [b]${self.cost:.2f}[/] "
-                f"(at ${HAIKU_INPUT_USD_PER_MTOK:.2f}/MTok in, "
-                f"${HAIKU_OUTPUT_USD_PER_MTOK:.2f}/MTok out). "
+                f"(at ${ClaudeCLIEngine.HAIKU_INPUT_USD_PER_MTOK:.2f}/MTok in, "
+                f"${ClaudeCLIEngine.HAIKU_OUTPUT_USD_PER_MTOK:.2f}/MTok out). "
                 f"Actual cost is often lower thanks to prompt caching.",
                 classes="emphasis",
             )
@@ -1197,7 +1194,7 @@ class CCSentimentApp(App[None]):
 
         if engine == "claude" and bucket_count > 0:
             ok = await self.push_screen_wait(
-                CostReviewScreen(bucket_count, self.model_repo or HAIKU_MODEL)
+                CostReviewScreen(bucket_count, self.model_repo or ClaudeCLIEngine.HAIKU_MODEL)
             )
             if not ok:
                 self.exit()
