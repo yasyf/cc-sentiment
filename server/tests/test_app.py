@@ -49,10 +49,13 @@ def verifier() -> AsyncMock:
 
 @pytest.fixture
 async def client(db: Database, verifier: AsyncMock) -> httpx.AsyncClient:
+    async def noop_spawn(days: int) -> None:
+        pass
     app = create_app(
         db=db,
         verifier=verifier,
         data_cache=DictCache(),
+        spawn=noop_spawn,
         allowed_origins=["http://localhost:3000"],
         data_api_token="test-token",
     )

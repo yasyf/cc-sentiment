@@ -4,6 +4,7 @@ import asyncio
 import re
 import subprocess
 import tempfile
+from dataclasses import dataclass, field
 from typing import Any
 
 import gnupg
@@ -19,9 +20,9 @@ class KeyCache:
     async def put(self, key: str, value: object) -> None: ...
 
 
+@dataclass
 class DictKeyCache(KeyCache):
-    def __init__(self) -> None:
-        self.d: dict = {}
+    d: dict[str, object] = field(default_factory=dict)
 
     async def get(self, key: str) -> object | None:
         return self.d.get(key)
@@ -30,9 +31,9 @@ class DictKeyCache(KeyCache):
         self.d[key] = value
 
 
+@dataclass(frozen=True)
 class ModalKeyCache(KeyCache):
-    def __init__(self, modal_dict: object) -> None:
-        self.modal_dict = modal_dict
+    modal_dict: object
 
     async def get(self, key: str) -> object | None:
         return await self.modal_dict.get.aio(key)
@@ -41,9 +42,9 @@ class ModalKeyCache(KeyCache):
         await self.modal_dict.put.aio(key, value)
 
 
+@dataclass
 class Verifier:
-    def __init__(self, key_cache: KeyCache | None = None) -> None:
-        self.key_cache = key_cache
+    key_cache: KeyCache | None = None
 
     async def fetch_github_ssh_keys(self, username: str) -> list[str]:
         async with httpx.AsyncClient() as client:
