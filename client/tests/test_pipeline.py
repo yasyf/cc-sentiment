@@ -223,10 +223,9 @@ class TestOnBucketPlumbing:
 
         classifier = MagicMock()
         classifier.close = AsyncMock()
-        classifier.warm_system_prompt = AsyncMock()
 
         async def run() -> None:
-            with patch("cc_sentiment.pipeline.OMLXEngine", return_value=classifier), \
+            with patch("cc_sentiment.pipeline.build_engine", AsyncMock(return_value=classifier)), \
                  patch.object(Pipeline, "process_transcript", new=fake_process):
                 await Pipeline.run(
                     repo,
