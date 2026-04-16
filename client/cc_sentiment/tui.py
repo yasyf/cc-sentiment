@@ -1062,15 +1062,19 @@ class CCSentimentApp(App[None]):
                     )
                 self._rescan_armed = True
                 return
-            except (httpx.ConnectError, httpx.TimeoutException):
+            except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError):
                 self._update_status(
                     "[red bold]Couldn't reach the server.[/] "
                     "Records kept locally — press R to retry once you're back online."
                 )
                 self._rescan_armed = True
                 return
-            except Exception as e:
-                self._update_status(f"[red bold]Upload failed:[/] {e}")
+            except subprocess.CalledProcessError as e:
+                self._update_status(
+                    f"[red bold]Signing failed ({e.returncode}).[/] "
+                    "Check that your signing key is still accessible, or run "
+                    "[b]cc-sentiment[/] again to pick a different one."
+                )
                 self._rescan_armed = True
                 return
 
