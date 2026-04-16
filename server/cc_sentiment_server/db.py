@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from psycopg_pool import AsyncConnectionPool
@@ -7,15 +8,38 @@ from psycopg_pool import AsyncConnectionPool
 from cc_sentiment_server.models import (
     DataResponse,
     DistributionPoint,
-    HourlyPoint,
     ModelBreakdown,
     SentimentRecord,
     TimelinePoint,
     TrendComparison,
-    WeekdayPoint,
 )
 
-__all__ = ["Database"]
+__all__ = ["Database", "WindowStats", "TrendsStats", "LifetimeStats"]
+
+
+@dataclass(frozen=True, slots=True)
+class WindowStats:
+    distribution: list[DistributionPoint]
+    trend: TrendComparison
+
+
+@dataclass(frozen=True, slots=True)
+class TrendsStats:
+    timeline: list[TimelinePoint]
+    model_breakdown: list[ModelBreakdown]
+    avg_read_edit_ratio: float | None
+    avg_edits_without_prior_read_ratio: float | None
+    avg_tool_calls_per_turn: float | None
+    avg_write_edit_ratio: float | None
+    avg_subagent_count: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class LifetimeStats:
+    total_records: int
+    total_sessions: int
+    total_contributors: int
+    last_updated: datetime
 
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS sentiment (
@@ -62,7 +86,7 @@ CREATE_INDEXES_SQL = [
 CREATE_CONTINUOUS_AGGREGATE_SQL = """
 CREATE MATERIALIZED VIEW IF NOT EXISTS sentiment_hourly
 WITH (timescaledb.continuous) AS
-SELECT time_bucket('1 hour', time) AS bucket,
+SELECT time_bucket(INTERVAL '1 hour', time, 'UTC') AS bucket,
        AVG(sentiment_score)::float AS avg_score,
        COUNT(*)::int AS count,
        AVG(read_edit_ratio)::float AS avg_read_edit_ratio,
@@ -127,27 +151,10 @@ WHERE bucket > NOW() - make_interval(days => %(days)s)
 ORDER BY bucket
 """
 
-HOURLY_SQL = """
-SELECT EXTRACT(hour FROM time)::int AS hour,
-       AVG(sentiment_score)::float AS avg_score,
-       COUNT(*)::int AS count
-FROM sentiment
-GROUP BY hour
-ORDER BY hour
-"""
-
-WEEKDAY_SQL = """
-SELECT EXTRACT(dow FROM time)::int AS dow,
-       AVG(sentiment_score)::float AS avg_score,
-       COUNT(*)::int AS count
-FROM sentiment
-GROUP BY dow
-ORDER BY dow
-"""
-
 DISTRIBUTION_SQL = """
 SELECT sentiment_score AS score, COUNT(*)::int AS count
 FROM sentiment
+WHERE time > NOW() - make_interval(days => %(days)s)
 GROUP BY score
 ORDER BY score
 """
@@ -249,7 +256,30 @@ class Database:
                     ],
                 )
 
-    async def query_all(self, days: int = 7) -> DataResponse:
+    async def query_window(self, days: int) -> WindowStats:
+        async with self.pool.connection() as conn:
+            distribution = [
+                DistributionPoint(score=row[0], count=row[1])
+                for row in await (await conn.execute(DISTRIBUTION_SQL, {"days": days})).fetchall()
+            ]
+            trend_current = await (await conn.execute(TREND_CURRENT_SQL, {"days": days})).fetchone()
+            trend_previous = await (await conn.execute(
+                TREND_PREVIOUS_SQL, {"days": days, "days_double": days * 2}
+            )).fetchone()
+
+        return WindowStats(
+            distribution=distribution,
+            trend=TrendComparison(
+                sentiment_current=trend_current[0] or 0.0,
+                sentiment_previous=trend_previous[0] or 0.0,
+                sessions_current=trend_current[1] or 0,
+                sessions_previous=trend_previous[1] or 0,
+                read_edit_current=trend_current[2],
+                read_edit_previous=trend_previous[2],
+            ),
+        )
+
+    async def query_trends(self, days: int = 30) -> TrendsStats:
         async with self.pool.connection() as conn:
             timeline = [
                 TimelinePoint(
@@ -262,27 +292,6 @@ class Database:
                 )
                 for row in await (await conn.execute(TIMELINE_SQL, {"days": days})).fetchall()
             ]
-            hourly = [
-                HourlyPoint(hour=row[0], avg_score=row[1], count=row[2])
-                for row in await (await conn.execute(HOURLY_SQL)).fetchall()
-            ]
-            weekday = [
-                WeekdayPoint(dow=row[0], avg_score=row[1], count=row[2])
-                for row in await (await conn.execute(WEEKDAY_SQL)).fetchall()
-            ]
-            distribution = [
-                DistributionPoint(score=row[0], count=row[1])
-                for row in await (await conn.execute(DISTRIBUTION_SQL)).fetchall()
-            ]
-            total = (await (await conn.execute(TOTAL_COUNT_SQL)).fetchone())[0]
-            total_sessions = (await (await conn.execute(TOTAL_SESSIONS_SQL)).fetchone())[0]
-            total_contributors = (await (await conn.execute(TOTAL_CONTRIBUTORS_SQL)).fetchone())[0]
-            last_updated = (await (await conn.execute(LAST_UPDATED_SQL)).fetchone())[0]
-
-            trend_current = await (await conn.execute(TREND_CURRENT_SQL, {"days": days})).fetchone()
-            trend_previous = await (await conn.execute(TREND_PREVIOUS_SQL, {"days": days, "days_double": days * 2})).fetchone()
-
-            model_rows = await (await conn.execute(MODEL_BREAKDOWN_SQL, {"days": days})).fetchall()
             model_breakdown = [
                 ModelBreakdown(
                     claude_model=row[0],
@@ -292,34 +301,50 @@ class Database:
                     avg_write_edit_ratio=row[4],
                     avg_subagent_count=row[5],
                 )
-                for row in model_rows
+                for row in await (await conn.execute(MODEL_BREAKDOWN_SQL, {"days": days})).fetchall()
             ]
-
             summary = await (await conn.execute(SUMMARY_AVERAGES_SQL, {"days": days})).fetchone()
 
-        trend = TrendComparison(
-            sentiment_current=trend_current[0] or 0.0,
-            sentiment_previous=trend_previous[0] or 0.0,
-            sessions_current=trend_current[1] or 0,
-            sessions_previous=trend_previous[1] or 0,
-            read_edit_current=trend_current[2],
-            read_edit_previous=trend_previous[2],
-        )
-
-        return DataResponse(
+        return TrendsStats(
             timeline=timeline,
-            hourly=hourly,
-            weekday=weekday,
-            distribution=distribution,
-            total_records=total,
-            total_sessions=total_sessions,
-            total_contributors=total_contributors,
-            last_updated=last_updated or datetime.now(timezone.utc),
-            trend=trend,
             model_breakdown=model_breakdown,
             avg_read_edit_ratio=summary[0],
             avg_edits_without_prior_read_ratio=summary[1],
             avg_tool_calls_per_turn=summary[2],
             avg_write_edit_ratio=summary[3],
             avg_subagent_count=summary[4],
+        )
+
+    async def query_lifetime(self) -> LifetimeStats:
+        async with self.pool.connection() as conn:
+            total = (await (await conn.execute(TOTAL_COUNT_SQL)).fetchone())[0]
+            total_sessions = (await (await conn.execute(TOTAL_SESSIONS_SQL)).fetchone())[0]
+            total_contributors = (await (await conn.execute(TOTAL_CONTRIBUTORS_SQL)).fetchone())[0]
+            last_updated = (await (await conn.execute(LAST_UPDATED_SQL)).fetchone())[0]
+
+        return LifetimeStats(
+            total_records=total,
+            total_sessions=total_sessions,
+            total_contributors=total_contributors,
+            last_updated=last_updated or datetime.now(timezone.utc),
+        )
+
+    async def query_all(self, days: int) -> DataResponse:
+        window = await self.query_window(days)
+        trends = await self.query_trends()
+        lifetime = await self.query_lifetime()
+        return DataResponse(
+            timeline=trends.timeline,
+            distribution=window.distribution,
+            total_records=lifetime.total_records,
+            total_sessions=lifetime.total_sessions,
+            total_contributors=lifetime.total_contributors,
+            last_updated=lifetime.last_updated,
+            trend=window.trend,
+            model_breakdown=trends.model_breakdown,
+            avg_read_edit_ratio=trends.avg_read_edit_ratio,
+            avg_edits_without_prior_read_ratio=trends.avg_edits_without_prior_read_ratio,
+            avg_tool_calls_per_turn=trends.avg_tool_calls_per_turn,
+            avg_write_edit_ratio=trends.avg_write_edit_ratio,
+            avg_subagent_count=trends.avg_subagent_count,
         )
