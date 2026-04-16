@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Protocol
 
 import httpx
-import threading
 
 from cc_sentiment.models import ConversationBucket, SentimentScore
 
@@ -135,6 +134,7 @@ class OMLXEngine:
         self.client: httpx.AsyncClient | None = None
         self.model_name: str | None = None
         self._next_server: tuple[subprocess.Popen, int] | None = None
+        self._next_warm_task: asyncio.Task[None] | None = None
         self._start_server()
 
     def _spawn_server(self, port: int) -> subprocess.Popen:
@@ -161,29 +161,31 @@ class OMLXEngine:
         port = find_free_port()
         proc = self._spawn_server(port)
         self._next_server = (proc, port)
+        self._next_warm_task = asyncio.create_task(
+            self._warm_next_server(f"http://localhost:{port}")
+        )
 
-        def warm() -> None:
-            base = f"http://localhost:{port}"
+    async def _warm_next_server(self, base: str) -> None:
+        async with httpx.AsyncClient(base_url=base, timeout=60.0) as client:
             deadline = time.monotonic() + 60.0
+            ready = False
             while time.monotonic() < deadline:
                 try:
-                    if httpx.get(f"{base}/v1/models", timeout=2.0).status_code == 200:
-                        break
-                except httpx.ConnectError:
-                    pass
-                time.sleep(1.0)
-            else:
+                    resp = await client.get("/v1/models", timeout=2.0)
+                except httpx.HTTPError:
+                    resp = None
+                if resp is not None and resp.status_code == 200:
+                    ready = True
+                    break
+                await asyncio.sleep(1.0)
+            if not ready:
                 return
             try:
-                httpx.post(
-                    f"{base}/v1/chat/completions",
-                    json=self._make_body("warmup"),
-                    timeout=60.0,
+                await client.post(
+                    "/v1/chat/completions", json=self._make_body("warmup")
                 )
             except httpx.HTTPError:
                 pass
-
-        threading.Thread(target=warm, daemon=True).start()
 
     async def _stop_current(self) -> None:
         if self.client:
@@ -348,6 +350,14 @@ class OMLXEngine:
         return extract_score(resp.json()["choices"][0]["message"]["content"])
 
     async def close(self) -> None:
+        task = self._next_warm_task
+        self._next_warm_task = None
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         if self.client:
             await self.client.aclose()
         self._shutdown()
