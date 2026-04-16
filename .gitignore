@@ -55,4 +55,5 @@ mlx_models/
 .context/
 
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 .vercel
