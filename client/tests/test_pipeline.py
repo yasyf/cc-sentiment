@@ -217,8 +217,8 @@ class TestOnBucketPlumbing:
         cb = MagicMock()
         captured: dict[str, object] = {}
 
-        async def fake_process(path, classifier, scored_buckets=frozenset(), on_bucket=None):
-            captured["on_bucket"] = on_bucket
+        async def fake_process(path, classifier, scored_buckets=frozenset(), **kwargs):
+            captured["on_bucket"] = kwargs.get("on_bucket")
             return []
 
         classifier = MagicMock()

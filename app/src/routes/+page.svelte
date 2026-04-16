@@ -119,10 +119,10 @@
 	<title>cc-sentiment</title>
 	<meta name="description" content="{verdict.text} Average sentiment is {overallAvg.toFixed(1)}/5 across {data.total_sessions.toLocaleString()} sessions. Live data scored on-device." />
 	<meta property="og:title" content="cc-sentiment" />
-	<meta property="og:description" content="{verdict.text} {overallAvg.toFixed(1)}/5 across {data.total_sessions.toLocaleString()} sessions — {trendDescription} vs last week." />
+	<meta property="og:description" content="{verdict.text} {overallAvg.toFixed(1)}/5 across {data.total_sessions.toLocaleString()} sessions. {trendDescription} vs last week." />
 	<meta property="og:image" content="/og" />
 	<meta name="twitter:title" content="cc-sentiment" />
-	<meta name="twitter:description" content="{verdict.text} {overallAvg.toFixed(1)}/5 across {data.total_sessions.toLocaleString()} sessions — {trendDescription} vs last week." />
+	<meta name="twitter:description" content="{verdict.text} {overallAvg.toFixed(1)}/5 across {data.total_sessions.toLocaleString()} sessions. {trendDescription} vs last week." />
 </svelte:head>
 
 <div class="min-h-screen bg-bg">
@@ -144,11 +144,11 @@
 				{verdict.text}
 			</h2>
 			<p class="mt-2 text-lg text-text-muted">
-				{overallAvg.toFixed(1)}/5 across {data.trend.sessions_current.toLocaleString()} sessions this week — {trendDescription}.
+				{overallAvg.toFixed(1)}/5 across {data.trend.sessions_current.toLocaleString()} sessions this week. {trendDescription}.
 			</p>
 			<p class="mt-1 max-w-2xl text-sm text-text-dim">
 				An open experiment: does developer sentiment with Claude Code vary by time of day, day of week, or model?
-				Anyone can contribute — scores are generated on your Mac and only the numbers leave.
+				Anyone can contribute. Scoring runs on your Mac, only the numbers leave.
 			</p>
 		</div>
 
@@ -233,7 +233,7 @@
 					<section>
 						<h3 class="mb-0.5 text-sm font-medium text-text-secondary">How sessions feel</h3>
 						<p class="mb-2 text-xs text-text-dim">
-							Distribution of sentiment this week — {frustratedPct.toFixed(0)}% score frustrated or annoyed.
+							Distribution of sentiment this week. {frustratedPct.toFixed(0)}% scored frustrated or annoyed.
 						</p>
 						<div class="rounded-lg border border-border bg-bg-card p-5">
 							<DistributionHistogram data={data.distribution} />
@@ -266,7 +266,7 @@
 								<section>
 									<h3 class="mb-0.5 text-sm font-medium text-text-secondary">Read:Edit ratio over time</h3>
 									<p class="mb-2 text-xs text-text-dim">
-										How many files Claude reads before making an edit (last 30 days). Higher is better — green (&gt;4) means thorough research, red (&lt;2) means lazy editing.
+										How many files Claude reads before making an edit (last 30 days). Higher is better. Green (&gt;4) means thorough research, red (&lt;2) means lazy editing.
 									</p>
 									<div class="rounded-lg border border-border bg-bg-card p-5">
 										<ReadEditTimeline data={data.timeline} />

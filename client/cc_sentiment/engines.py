@@ -58,6 +58,7 @@ STRUCTURED_OUTPUTS_CHOICE = ["1", "2", "3", "4", "5"]
 
 
 NOOP_PROGRESS: Callable[[int], None] = lambda _: None
+NOOP_SNIPPET: Callable[[str, int], None] = lambda _s, _i: None
 
 
 class InferenceEngine(Protocol):

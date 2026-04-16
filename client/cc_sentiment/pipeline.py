@@ -1,17 +1,24 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 
 import anyio
 import anyio.to_thread
 
-from cc_sentiment.engines import NOOP_PROGRESS, InferenceEngine, build_engine
+from cc_sentiment.engines import (
+    NOOP_PROGRESS,
+    NOOP_SNIPPET,
+    InferenceEngine,
+    build_engine,
+)
 from cc_sentiment.models import (
     BucketKey,
     BucketMetrics,
     ConversationBucket,
     SentimentRecord,
+    SentimentScore,
     SessionId,
 )
 from cc_sentiment.repo import Repository
@@ -20,6 +27,12 @@ from cc_sentiment.transcripts import (
     TranscriptDiscovery,
     TranscriptParser,
 )
+
+SNIPPET_FENCED_CODE = re.compile(r"```.*?```", re.DOTALL)
+SNIPPET_INLINE_CODE = re.compile(r"`[^`]*`")
+SNIPPET_LONG_PATH = re.compile(r"\S{40,}")
+SNIPPET_WHITESPACE = re.compile(r"\s+")
+SNIPPET_MAX_LEN = 80
 
 
 class Pipeline:
@@ -83,6 +96,44 @@ class Pipeline:
         ]
         return new_buckets, metrics_by_key
 
+    @staticmethod
+    def snippet_for(bucket: ConversationBucket) -> str:
+        for msg in bucket.messages:
+            if msg.role != "user":
+                continue
+            stripped = SNIPPET_FENCED_CODE.sub(" ", msg.content)
+            stripped = SNIPPET_INLINE_CODE.sub(" ", stripped)
+            stripped = "\n".join(
+                line for line in stripped.splitlines() if not line.lstrip().startswith(">")
+            )
+            stripped = SNIPPET_LONG_PATH.sub(" ", stripped)
+            text = SNIPPET_WHITESPACE.sub(" ", stripped).strip()
+            if not text:
+                continue
+            return text[:SNIPPET_MAX_LEN - 1] + "…" if len(text) > SNIPPET_MAX_LEN else text
+        return ""
+
+    @staticmethod
+    def to_record(
+        bucket: ConversationBucket, score: SentimentScore, metrics: BucketMetrics
+    ) -> SentimentRecord:
+        return SentimentRecord(
+            time=bucket.bucket_start,
+            conversation_id=bucket.session_id,
+            bucket_index=bucket.bucket_index,
+            sentiment_score=score,
+            read_edit_ratio=metrics.read_edit_ratio,
+            edits_without_prior_read_ratio=metrics.edits_without_prior_read_ratio,
+            write_edit_ratio=metrics.write_edit_ratio,
+            tool_calls_per_turn=metrics.tool_calls_per_turn,
+            subagent_count=metrics.subagent_count,
+            turn_count=metrics.turn_count,
+            thinking_present=metrics.thinking_present,
+            thinking_chars=metrics.thinking_chars,
+            cc_version=metrics.cc_version,
+            claude_model=metrics.claude_model,
+        )
+
     @classmethod
     async def process_transcript(
         cls,
@@ -90,6 +141,7 @@ class Pipeline:
         classifier: InferenceEngine,
         scored_buckets: frozenset[BucketKey] = frozenset(),
         on_bucket: Callable[[int], None] = NOOP_PROGRESS,
+        on_snippet: Callable[[str, int], None] = NOOP_SNIPPET,
     ) -> list[SentimentRecord]:
         new_buckets, metrics_by_key = await anyio.to_thread.run_sync(
             cls._parse_buckets_with_metrics, path, scored_buckets
@@ -99,26 +151,17 @@ class Pipeline:
 
         scores = await classifier.score(new_buckets, on_progress=on_bucket)
 
+        for bucket, score in zip(new_buckets, scores):
+            if snippet := cls.snippet_for(bucket):
+                on_snippet(snippet, int(score))
+
         return [
-            SentimentRecord(
-                time=bucket.bucket_start,
-                conversation_id=bucket.session_id,
-                bucket_index=bucket.bucket_index,
-                sentiment_score=score,
-                read_edit_ratio=(
-                    m := metrics_by_key[
-                        BucketKey(session_id=bucket.session_id, bucket_index=bucket.bucket_index)
-                    ]
-                ).read_edit_ratio,
-                edits_without_prior_read_ratio=m.edits_without_prior_read_ratio,
-                write_edit_ratio=m.write_edit_ratio,
-                tool_calls_per_turn=m.tool_calls_per_turn,
-                subagent_count=m.subagent_count,
-                turn_count=m.turn_count,
-                thinking_present=m.thinking_present,
-                thinking_chars=m.thinking_chars,
-                cc_version=m.cc_version,
-                claude_model=m.claude_model,
+            cls.to_record(
+                bucket,
+                score,
+                metrics_by_key[BucketKey(
+                    session_id=bucket.session_id, bucket_index=bucket.bucket_index
+                )],
             )
             for bucket, score in zip(new_buckets, scores)
         ]
@@ -133,6 +176,7 @@ class Pipeline:
         on_records: Callable[[list[SentimentRecord]], None] = lambda _: None,
         on_bucket: Callable[[int], None] = NOOP_PROGRESS,
         on_engine_log: Callable[[str], None] | None = None,
+        on_snippet: Callable[[str, int], None] = NOOP_SNIPPET,
     ) -> list[SentimentRecord]:
         classifier = await build_engine(engine, model_repo, on_engine_log)
 
@@ -150,7 +194,8 @@ class Pipeline:
                     repo.scored_buckets_for, str(path)
                 )
                 records = await cls.process_transcript(
-                    path, classifier, scored_buckets, on_bucket=on_bucket
+                    path, classifier, scored_buckets,
+                    on_bucket=on_bucket, on_snippet=on_snippet,
                 )
                 all_records.extend(records)
                 await anyio.to_thread.run_sync(repo.save_records, str(path), mtime, records)

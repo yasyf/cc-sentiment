@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import shutil
 import subprocess
 import tempfile
 import time
 import webbrowser
-from collections import Counter, deque
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import mean
@@ -45,6 +46,7 @@ from cc_sentiment.engines import (
     default_engine,
     resolve_engine,
 )
+from cc_sentiment.hardware import Hardware
 from cc_sentiment.models import (
     AppState,
     ContributorId,
@@ -64,6 +66,19 @@ from cc_sentiment.signing import (
 SCORE_COLORS = {1: "red", 2: "red", 3: "yellow", 4: "green", 5: "green"}
 SCORE_LABELS = {1: "frustrated", 2: "annoyed", 3: "neutral", 4: "satisfied", 5: "delighted"}
 SCORE_ICONS = {1: "😤", 2: "😒", 3: "😐", 4: "😊", 5: "🤩"}
+WEEKDAY_LABELS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+INSIGHTS_MIN_RECORDS = 20
+INSIGHTS_MIN_SAMPLES = 3
+SNIPPET_MAX_CHARS = 60
+SNIPPET_RATE_LIMIT_SECONDS = 0.5
+
+WITTY_COMMENTS: dict[int, tuple[str, ...]] = {
+    1: ("oof", "yikes", "time to take a walk", "we've all been there", "send help", "cursed"),
+    2: ("mood", "same energy", "try again later", "nope nope nope", "sigh", "bargaining stage"),
+    3: ("just business", "getting it done", "ok then", "fine", "the work continues", "transactional"),
+    4: ("nice", "smooth", "working as intended", "as you were", "on track", "we're cooking"),
+    5: ("vibes", "flow state", "chef's kiss", "absolute unit", "sparkles", "heck yeah"),
+}
 
 RESCAN_CONFIRM_SECONDS = 5.0
 
@@ -139,6 +154,30 @@ def format_duration(seconds: float) -> str:
     return f"~{hours} hour" if hours == 1 else f"~{hours} hours"
 
 
+def format_hour(hour: int) -> str:
+    if hour == 0:
+        return "12am"
+    if hour < 12:
+        return f"{hour}am"
+    if hour == 12:
+        return "12pm"
+    return f"{hour - 12}pm"
+
+
+def short_model(model: str) -> str:
+    for token in model.split("-"):
+        if token not in ("claude", "anthropic") and not token.isdigit():
+            return token
+    return model
+
+
+def pick_toughest[K](groups: dict[K, list[int]]) -> K | None:
+    qualifying = {k: mean(v) for k, v in groups.items() if len(v) >= INSIGHTS_MIN_SAMPLES}
+    if not qualifying:
+        return None
+    return min(qualifying, key=qualifying.__getitem__)
+
+
 SAMPLE_PAYLOAD_LINES = (
     ("time", '"2026-04-15T14:23:05Z"'),
     ("conversation_id", '"7f3a9b2c-0e4d-4a91-b6f8-e2c8d9a1f4b2"'),
@@ -159,7 +198,7 @@ def render_sample_payload() -> str:
         rows.append(f'  [cyan]"{k}"[/]:{padding}[{colour}]{v}[/],')
     return (
         "[b]What actually gets sent:[/] one row per conversation, "
-        "[dim]signed by your key — no text, no prompts, no code.[/]\n\n"
+        "[dim]signed by your key. No text, no prompts, no code.[/]\n\n"
         "[dim]{[/]\n"
         + "\n".join(rows)
         + "\n  [dim]...[/]\n[dim]}[/]"
@@ -304,7 +343,7 @@ class AutoSetup:
 
     async def probe_and_save(self, config: SSHConfig | GPGConfig) -> bool:
         from cc_sentiment.upload import AuthOk, Uploader
-        phase = self.emit.begin("Verifying signature with the dashboard")
+        phase = self.emit.begin("Checking your key with the server")
         result = await Uploader().probe_credentials(config)
         if not isinstance(result, AuthOk):
             phase.skip("Dashboard couldn't verify yet")
@@ -336,11 +375,16 @@ class EngineBootView:
     status: SpinnerLine
     log: Static
     lines: deque[str] = field(default_factory=lambda: deque(maxlen=8))
+    last_snippet_at: float = 0.0
+    snippet_started: bool = False
 
     def show(self, engine: str) -> None:
         self.status.spinner.text = f"Loading {engine} engine"
+        self.status.display = True
         self.lines.clear()
         self.log.update("")
+        self.last_snippet_at = 0.0
+        self.snippet_started = False
         self.section.add_class("active")
 
     def hide(self) -> None:
@@ -349,6 +393,20 @@ class EngineBootView:
     def write_from_thread(self, line: str) -> None:
         self.lines.append(f"[dim]{line}[/]")
         self.app.call_from_thread(self.log.update, "\n".join(self.lines))
+
+    def add_snippet(self, snippet: str, score: int) -> None:
+        now = time.monotonic()
+        if now - self.last_snippet_at < SNIPPET_RATE_LIMIT_SECONDS:
+            return
+        self.last_snippet_at = now
+        if not self.snippet_started:
+            self.snippet_started = True
+            self.lines.clear()
+            self.status.display = False
+        comment = random.choice(WITTY_COMMENTS[score])
+        truncated = snippet if len(snippet) <= SNIPPET_MAX_CHARS else snippet[:SNIPPET_MAX_CHARS - 1] + "…"
+        self.lines.append(f'{SCORE_ICONS[score]} {score}  "{truncated}"  [dim]{comment}[/]')
+        self.log.update("\n".join(self.lines))
 
 
 class ScoreBar(Static):
@@ -387,7 +445,7 @@ class PlatformErrorScreen(Screen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="error-box"):
-            yield Label("Sorry — this machine can't run cc-sentiment.", classes="title")
+            yield Label("Sorry, this machine can't run cc-sentiment.", classes="title")
             yield Label(self.message, classes="detail")
             yield Button("Quit", id="quit-btn", variant="primary")
 
@@ -414,8 +472,8 @@ class DaemonPromptScreen(Screen[bool]):
         with Vertical(id="daemon-box"):
             yield Label("Run this automatically each day?", classes="title")
             yield Label(
-                "We can schedule a background job that refreshes your numbers daily — "
-                "no need to remember to run this.",
+                "We can schedule a background job that refreshes your numbers daily. "
+                "No need to remember to run this.",
                 classes="detail",
             )
             yield Label(
@@ -544,8 +602,8 @@ class SetupScreen(Screen[bool]):
         with Vertical(id="step-username"):
             yield Label("Who are you?", classes="step-title")
             yield Label(
-                "Your GitHub username lets us verify your uploads — "
-                "no account creation, no permissions needed. "
+                "Your GitHub username lets us verify your uploads. "
+                "No account creation, no permissions needed. "
                 "We just check that your public keys match.",
                 classes="status",
             )
@@ -565,8 +623,8 @@ class SetupScreen(Screen[bool]):
             yield RadioSet(id="key-select")
             yield Label("", id="no-keys-msg", classes="status")
             yield Label(
-                "[dim]Why do we need this? Your key is like a personal stamp — "
-                "it proves the data came from you, without sharing anything "
+                "[dim]Why do we need this? Your key is like a personal stamp. "
+                "It proves the data came from you, without sharing anything "
                 "private. We never read or upload your private key.[/]",
                 classes="faq",
             )
@@ -613,7 +671,7 @@ class SetupScreen(Screen[bool]):
         self.query_one("#done-identify", Static).update(
             "[b]How we know it's you:[/] each upload is signed locally with "
             "your private key. The dashboard checks the signature against "
-            "your public key — no account, no password, no permissions."
+            "your public key. No account, no password, no permissions."
         )
         process = self.query_one("#done-process", Static)
         match default_engine():
@@ -657,7 +715,7 @@ class SetupScreen(Screen[bool]):
             case GPGConfig(contributor_id=cid, fpr=f):
                 summary.update(f"Signed in as [b]{cid}[/] using GPG [dim]{f[-8:]}[/]")
         self.query_one("#done-verify", Label).update(
-            "[green]Verified — the dashboard can confirm your uploads.[/]"
+            "[green]You're set up. Ready to upload.[/]"
         )
         self._populate_done_info()
         self.query_one(ContentSwitcher).current = "step-done"
@@ -724,7 +782,7 @@ class SetupScreen(Screen[bool]):
         if not all_keys:
             status.update("No signing keys found on your machine.")
             if KeyDiscovery.has_tool("gpg"):
-                no_keys.update("No worries — we'll create a signing key for you automatically. Just press Next.")
+                no_keys.update("No problem. We'll create one for you. Just press Next.")
                 self.query_one("#discovery-next", Button).disabled = False
                 self._generate_gpg = True
             elif not self.username:
@@ -870,11 +928,11 @@ Expire-Date: 0
         self.app.call_from_thread(checks_widget.update, "\n".join(results))
 
         if found:
-            self.app.call_from_thread(status.update, "[green]Key verified — the dashboard can confirm your uploads.[/]")
+            self.app.call_from_thread(status.update, "[green]You're set up. Ready to upload.[/]")
             self.app.call_from_thread(self._enable_remote_next)
             self._key_on_remote = True
         else:
-            msg = "Not linked yet — no worries, we can set this up in the next step."
+            msg = "Not linked yet. We can set this up next."
             self.app.call_from_thread(status.update, msg)
             self.app.call_from_thread(self._enable_remote_next)
             self._key_on_remote = False
@@ -973,7 +1031,7 @@ Expire-Date: 0
                     capture_output=True, text=True, timeout=30,
                 )
                 if result.returncode == 0:
-                    self.app.call_from_thread(result_label.update, "[green]Key linked to GitHub — you're all set.[/]")
+                    self.app.call_from_thread(result_label.update, "[green]Key linked to GitHub. You're all set.[/]")
                     self.app.call_from_thread(self._save_and_finish)
                 else:
                     self.app.call_from_thread(result_label.update, f"[red]Something went wrong: {result.stderr.strip()}[/]")
@@ -990,7 +1048,7 @@ Expire-Date: 0
                         capture_output=True, text=True, timeout=30,
                     )
                     if result.returncode == 0:
-                        self.app.call_from_thread(result_label.update, "[green]Key linked to GitHub — you're all set.[/]")
+                        self.app.call_from_thread(result_label.update, "[green]Key linked to GitHub. You're all set.[/]")
                         self.app.call_from_thread(self._save_and_finish)
                     else:
                         self.app.call_from_thread(result_label.update, f"[red]Something went wrong: {result.stderr.strip()}[/]")
@@ -1008,11 +1066,11 @@ Expire-Date: 0
                         KeyDiscovery.request_openpgp_verify(token, emails)
                         self.app.call_from_thread(
                             result_label.update,
-                            f"[yellow]Almost done — check your email ({', '.join(emails)}) "
+                            f"[yellow]Almost done. Check your email ({', '.join(emails)}) "
                             f"for a verification link, then press Start scanning.[/]",
                         )
                     else:
-                        self.app.call_from_thread(result_label.update, "[green]Key already published — you're all set.[/]")
+                        self.app.call_from_thread(result_label.update, "[green]Key already published. You're all set.[/]")
                     self.app.call_from_thread(self._save_and_finish)
                 except httpx.HTTPError as e:
                     self.app.call_from_thread(result_label.update, f"[red]Couldn't reach keys.openpgp.org: {e}[/]")
@@ -1062,7 +1120,7 @@ Expire-Date: 0
         assert self.state.config is not None
         if isinstance(await Uploader().probe_credentials(self.state.config), AuthOk):
             verify_label.update(
-                "[green]Verified — the dashboard can confirm your uploads.[/]",
+                "[green]You're set up. Ready to upload.[/]",
             )
         else:
             verify_label.update(
@@ -1083,16 +1141,18 @@ Expire-Date: 0
 class CCSentimentApp(App[None]):
     CSS = """
     Screen { layout: vertical; background: $surface; }
-    #main { height: 1fr; padding: 1 2; }
+    #main { height: 1fr; padding: 1 2; align-vertical: middle; }
     #header-section { height: auto; }
     #title-row { height: 3; }
     #title-text { width: 1fr; }
     #score-digits { width: auto; min-width: 20; }
+    #score-label { text-align: right; height: 1; color: $text-muted; }
     #progress-section { height: auto; margin: 1 0; }
     #progress-row { height: auto; }
     #progress-label { width: auto; min-width: 24; }
     #scan-progress { width: 1fr; }
     #chart-section { height: auto; margin: 1 0 0 0; }
+    #chart-section.inactive, #stats-section.inactive { display: none; }
     #sparkline-container { height: 3; margin: 0 0 1 0; }
     #score-sparkline { height: 3; }
     #distribution { height: auto; }
@@ -1101,12 +1161,13 @@ class CCSentimentApp(App[None]):
     #engine-boot-status { height: 1; }
     #engine-boot-log { height: auto; max-height: 8; color: $text-muted; }
     #stats-section { height: auto; margin: 1 0 0 0; }
-    #stats-row { height: 3; }
-    .stat-card { width: 1fr; height: 3; padding: 0 1; border: tall $primary-background; }
+    #stats-row { height: 4; }
+    .stat-card { width: 1fr; height: 4; padding: 0 1; border: tall $primary-background; }
     .stat-card .stat-value { text-style: bold; }
-    .stat-card .stat-label { color: $text-muted; }
+    .stat-card .stat-label { color: $text-muted; text-style: bold; }
+    #insights-section { height: 1; margin: 1 0 0 0; }
+    #insights-section.inactive { display: none; }
     #status-line { height: 1; margin: 1 0 0 0; }
-    #cached-line { height: 1; color: $text-muted; }
     """
 
     BINDINGS = [
@@ -1129,6 +1190,7 @@ class CCSentimentApp(App[None]):
         setup_only: bool = False,
     ) -> None:
         super().__init__()
+        self.theme = "tokyo-night"
         self.state = state
         self.model_repo = model_repo
         self.db_path = db_path or Repository.default_path()
@@ -1146,6 +1208,7 @@ class CCSentimentApp(App[None]):
                 with Horizontal(id="title-row"):
                     yield Static("[b]cc-sentiment[/b]", id="title-text")
                     yield Digits("-.--", id="score-digits")
+                yield Static("[dim]average sentiment[/]", id="score-label")
 
             with Vertical(id="progress-section"):
                 with Horizontal(id="progress-row"):
@@ -1154,12 +1217,10 @@ class CCSentimentApp(App[None]):
 
             Rule(line_style="heavy")
 
-            with Vertical(id="chart-section"):
+            with Vertical(id="chart-section", classes="inactive"):
                 yield Static("[dim]Score trend[/]", id="sparkline-label")
                 with Vertical(id="sparkline-container"):
                     yield Sparkline([], id="score-sparkline")
-
-                yield Static("", id="cached-line")
 
                 with Vertical(id="distribution"):
                     for s in range(1, 6):
@@ -1172,21 +1233,23 @@ class CCSentimentApp(App[None]):
                 yield SpinnerLine(id="engine-boot-status")
                 yield Static("", id="engine-boot-log")
 
-            with Vertical(id="stats-section"):
+            with Vertical(id="stats-section", classes="inactive"):
                 Rule()
                 with Horizontal(id="stats-row"):
                     with Vertical(classes="stat-card"):
                         yield Static("--", id="stat-buckets", classes="stat-value")
-                        yield Static("buckets", classes="stat-label")
+                        yield Static("moments", classes="stat-label")
                     with Vertical(classes="stat-card"):
                         yield Static("--", id="stat-sessions", classes="stat-value")
-                        yield Static("sessions", classes="stat-label")
+                        yield Static("chats", classes="stat-label")
                     with Vertical(classes="stat-card"):
                         yield Static("--", id="stat-files", classes="stat-value")
-                        yield Static("files", classes="stat-label")
+                        yield Static("transcripts", classes="stat-label")
                     with Vertical(classes="stat-card"):
                         yield Static("--", id="stat-rate", classes="stat-value")
-                        yield Static("buckets/s", classes="stat-label")
+                        yield Static("moments/sec", classes="stat-label")
+
+            yield Static("", id="insights-section", classes="inactive")
 
             yield Label("", id="status-line")
         yield Footer()
@@ -1213,9 +1276,14 @@ class CCSentimentApp(App[None]):
             return
         self.records = list(existing)
         self._score_history = [float(r.sentiment_score) for r in existing]
+        _, _, total_files = await anyio.to_thread.run_sync(self.repo.stats)
+        self.query_one("#stat-files", Static).update(f"[b]{total_files}[/]")
         self._render_scores()
+        self.query_one("#stats-section").remove_class("inactive")
 
     def watch_stage(self, stage: Stage) -> None:
+        if isinstance(stage, (Uploading, IdleEmpty, IdleCaughtUp, IdleAfterUpload)):
+            self.query_one("#engine-boot-section").remove_class("active")
         match stage:
             case Booting():
                 self._update_status("[dim]Initializing...[/]")
@@ -1224,35 +1292,40 @@ class CCSentimentApp(App[None]):
             case Discovering():
                 self._update_status("[dim]Discovering transcripts...[/]")
             case Scoring(total=t, engine=e):
-                from cc_sentiment.hardware import Hardware
                 rate = Hardware.estimate_buckets_per_sec(e)
                 if rate and rate > 0:
                     self._update_status(
-                        f"[dim]Scoring {t} buckets — {format_duration(t / rate)}.[/]"
+                        f"[dim]Scoring locally on your Mac. Estimated {format_duration(t / rate)}. "
+                        "Nothing has been uploaded yet.[/]"
                     )
                 else:
-                    self._update_status(f"[dim]Scoring {t} buckets...[/]")
+                    self._update_status(
+                        "[dim]Scoring locally on your Mac. Nothing has been uploaded yet.[/]"
+                    )
             case Uploading():
+                self.query_one("#scan-progress", ProgressBar).update(total=100, progress=0)
+                self.query_one("#progress-label", Label).update("Uploading...")
                 self._update_status("[dim]Uploading records...[/]")
             case IdleEmpty():
                 self._render_stats(0, 0, 0)
                 self._update_status(
-                    "[green]All set — no conversations yet. Come back after using Claude Code.[/] "
+                    "[green]All set. No conversations yet. Come back after using Claude Code.[/] "
                     "[dim]Press O to browse the dashboard.[/]"
                 )
             case IdleCaughtUp(total_buckets=b, total_sessions=s, total_files=f):
                 self._render_stats(b, s, f)
                 self._update_status(
                     f"[green]All caught up.[/] "
-                    f"{s} session{'s' if s != 1 else ''}, "
-                    f"{b} bucket{'s' if b != 1 else ''} scored. "
+                    f"{s} chat{'s' if s != 1 else ''}, "
+                    f"{b} moment{'s' if b != 1 else ''} scored. "
                     f"[dim]Press R to rescan, O to open dashboard.[/]"
                 )
             case IdleAfterUpload(total_buckets=b, total_sessions=s, total_files=f):
                 self._render_stats(b, s, f)
                 self._update_status(
-                    "[green]Uploaded.[/] See your data at [b]sentiments.cc[/] — "
-                    "[dim]press O to open, R to rescan.[/]"
+                    "[green]Uploaded.[/] See your data at "
+                    "[link='https://sentiments.cc'][b]sentiments.cc[/b][/link]. "
+                    "[dim]Press O to open.[/]"
                 )
             case Error(message=m):
                 self._update_status(m)
@@ -1265,6 +1338,7 @@ class CCSentimentApp(App[None]):
         self.query_one("#stat-buckets", Static).update(f"[b]{buckets}[/]")
         self.query_one("#stat-sessions", Static).update(f"[b]{sessions}[/]")
         self.query_one("#stat-files", Static).update(f"[b]{files}[/]")
+        self.query_one("#stats-section").remove_class("inactive")
 
     async def _authenticate(self) -> bool:
         from cc_sentiment.upload import (
@@ -1322,10 +1396,18 @@ class CCSentimentApp(App[None]):
 
         bucket_count = 0
         if transcripts:
-            self._update_status("[dim]Counting work...[/]")
+            self._update_status("[dim]Sizing things up...[/]")
             bucket_count = await anyio.to_thread.run_sync(
                 Pipeline.count_new_buckets, self.repo, transcripts
             )
+            rate = Hardware.estimate_buckets_per_sec(engine)
+            if rate and rate > 0:
+                self._update_status(
+                    f"[dim]Found [b]{bucket_count}[/] moments. "
+                    f"About {format_duration(bucket_count / rate)} on this Mac.[/]"
+                )
+            else:
+                self._update_status(f"[dim]Found [b]{bucket_count}[/] moments.[/]")
 
         if engine == "claude" and bucket_count > 0:
             ok = await self.push_screen_wait(
@@ -1336,7 +1418,8 @@ class CCSentimentApp(App[None]):
                 return
 
         if transcripts and bucket_count > 0:
-            self._set_total(bucket_count, engine)
+            _, _, existing_files = await anyio.to_thread.run_sync(self.repo.stats)
+            self._set_total(bucket_count, engine, existing_files + len(transcripts))
             boot = EngineBootView(
                 app=self,
                 section=self.query_one("#engine-boot-section"),
@@ -1344,21 +1427,22 @@ class CCSentimentApp(App[None]):
                 log=self.query_one("#engine-boot-log", Static),
             )
             boot.show(engine)
-            try:
-                await Pipeline.run(
-                    self.repo, engine, self.model_repo, transcripts,
-                    on_records=self._add_records, on_bucket=self._add_buckets,
-                    on_engine_log=boot.write_from_thread,
-                )
-            finally:
-                boot.hide()
+            await Pipeline.run(
+                self.repo, engine, self.model_repo, transcripts,
+                on_records=self._add_records, on_bucket=self._add_buckets,
+                on_engine_log=boot.write_from_thread,
+                on_snippet=boot.add_snippet,
+            )
 
         pending = await anyio.to_thread.run_sync(self.repo.pending_records)
         uploaded = False
         if pending:
             self.stage = Uploading()
             try:
-                await Uploader().upload(pending, self.state, self.repo)
+                await Uploader().upload(
+                    pending, self.state, self.repo,
+                    on_progress=self._on_upload_progress,
+                )
                 uploaded = True
             except httpx.HTTPStatusError as e:
                 if e.response.status_code in (401, 403):
@@ -1433,7 +1517,8 @@ class CCSentimentApp(App[None]):
 
     async def action_open_dashboard(self) -> None:
         await anyio.to_thread.run_sync(webbrowser.open, DASHBOARD_URL)
-        self._update_status(f"[dim]Opening {DASHBOARD_URL}...[/]")
+        self._update_status(f"[dim]Opened {DASHBOARD_URL}.[/]")
+        self.set_timer(3.0, lambda: self.watch_stage(self.stage))
 
     async def action_rescan(self) -> None:
         match self.stage:
@@ -1465,13 +1550,16 @@ class CCSentimentApp(App[None]):
             self._score_bars[s].update("")
         for stat_id in ("#stat-buckets", "#stat-sessions", "#stat-files", "#stat-rate"):
             self.query_one(stat_id, Static).update("--")
-        self.query_one("#cached-line", Static).update("")
+        self.query_one("#chart-section").add_class("inactive")
+        self.query_one("#stats-section").add_class("inactive")
 
-    def _set_total(self, total: int, engine: str) -> None:
+    def _set_total(self, total: int, engine: str, total_files: int) -> None:
         self.total = total
         self.scored = 0
         self.query_one("#scan-progress", ProgressBar).update(total=total, progress=0)
-        self.query_one("#progress-label", Label).update(f"[b]0[/]/{total} buckets")
+        self.query_one("#progress-label", Label).update(f"[b]0[/]/{total} moments")
+        self.query_one("#stat-files", Static).update(f"[b]{total_files}[/]")
+        self.query_one("#stats-section").remove_class("inactive")
         self.stage = Scoring(total=total, engine=engine)
 
     def _add_buckets(self, n: int) -> None:
@@ -1479,12 +1567,15 @@ class CCSentimentApp(App[None]):
         self.scored += n
         self.query_one("#scan-progress", ProgressBar).update(progress=self.scored)
         self.query_one("#progress-label", Label).update(
-            f"[b]{self.scored}[/]/{self.total} buckets"
+            f"[b]{self.scored}[/]/{self.total} moments"
         )
 
         elapsed = time.monotonic() - self._start_time
         rate = self.scored / elapsed if elapsed > 0 else 0
         self.query_one("#stat-rate", Static).update(f"{rate:.1f}")
+
+    def _on_upload_progress(self, fraction: float) -> None:
+        self.query_one("#scan-progress", ProgressBar).update(progress=int(fraction * 100))
 
     def _add_records(self, new_records: list[SentimentRecord]) -> None:
         asyncio.get_running_loop()
@@ -1503,6 +1594,7 @@ class CCSentimentApp(App[None]):
         if not self.records:
             return
 
+        self.query_one("#chart-section").remove_class("inactive")
         scores = [int(r.sentiment_score) for r in self.records]
         counts = Counter(scores)
         total = len(scores)
@@ -1519,3 +1611,34 @@ class CCSentimentApp(App[None]):
         sessions = len({r.conversation_id for r in self.records})
         self.query_one("#stat-buckets", Static).update(f"[b]{total}[/]")
         self.query_one("#stat-sessions", Static).update(f"[b]{sessions}[/]")
+        self._render_insights()
+
+    def _render_insights(self) -> None:
+        insights = self.query_one("#insights-section", Static)
+        if len(self.records) < INSIGHTS_MIN_RECORDS:
+            insights.add_class("inactive")
+            return
+
+        hours: dict[int, list[int]] = defaultdict(list)
+        days: dict[int, list[int]] = defaultdict(list)
+        models: dict[str, list[int]] = defaultdict(list)
+        for r in self.records:
+            local = r.time.astimezone()
+            score = int(r.sentiment_score)
+            hours[local.hour].append(score)
+            days[local.weekday()].append(score)
+            models[r.claude_model].append(score)
+
+        parts: list[str] = []
+        if (h := pick_toughest(hours)) is not None:
+            parts.append(f"[dim]toughest hour:[/] [b]{format_hour(h)}[/]")
+        if (d := pick_toughest(days)) is not None:
+            parts.append(f"[dim]toughest day:[/] [b]{WEEKDAY_LABELS[d]}[/]")
+        if (m := pick_toughest(models)) is not None:
+            parts.append(f"[dim]toughest model:[/] [b]{short_model(m)}[/]")
+
+        if not parts:
+            insights.add_class("inactive")
+            return
+        insights.update(" · ".join(parts))
+        insights.remove_class("inactive")

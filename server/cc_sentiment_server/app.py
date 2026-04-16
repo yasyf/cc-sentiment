@@ -224,7 +224,7 @@ async def refresh_stats(days_list: list[int]) -> list[None]:
 
 
 @app.function(image=image, secrets=[modal.Secret.from_name("cc-sentiment-vercel")])
-@modal.batched(max_batch_size=100, wait_ms=60_000)
+@modal.batched(max_batch_size=100, wait_ms=5_000)
 async def revalidate_dashboard(tags: list[str]) -> list[bool]:
     unique = sorted(set(tags))
     async with httpx.AsyncClient(timeout=10.0) as client:

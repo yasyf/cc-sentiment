@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 
 import anyio.to_thread
@@ -21,6 +22,10 @@ DEFAULT_SERVER_URL = "https://anetaco--cc-sentiment-api-serve.modal.run"
 TEST_PAYLOAD = "cc-sentiment-verify"
 
 RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
+
+UPLOAD_CHUNK_BYTES = 16 * 1024
+
+NOOP_UPLOAD_PROGRESS: Callable[[float], None] = lambda _: None
 
 _retry = retry(
     stop=stop_after_attempt(3),
@@ -97,7 +102,11 @@ class Uploader:
 
     @_retry
     async def upload(
-        self, records: list[SentimentRecord], state: AppState, repo: Repository
+        self,
+        records: list[SentimentRecord],
+        state: AppState,
+        repo: Repository,
+        on_progress: Callable[[float], None] = NOOP_UPLOAD_PROGRESS,
     ) -> None:
         assert state.config is not None, "Client not configured. Run 'cc-sentiment setup' first."
 
@@ -109,11 +118,20 @@ class Uploader:
             signature=signature,
             records=tuple(records),
         )
+        body = payload.model_dump_json(by_alias=True).encode()
+        total = len(body)
+
+        async def stream() -> AsyncIterator[bytes]:
+            for i in range(0, total, UPLOAD_CHUNK_BYTES):
+                chunk = body[i:i + UPLOAD_CHUNK_BYTES]
+                yield chunk
+                on_progress((i + len(chunk)) / total)
 
         async with httpx.AsyncClient() as client:
             (await client.post(
                 f"{self.server_url}/upload",
-                json=payload.model_dump(mode="json", by_alias=True),
+                content=stream(),
+                headers={"Content-Type": "application/json", "Content-Length": str(total)},
                 timeout=30.0,
             )).raise_for_status()
 

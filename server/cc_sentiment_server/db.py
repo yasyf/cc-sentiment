@@ -94,7 +94,7 @@ CREATE_INDEXES_SQL = [
 
 CREATE_CONTINUOUS_AGGREGATE_SQL = """
 CREATE MATERIALIZED VIEW IF NOT EXISTS sentiment_hourly
-WITH (timescaledb.continuous) AS
+WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT time_bucket(INTERVAL '1 hour', time, 'UTC') AS bucket,
        AVG(sentiment_score)::float AS avg_score,
        COUNT(*)::int AS count,
@@ -116,7 +116,7 @@ SELECT add_continuous_aggregate_policy('sentiment_hourly',
 
 CREATE_TOTALS_CAGG_SQL = """
 CREATE MATERIALIZED VIEW IF NOT EXISTS sentiment_totals_daily
-WITH (timescaledb.continuous) AS
+WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT time_bucket(INTERVAL '1 day', time, 'UTC') AS day,
        COUNT(*)::bigint AS total,
        hyperloglog(4096, conversation_id) AS hll_sessions,

@@ -613,9 +613,9 @@ async def test_set_total_renders_eta_when_hardware_estimates(tmp_path: Path, aut
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
-            app._set_total(1200, "omlx")
+            app._set_total(1200, "omlx", 0)
             assert "~2 min" in app.status_text
-            assert "1200 buckets" in app.status_text
+            assert "Scoring locally on your Mac" in app.status_text
 
 
 async def test_set_total_omits_eta_when_hardware_unknown(tmp_path: Path, auth_ok):
@@ -628,9 +628,9 @@ async def test_set_total_omits_eta_when_hardware_unknown(tmp_path: Path, auth_ok
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
-            app._set_total(500, "omlx")
+            app._set_total(500, "omlx", 0)
             assert "~" not in app.status_text
-            assert "500 buckets" in app.status_text
+            assert "Scoring locally on your Mac" in app.status_text
 
 
 async def test_add_buckets_updates_progress(tmp_path: Path, auth_ok):
@@ -642,7 +642,7 @@ async def test_add_buckets_updates_progress(tmp_path: Path, auth_ok):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
-            app._set_total(100, "omlx")
+            app._set_total(100, "omlx", 0)
             app._add_buckets(5)
             app._add_buckets(3)
             assert app.scored == 8
@@ -700,7 +700,7 @@ async def test_enter_idle_empty_state_mentions_dashboard(tmp_path: Path, auth_ok
             await pilot.pause(delay=0.3)
             await app._enter_idle(uploaded=False)
             assert isinstance(app.stage, IdleEmpty)
-            assert "no conversations yet" in app.status_text
+            assert "No conversations yet" in app.status_text
             assert "O to browse" in app.status_text
 
 
