@@ -14,10 +14,17 @@ from cc_sentiment.tui import (
     DASHBOARD_URL,
     CCSentimentApp,
     CostReviewScreen,
+    Discovering,
+    IdleAfterUpload,
+    IdleCaughtUp,
+    IdleEmpty,
     PlatformErrorScreen,
+    RescanConfirm,
+    Scoring,
     SetupScreen,
+    Stage,
+    Uploading,
     format_duration,
-    render_sample_payload,
 )
 from cc_sentiment.upload import (
     AuthOk,
@@ -420,7 +427,7 @@ async def test_ccsentiment_app_idle_when_no_work(tmp_path: Path, auth_ok):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.5)
-            assert app._rescan_armed is True
+            assert isinstance(app.stage, (IdleEmpty, IdleCaughtUp))
             assert "all" in app.status_text.lower() or "set" in app.status_text.lower()
 
 
@@ -433,15 +440,16 @@ async def test_ccsentiment_app_rescan_clears_state(tmp_path: Path, auth_ok):
     seed.close()
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch("cc_sentiment.upload.Uploader.upload", new_callable=AsyncMock):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.5)
-            assert app._rescan_armed is True
+            assert isinstance(app.stage, IdleAfterUpload)
 
             await pilot.press("r")
             await pilot.pause()
-            assert app._rescan_pending is True
+            assert isinstance(app.stage, RescanConfirm)
 
             await pilot.press("r")
             await pilot.pause(delay=0.3)
@@ -669,7 +677,7 @@ async def test_action_open_dashboard_opens_browser(tmp_path: Path, auth_ok):
             assert DASHBOARD_URL in app.status_text
 
 
-async def test_show_idle_after_upload_mentions_dashboard(tmp_path: Path, auth_ok):
+async def test_enter_idle_after_upload_mentions_dashboard(tmp_path: Path, auth_ok):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
@@ -683,18 +691,18 @@ async def test_show_idle_after_upload_mentions_dashboard(tmp_path: Path, auth_ok
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
 
-            app._uploaded_this_run = True
-            await app._show_idle()
+            await app._enter_idle(uploaded=True)
+            assert isinstance(app.stage, IdleAfterUpload)
             assert "Uploaded" in app.status_text
             assert "sentiments.cc" in app.status_text
 
-            app._uploaded_this_run = False
-            await app._show_idle()
+            await app._enter_idle(uploaded=False)
+            assert isinstance(app.stage, IdleCaughtUp)
             assert "Uploaded" not in app.status_text
             assert "O to open dashboard" in app.status_text
 
 
-async def test_show_idle_empty_state_mentions_dashboard(tmp_path: Path, auth_ok):
+async def test_enter_idle_empty_state_mentions_dashboard(tmp_path: Path, auth_ok):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
@@ -703,12 +711,13 @@ async def test_show_idle_empty_state_mentions_dashboard(tmp_path: Path, auth_ok)
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
-            await app._show_idle()
+            await app._enter_idle(uploaded=False)
+            assert isinstance(app.stage, IdleEmpty)
             assert "no conversations yet" in app.status_text
             assert "O to browse" in app.status_text
 
 
-async def test_successful_upload_sets_uploaded_flag(tmp_path: Path, auth_ok):
+async def test_successful_upload_lands_in_idle_after_upload(tmp_path: Path, auth_ok):
     records = [make_record(score=3), make_record(score=4)]
     state = AppState(config=GPGConfig(contributor_type="github", contributor_id=ContributorId("testuser"), fpr="ABCD1234"))
     db_path = tmp_path / "records.db"
@@ -725,5 +734,66 @@ async def test_successful_upload_sets_uploaded_flag(tmp_path: Path, auth_ok):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=1.0)
-            assert app._uploaded_this_run is True
+            assert isinstance(app.stage, IdleAfterUpload)
             assert "sentiments.cc" in app.status_text
+
+
+async def test_stage_transitions_across_successful_run(tmp_path: Path, auth_ok):
+    records = [make_record(score=3)]
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
+
+    async def fake_run(repo, *args, **kwargs):
+        repo.save_records("/fake.jsonl", 0.0, records)
+        return records
+
+    seen: list[type[Stage]] = []
+
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 0.0)]), \
+         patch("cc_sentiment.pipeline.Pipeline.count_new_buckets", return_value=1), \
+         patch("cc_sentiment.pipeline.Pipeline.run", side_effect=fake_run), \
+         patch("cc_sentiment.upload.Uploader.upload", new_callable=AsyncMock):
+        app = CCSentimentApp(state=state, db_path=db_path)
+        original_watch = app.watch_stage
+
+        def recording_watch(stage: Stage) -> None:
+            seen.append(type(stage))
+            original_watch(stage)
+
+        app.watch_stage = recording_watch  # type: ignore[method-assign]
+
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=1.0)
+
+    assert Discovering in seen
+    assert Scoring in seen
+    assert Uploading in seen
+    assert IdleAfterUpload in seen
+    assert seen.index(Discovering) < seen.index(Scoring) < seen.index(Uploading) < seen.index(IdleAfterUpload)
+
+
+async def test_rescan_confirm_restores_previous_stage_on_cancel(tmp_path: Path, auth_ok):
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
+
+    seed = Repository.open(db_path)
+    seed.save_records("/fake.jsonl", 1.0, [make_record()])
+    seed.close()
+
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch("cc_sentiment.upload.Uploader.upload", new_callable=AsyncMock):
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.5)
+            assert isinstance(app.stage, IdleAfterUpload)
+            prev = app.stage
+
+            await pilot.press("r")
+            await pilot.pause()
+            assert isinstance(app.stage, RescanConfirm)
+            assert app.stage.prev == prev
+
+            await app._cancel_rescan()
+            assert app.stage == prev

@@ -6,6 +6,7 @@ import tempfile
 import time
 import webbrowser
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean
 
@@ -66,6 +67,66 @@ SCORE_ICONS = {1: "😤", 2: "😒", 3: "😐", 4: "😊", 5: "🤩"}
 RESCAN_CONFIRM_SECONDS = 5.0
 
 DASHBOARD_URL = "https://sentiments.cc"
+
+
+@dataclass(frozen=True)
+class Stage:
+    pass
+
+
+@dataclass(frozen=True)
+class Booting(Stage):
+    pass
+
+
+@dataclass(frozen=True)
+class Authenticating(Stage):
+    pass
+
+
+@dataclass(frozen=True)
+class Discovering(Stage):
+    pass
+
+
+@dataclass(frozen=True)
+class Scoring(Stage):
+    total: int
+    engine: str
+
+
+@dataclass(frozen=True)
+class Uploading(Stage):
+    pass
+
+
+@dataclass(frozen=True)
+class IdleEmpty(Stage):
+    pass
+
+
+@dataclass(frozen=True)
+class IdleCaughtUp(Stage):
+    total_buckets: int
+    total_sessions: int
+    total_files: int
+
+
+@dataclass(frozen=True)
+class IdleAfterUpload(Stage):
+    total_buckets: int
+    total_sessions: int
+    total_files: int
+
+
+@dataclass(frozen=True)
+class Error(Stage):
+    message: str
+
+
+@dataclass(frozen=True)
+class RescanConfirm(Stage):
+    prev: Stage
 
 
 def format_duration(seconds: float) -> str:
@@ -885,6 +946,7 @@ class CCSentimentApp(App[None]):
     scored: reactive[int] = reactive(0)
     total: reactive[int] = reactive(0)
     status_text: reactive[str] = reactive("Initializing...")
+    stage: reactive[Stage] = reactive(Booting())
 
     def __init__(
         self,
@@ -901,9 +963,6 @@ class CCSentimentApp(App[None]):
         self._score_history: list[float] = []
         self._score_bars: dict[int, ScoreBar] = {}
         self._start_time = 0.0
-        self._rescan_armed = False
-        self._rescan_pending = False
-        self._uploaded_this_run = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -977,6 +1036,57 @@ class CCSentimentApp(App[None]):
         self._score_history = [float(r.sentiment_score) for r in existing]
         self._render_scores()
 
+    def watch_stage(self, stage: Stage) -> None:
+        match stage:
+            case Booting():
+                self._update_status("[dim]Initializing...[/]")
+            case Authenticating():
+                self._update_status("[dim]Verifying key...[/]")
+            case Discovering():
+                self._update_status("[dim]Discovering transcripts...[/]")
+            case Scoring(total=t, engine=e):
+                from cc_sentiment.hardware import Hardware
+                rate = Hardware.estimate_buckets_per_sec(e)
+                if rate and rate > 0:
+                    self._update_status(
+                        f"[dim]Scoring {t} buckets — {format_duration(t / rate)}.[/]"
+                    )
+                else:
+                    self._update_status(f"[dim]Scoring {t} buckets...[/]")
+            case Uploading():
+                self._update_status("[dim]Uploading records...[/]")
+            case IdleEmpty():
+                self._render_stats(0, 0, 0)
+                self._update_status(
+                    "[green]All set — no conversations yet. Come back after using Claude Code.[/] "
+                    "[dim]Press O to browse the dashboard.[/]"
+                )
+            case IdleCaughtUp(total_buckets=b, total_sessions=s, total_files=f):
+                self._render_stats(b, s, f)
+                self._update_status(
+                    f"[green]All caught up.[/] "
+                    f"{s} session{'s' if s != 1 else ''}, "
+                    f"{b} bucket{'s' if b != 1 else ''} scored. "
+                    f"[dim]Press R to rescan, O to open dashboard.[/]"
+                )
+            case IdleAfterUpload(total_buckets=b, total_sessions=s, total_files=f):
+                self._render_stats(b, s, f)
+                self._update_status(
+                    "[green]Uploaded.[/] See your data at [b]sentiments.cc[/] — "
+                    "[dim]press O to open, R to rescan.[/]"
+                )
+            case Error(message=m):
+                self._update_status(m)
+            case RescanConfirm():
+                self._update_status(
+                    "[yellow]Press R again within 5s to clear all state and rescan from scratch.[/]"
+                )
+
+    def _render_stats(self, buckets: int, sessions: int, files: int) -> None:
+        self.query_one("#stat-buckets", Static).update(f"[b]{buckets}[/]")
+        self.query_one("#stat-sessions", Static).update(f"[b]{sessions}[/]")
+        self.query_one("#stat-files", Static).update(f"[b]{files}[/]")
+
     async def _authenticate(self) -> bool:
         from cc_sentiment.upload import (
             AuthOk,
@@ -991,7 +1101,7 @@ class CCSentimentApp(App[None]):
                 if not ok:
                     return False
                 continue
-            self._update_status("[dim]Verifying key...[/]")
+            self.stage = Authenticating()
             match await Uploader().probe_credentials(self.state.config):
                 case AuthOk():
                     return True
@@ -1003,10 +1113,10 @@ class CCSentimentApp(App[None]):
                     await anyio.to_thread.run_sync(self.state.save)
                     continue
                 case AuthUnreachable(detail=d):
-                    self._update_status(f"[red]Couldn't reach the server.[/] [dim]{d}[/]")
+                    self.stage = Error(f"[red]Couldn't reach the server.[/] [dim]{d}[/]")
                     return False
                 case AuthServerError(status=s):
-                    self._update_status(f"[red]Server error verifying key ({s}).[/]")
+                    self.stage = Error(f"[red]Server error verifying key ({s}).[/]")
                     return False
 
     @work()
@@ -1023,7 +1133,7 @@ class CCSentimentApp(App[None]):
             self.exit()
             return
 
-        self._update_status("[dim]Discovering transcripts...[/]")
+        self.stage = Discovering()
         transcripts = await anyio.to_thread.run_sync(Pipeline.discover_new_transcripts, self.repo)
         pending = await anyio.to_thread.run_sync(self.repo.pending_records)
 
@@ -1056,67 +1166,58 @@ class CCSentimentApp(App[None]):
             )
 
         pending = await anyio.to_thread.run_sync(self.repo.pending_records)
+        uploaded = False
         if pending:
-            self._update_status("[dim]Uploading records...[/]")
+            self.stage = Uploading()
             try:
                 await Uploader().upload(pending, self.state, self.repo)
-                self._uploaded_this_run = True
+                uploaded = True
             except httpx.HTTPStatusError as e:
                 if e.response.status_code in (401, 403):
-                    self._update_status(
+                    self.stage = Error(
                         f"[red bold]Server rejected upload ({e.response.status_code}).[/] "
                         "Run [b]cc-sentiment setup[/] again, or upload your key to GitHub/keys.openpgp.org."
                     )
                 else:
-                    self._update_status(
+                    self.stage = Error(
                         f"[red bold]Server rejected upload ({e.response.status_code}).[/] "
                         f"Records kept locally — press R to retry."
                     )
-                self._rescan_armed = True
                 return
             except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError):
-                self._update_status(
+                self.stage = Error(
                     "[red bold]Couldn't reach the server.[/] "
                     "Records kept locally — press R to retry once you're back online."
                 )
-                self._rescan_armed = True
                 return
             except subprocess.CalledProcessError as e:
-                self._update_status(
+                self.stage = Error(
                     f"[red bold]Signing failed ({e.returncode}).[/] "
                     "Check that your signing key is still accessible, or run "
                     "[b]cc-sentiment[/] again to pick a different one."
                 )
-                self._rescan_armed = True
                 return
 
-        await self._show_idle()
-        self._rescan_armed = True
+        await self._enter_idle(uploaded=uploaded)
 
-    async def _show_idle(self) -> None:
+    async def _enter_idle(self, uploaded: bool) -> None:
         assert self.repo is not None
         total_buckets, total_sessions, total_files = await anyio.to_thread.run_sync(
             self.repo.stats
         )
-        self.query_one("#stat-buckets", Static).update(f"[b]{total_buckets}[/]")
-        self.query_one("#stat-sessions", Static).update(f"[b]{total_sessions}[/]")
-        self.query_one("#stat-files", Static).update(f"[b]{total_files}[/]")
-        if self._uploaded_this_run:
-            self._update_status(
-                f"[green]Uploaded.[/] See your data at [b]sentiments.cc[/] — "
-                f"[dim]press O to open, R to rescan.[/]"
+        if uploaded:
+            self.stage = IdleAfterUpload(
+                total_buckets=total_buckets,
+                total_sessions=total_sessions,
+                total_files=total_files,
             )
         elif total_sessions == 0:
-            self._update_status(
-                "[green]All set — no conversations yet. Come back after using Claude Code.[/] "
-                "[dim]Press O to browse the dashboard.[/]"
-            )
+            self.stage = IdleEmpty()
         else:
-            self._update_status(
-                f"[green]All caught up.[/] "
-                f"{total_sessions} session{'s' if total_sessions != 1 else ''}, "
-                f"{total_buckets} bucket{'s' if total_buckets != 1 else ''} scored. "
-                f"[dim]Press R to rescan, O to open dashboard.[/]"
+            self.stage = IdleCaughtUp(
+                total_buckets=total_buckets,
+                total_sessions=total_sessions,
+                total_files=total_files,
             )
 
     async def action_open_dashboard(self) -> None:
@@ -1124,24 +1225,18 @@ class CCSentimentApp(App[None]):
         self._update_status(f"[dim]Opening {DASHBOARD_URL}...[/]")
 
     async def action_rescan(self) -> None:
-        if not self._rescan_armed:
-            return
-        if self._rescan_pending:
-            self._rescan_pending = False
-            self._rescan_armed = False
-            await self._reset_for_rescan()
-            self.run_flow()
-            return
-        self._rescan_pending = True
-        self._update_status(
-            "[yellow]Press R again within 5s to clear all state and rescan from scratch.[/]"
-        )
-        self.set_timer(RESCAN_CONFIRM_SECONDS, self._cancel_rescan)
+        match self.stage:
+            case RescanConfirm():
+                await self._reset_for_rescan()
+                self.run_flow()
+            case IdleEmpty() | IdleCaughtUp() | IdleAfterUpload() | Error() as prev:
+                self.stage = RescanConfirm(prev=prev)
+                self.set_timer(RESCAN_CONFIRM_SECONDS, self._cancel_rescan)
 
     async def _cancel_rescan(self) -> None:
-        if self._rescan_pending:
-            self._rescan_pending = False
-            await self._show_idle()
+        match self.stage:
+            case RescanConfirm(prev=p):
+                self.stage = p
 
     async def _reset_for_rescan(self) -> None:
         assert self.repo is not None
@@ -1151,7 +1246,6 @@ class CCSentimentApp(App[None]):
         self.scored = 0
         self.total = 0
         self._start_time = time.monotonic()
-        self._uploaded_this_run = False
         self.query_one("#scan-progress", ProgressBar).update(total=100, progress=0)
         self.query_one("#progress-label", Label).update("Preparing...")
         self.query_one("#score-digits", Digits).update("-.--")
@@ -1163,20 +1257,11 @@ class CCSentimentApp(App[None]):
         self.query_one("#cached-line", Static).update("")
 
     def _set_total(self, total: int, engine: str) -> None:
-        from cc_sentiment.hardware import Hardware
-
         self.total = total
         self.scored = 0
         self.query_one("#scan-progress", ProgressBar).update(total=total, progress=0)
         self.query_one("#progress-label", Label).update(f"[b]0[/]/{total} buckets")
-
-        rate = Hardware.estimate_buckets_per_sec(engine)
-        if rate and rate > 0:
-            self._update_status(
-                f"[dim]Scoring {total} buckets — {format_duration(total / rate)}.[/]"
-            )
-        else:
-            self._update_status(f"[dim]Scoring {total} buckets...[/]")
+        self.stage = Scoring(total=total, engine=engine)
 
     def _add_buckets(self, n: int) -> None:
         self.scored += n
