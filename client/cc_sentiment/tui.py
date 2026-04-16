@@ -74,6 +74,33 @@ def format_duration(seconds: float) -> str:
     return f"~{hours} hour" if hours == 1 else f"~{hours} hours"
 
 
+SAMPLE_PAYLOAD_LINES = (
+    ("time", '"2026-04-15T14:23:05Z"'),
+    ("conversation_id", '"7f3a9b2c-0e4d-4a91-b6f8-e2c8d9a1f4b2"'),
+    ("sentiment_score", "4"),
+    ("claude_model", '"claude-haiku-4-5"'),
+    ("turn_count", "14"),
+    ("thinking_chars", "2847"),
+    ("read_edit_ratio", "0.71"),
+)
+
+
+def render_sample_payload() -> str:
+    width = max(len(k) for k, _ in SAMPLE_PAYLOAD_LINES)
+    rows = []
+    for k, v in SAMPLE_PAYLOAD_LINES:
+        colour = "green" if v.startswith('"') else "yellow"
+        padding = " " * (width - len(k) + 2)
+        rows.append(f'  [cyan]"{k}"[/]:{padding}[{colour}]{v}[/],')
+    return (
+        "[b]What actually gets sent:[/] one row per conversation, "
+        "[dim]signed by your key — no text, no prompts, no code.[/]\n\n"
+        "[dim]{[/]\n"
+        + "\n".join(rows)
+        + "\n  [dim]...[/]\n[dim]}[/]"
+    )
+
+
 def detect_git_username() -> str | None:
     for cmd in (
         ["gh", "api", "user", "--jq", ".login"],
@@ -235,7 +262,7 @@ class CostReviewScreen(Screen[bool]):
 class SetupScreen(Screen[bool]):
     DEFAULT_CSS = """
     SetupScreen { align: center middle; }
-    #wizard { width: 80; height: auto; max-height: 44; border: heavy $accent; padding: 1 2; }
+    #wizard { width: 80; height: auto; max-height: 90%; border: heavy $accent; padding: 1 2; overflow-y: auto; }
     #wizard Label { margin: 1 0 0 0; }
     #wizard .step-title { text-style: bold; color: $text; margin: 0 0 1 0; }
     #wizard Input { margin: 0 0 1 0; }
@@ -368,10 +395,7 @@ class SetupScreen(Screen[bool]):
                     "`claude` CLI (no Apple Silicon here for local inference). "
                     "Transcripts go to the Claude API, never to our dashboard."
                 )
-        self.query_one("#done-payload", Static).update(
-            "[b]What we receive:[/] just a 1–5 score, a timestamp, and the "
-            "Claude Code version for each conversation. Nothing else."
-        )
+        self.query_one("#done-payload", Static).update(render_sample_payload())
 
     def on_mount(self) -> None:
         table = self.query_one("#key-table", DataTable)

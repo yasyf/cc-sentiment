@@ -16,6 +16,7 @@ from cc_sentiment.tui import (
     PlatformErrorScreen,
     SetupScreen,
     format_duration,
+    render_sample_payload,
 )
 from cc_sentiment.upload import (
     AuthOk,
@@ -211,7 +212,7 @@ async def test_setup_done_button_dismisses_true(tmp_path: Path, no_auto_setup):
 
     with patch.object(AppState, "state_path", return_value=state_file):
         harness = SetupHarness(state)
-        async with harness.run_test() as pilot:
+        async with harness.run_test(size=(80, 50)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.username = "testuser"
@@ -577,6 +578,21 @@ def test_format_duration_minutes():
 def test_format_duration_hours():
     assert format_duration(3600) == "~1 hour"
     assert format_duration(7200) == "~2 hours"
+
+
+def test_sample_payload_fields_match_real_record_schema():
+    from cc_sentiment.models import SentimentRecord
+    from cc_sentiment.tui import SAMPLE_PAYLOAD_LINES
+
+    real_fields = set(SentimentRecord.model_fields)
+    sample_fields = [k for k, _ in SAMPLE_PAYLOAD_LINES]
+
+    for k in sample_fields:
+        assert k in real_fields, f"{k!r} is not a real SentimentRecord field"
+    for forbidden in ("message", "content", "transcript", "prompt_text", "prompt_body"):
+        assert not any(forbidden in f for f in real_fields), (
+            f"SentimentRecord has a field matching {forbidden!r} — sample payload may be misleading"
+        )
 
 
 async def test_set_total_renders_eta_when_hardware_estimates(tmp_path: Path, auth_ok):
