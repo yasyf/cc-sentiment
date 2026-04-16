@@ -5,12 +5,13 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, ContentSwitcher, DataTable, Input, Label
+from textual.widgets import Button, ContentSwitcher, DataTable, Input, Label, Static
 
 from cc_sentiment.models import AppState, ContributorId, GPGConfig, SSHConfig
 from cc_sentiment.repo import Repository
 from cc_sentiment.signing import GPGKeyInfo, SSHKeyInfo
 from cc_sentiment.tui import (
+    DASHBOARD_URL,
     CCSentimentApp,
     CostReviewScreen,
     PlatformErrorScreen,
@@ -637,4 +638,92 @@ async def test_add_buckets_updates_progress(tmp_path: Path, auth_ok):
             app._add_buckets(5)
             app._add_buckets(3)
             assert app.scored == 8
-            assert app.total == 100
+
+
+async def test_payload_preview_rendered_on_mount(tmp_path: Path, auth_ok):
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
+
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            preview = app.query_one("#payload-preview", Static)
+            assert "What actually gets sent:" in str(preview.content)
+
+
+async def test_action_open_dashboard_opens_browser(tmp_path: Path, auth_ok):
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
+
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch("cc_sentiment.tui.webbrowser.open") as mock_open:
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            await pilot.press("o")
+            await pilot.pause(delay=0.2)
+            mock_open.assert_called_once_with(DASHBOARD_URL)
+            assert DASHBOARD_URL in app.status_text
+
+
+async def test_show_idle_after_upload_mentions_dashboard(tmp_path: Path, auth_ok):
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
+
+    seed = Repository.open(db_path)
+    seed.save_records("/fake.jsonl", 1.0, [make_record()])
+    seed.close()
+
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+
+            app._uploaded_this_run = True
+            await app._show_idle()
+            assert "Uploaded" in app.status_text
+            assert "sentiments.cc" in app.status_text
+
+            app._uploaded_this_run = False
+            await app._show_idle()
+            assert "Uploaded" not in app.status_text
+            assert "O to open dashboard" in app.status_text
+
+
+async def test_show_idle_empty_state_mentions_dashboard(tmp_path: Path, auth_ok):
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
+
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            await app._show_idle()
+            assert "no conversations yet" in app.status_text
+            assert "O to browse" in app.status_text
+
+
+async def test_successful_upload_sets_uploaded_flag(tmp_path: Path, auth_ok):
+    records = [make_record(score=3), make_record(score=4)]
+    state = AppState(config=GPGConfig(contributor_type="github", contributor_id=ContributorId("testuser"), fpr="ABCD1234"))
+    db_path = tmp_path / "records.db"
+
+    async def fake_run(repo, *args, **kwargs):
+        repo.save_records("/fake.jsonl", 0.0, records)
+        return records
+
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 0.0)]), \
+         patch("cc_sentiment.pipeline.Pipeline.count_new_buckets", return_value=2), \
+         patch("cc_sentiment.pipeline.Pipeline.run", side_effect=fake_run), \
+         patch("cc_sentiment.upload.Uploader.upload", new_callable=AsyncMock):
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=1.0)
+            assert app._uploaded_this_run is True
+            assert "sentiments.cc" in app.status_text

@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import webbrowser
 from collections import Counter
 from pathlib import Path
 from statistics import mean
@@ -63,6 +64,8 @@ SCORE_LABELS = {1: "frustrated", 2: "annoyed", 3: "neutral", 4: "satisfied", 5: 
 SCORE_ICONS = {1: "😤", 2: "😒", 3: "😐", 4: "😊", 5: "🤩"}
 
 RESCAN_CONFIRM_SECONDS = 5.0
+
+DASHBOARD_URL = "https://sentiments.cc"
 
 
 def format_duration(seconds: float) -> str:
@@ -866,6 +869,8 @@ class CCSentimentApp(App[None]):
     .stat-card { width: 1fr; height: 3; padding: 0 1; border: tall $primary-background; }
     .stat-card .stat-value { text-style: bold; }
     .stat-card .stat-label { color: $text-muted; }
+    #payload-section { height: auto; margin: 1 0 0 0; }
+    #payload-preview { height: auto; color: $text-muted; }
     #status-line { height: 1; margin: 1 0 0 0; }
     #cached-line { height: 1; color: $text-muted; }
     """
@@ -874,6 +879,7 @@ class CCSentimentApp(App[None]):
         ("q", "quit", "Quit"),
         ("escape", "quit", "Quit"),
         ("r", "rescan", "Rescan"),
+        ("o", "open_dashboard", "Open dashboard"),
     ]
 
     scored: reactive[int] = reactive(0)
@@ -897,6 +903,7 @@ class CCSentimentApp(App[None]):
         self._start_time = 0.0
         self._rescan_armed = False
         self._rescan_pending = False
+        self._uploaded_this_run = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -927,6 +934,9 @@ class CCSentimentApp(App[None]):
                         self._score_bars[s] = bar
                         yield bar
 
+            with Vertical(id="payload-section"):
+                yield Static("", id="payload-preview")
+
             with Vertical(id="stats-section"):
                 Rule()
                 with Horizontal(id="stats-row"):
@@ -950,6 +960,7 @@ class CCSentimentApp(App[None]):
         self.title = "cc-sentiment"
         self._start_time = time.monotonic()
         self.repo = await anyio.to_thread.run_sync(Repository.open, self.db_path)
+        self.query_one("#payload-preview", Static).update(render_sample_payload())
         await self._seed_from_repo()
         self.run_flow()
 
@@ -1049,6 +1060,7 @@ class CCSentimentApp(App[None]):
             self._update_status("[dim]Uploading records...[/]")
             try:
                 await Uploader().upload(pending, self.state, self.repo)
+                self._uploaded_this_run = True
             except httpx.HTTPStatusError as e:
                 if e.response.status_code in (401, 403):
                     self._update_status(
@@ -1089,15 +1101,27 @@ class CCSentimentApp(App[None]):
         self.query_one("#stat-buckets", Static).update(f"[b]{total_buckets}[/]")
         self.query_one("#stat-sessions", Static).update(f"[b]{total_sessions}[/]")
         self.query_one("#stat-files", Static).update(f"[b]{total_files}[/]")
-        if total_sessions == 0:
-            self._update_status("[green]All set — no conversations yet. Come back after using Claude Code.[/]")
+        if self._uploaded_this_run:
+            self._update_status(
+                f"[green]Uploaded.[/] See your data at [b]sentiments.cc[/] — "
+                f"[dim]press O to open, R to rescan.[/]"
+            )
+        elif total_sessions == 0:
+            self._update_status(
+                "[green]All set — no conversations yet. Come back after using Claude Code.[/] "
+                "[dim]Press O to browse the dashboard.[/]"
+            )
         else:
             self._update_status(
                 f"[green]All caught up.[/] "
                 f"{total_sessions} session{'s' if total_sessions != 1 else ''}, "
                 f"{total_buckets} bucket{'s' if total_buckets != 1 else ''} scored. "
-                f"[dim]Press R to rescan.[/]"
+                f"[dim]Press R to rescan, O to open dashboard.[/]"
             )
+
+    async def action_open_dashboard(self) -> None:
+        await anyio.to_thread.run_sync(webbrowser.open, DASHBOARD_URL)
+        self._update_status(f"[dim]Opening {DASHBOARD_URL}...[/]")
 
     async def action_rescan(self) -> None:
         if not self._rescan_armed:
@@ -1127,6 +1151,7 @@ class CCSentimentApp(App[None]):
         self.scored = 0
         self.total = 0
         self._start_time = time.monotonic()
+        self._uploaded_this_run = False
         self.query_one("#scan-progress", ProgressBar).update(total=100, progress=0)
         self.query_one("#progress-label", Label).update("Preparing...")
         self.query_one("#score-digits", Digits).update("-.--")
