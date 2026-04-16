@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import platform
 import re
@@ -185,24 +186,15 @@ class OMLXEngine:
     async def _warm_next_server(self, base: str) -> None:
         async with httpx.AsyncClient(base_url=base, timeout=60.0) as client:
             deadline = time.monotonic() + 60.0
-            ready = False
             while time.monotonic() < deadline:
-                try:
-                    resp = await client.get("/v1/models", timeout=2.0)
-                except httpx.HTTPError:
-                    resp = None
-                if resp is not None and resp.status_code == 200:
-                    ready = True
-                    break
+                with contextlib.suppress(httpx.HTTPError):
+                    if (await client.get("/v1/models", timeout=2.0)).status_code == 200:
+                        break
                 await asyncio.sleep(1.0)
-            if not ready:
+            else:
                 return
-            try:
-                await client.post(
-                    "/v1/chat/completions", json=self._make_body("warmup")
-                )
-            except httpx.HTTPError:
-                pass
+            with contextlib.suppress(httpx.HTTPError):
+                await client.post("/v1/chat/completions", json=self._make_body("warmup"))
 
     async def _stop_current(self) -> None:
         if self.client:
@@ -354,14 +346,10 @@ class OMLXEngine:
         return extract_score(resp.json()["choices"][0]["message"]["content"])
 
     async def close(self) -> None:
-        task = self._next_warm_task
-        self._next_warm_task = None
-        if task and not task.done():
+        if (task := self._next_warm_task) and not task.done():
             task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await task
-            except asyncio.CancelledError:
-                pass
         if self.client:
             await self.client.aclose()
         self._shutdown()
