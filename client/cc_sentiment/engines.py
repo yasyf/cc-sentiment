@@ -476,8 +476,8 @@ async def build_engine(kind: str, model_repo: str | None = None) -> InferenceEng
     match kind:
         case "mlx":
             from cc_sentiment.sentiment import SentimentClassifier
-            inner: InferenceEngine = (
-                SentimentClassifier(model_repo) if model_repo else SentimentClassifier()
+            inner: InferenceEngine = await anyio.to_thread.run_sync(
+                SentimentClassifier, model_repo or DEFAULT_MODEL
             )
         case "omlx":
             omlx = await anyio.to_thread.run_sync(OMLXEngine, model_repo)
