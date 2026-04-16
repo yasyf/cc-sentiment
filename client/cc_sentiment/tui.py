@@ -36,6 +36,7 @@ from textual.widgets import (
     Static,
 )
 
+from cc_sentiment.daemon import LaunchAgent
 from cc_sentiment.engines import (
     HAIKU_INPUT_USD_PER_MTOK,
     HAIKU_MODEL,
@@ -267,6 +268,45 @@ class PlatformErrorScreen(Screen[None]):
 
     def action_done(self) -> None:
         self.dismiss(None)
+
+
+class DaemonPromptScreen(Screen[bool]):
+    DEFAULT_CSS = """
+    DaemonPromptScreen { align: center middle; }
+    #daemon-box { width: 76; height: auto; border: heavy $accent; padding: 2 3; }
+    #daemon-box .title { text-style: bold; color: $text; margin: 0 0 1 0; }
+    #daemon-box .detail { color: $text-muted; margin: 0 0 1 0; }
+    #daemon-box Button { margin: 1 1 0 0; }
+    """
+
+    BINDINGS = [("escape", "cancel", "Skip")]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="daemon-box"):
+            yield Label("Run this automatically each day?", classes="title")
+            yield Label(
+                "We can schedule a background job that refreshes your numbers daily — "
+                "no need to remember to run this.",
+                classes="detail",
+            )
+            yield Label(
+                "Nothing else changes. Undo any time with [b]cc-sentiment uninstall[/].",
+                classes="detail",
+            )
+            with Horizontal():
+                yield Button("Schedule it", id="daemon-yes", variant="primary")
+                yield Button("Not now", id="daemon-no", variant="default")
+
+    @on(Button.Pressed, "#daemon-yes")
+    def on_yes(self) -> None:
+        self.dismiss(True)
+
+    @on(Button.Pressed, "#daemon-no")
+    def on_no(self) -> None:
+        self.dismiss(False)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
 
 
 class CostReviewScreen(Screen[bool]):
@@ -953,11 +993,13 @@ class CCSentimentApp(App[None]):
         state: AppState,
         model_repo: str | None = None,
         db_path: Path | None = None,
+        setup_only: bool = False,
     ) -> None:
         super().__init__()
         self.state = state
         self.model_repo = model_repo
         self.db_path = db_path or Repository.default_path()
+        self.setup_only = setup_only
         self.repo: Repository | None = None
         self.records: list[SentimentRecord] = []
         self._score_history: list[float] = []
@@ -1021,6 +1063,10 @@ class CCSentimentApp(App[None]):
         self.repo = await anyio.to_thread.run_sync(Repository.open, self.db_path)
         self.query_one("#payload-preview", Static).update(render_sample_payload())
         await self._seed_from_repo()
+        if self.setup_only:
+            await self.push_screen_wait(SetupScreen(self.state))
+            self.exit()
+            return
         self.run_flow()
 
     async def on_unmount(self) -> None:
@@ -1199,6 +1245,29 @@ class CCSentimentApp(App[None]):
                 return
 
         await self._enter_idle(uploaded=uploaded)
+
+        if uploaded:
+            await self._offer_daemon_install()
+
+    async def _offer_daemon_install(self) -> None:
+        if self.state.daemon_prompt_dismissed or LaunchAgent.is_installed():
+            return
+        if not await self.push_screen_wait(DaemonPromptScreen()):
+            self.state.daemon_prompt_dismissed = True
+            await anyio.to_thread.run_sync(self.state.save)
+            return
+        try:
+            await anyio.to_thread.run_sync(LaunchAgent.install)
+        except subprocess.CalledProcessError as e:
+            self._update_status(
+                f"[yellow]Couldn't schedule the background job ({e.returncode}).[/] "
+                "[dim]Try `cc-sentiment install` manually.[/]"
+            )
+            return
+        self._update_status(
+            "[green]Scheduled.[/] It'll refresh your numbers daily in the background. "
+            "[dim]Undo with `cc-sentiment uninstall`.[/]"
+        )
 
     async def _enter_idle(self, uploaded: bool) -> None:
         assert self.repo is not None

@@ -58,12 +58,11 @@ Conversation text, file contents, file paths, tool inputs, and tool outputs neve
 
 | Command | Description |
 |---------|-------------|
-| `cc-sentiment` | Run the whole flow — set up if needed, then scan and upload |
-| `cc-sentiment setup` | Link your GitHub account |
-| `cc-sentiment scan --upload` | Score new transcripts and upload |
-| `cc-sentiment scan` | Score transcripts without uploading |
-| `cc-sentiment upload` | Upload previously scored results |
-| `cc-sentiment rescan` | Clear state and re-score everything |
+| `cc-sentiment` | Interactive TUI — set up if needed, then score and upload |
+| `cc-sentiment setup` | Re-run the setup wizard (link GitHub, pick signing key) |
+| `cc-sentiment run` | Score new transcripts and upload, non-interactively (safe for cron / SSH / launchd) |
+| `cc-sentiment install` | Schedule a daily background run via launchd |
+| `cc-sentiment uninstall` | Stop and remove the scheduled run |
 
 ## Development
 

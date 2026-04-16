@@ -184,6 +184,7 @@ class AppState(BaseModel):
     model_config = {"extra": "ignore"}
 
     config: ClientConfig | None = None
+    daemon_prompt_dismissed: bool = False
 
     @classmethod
     def state_path(cls) -> Path:

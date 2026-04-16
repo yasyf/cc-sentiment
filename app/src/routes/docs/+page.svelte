@@ -34,10 +34,13 @@
 				</p>
 				<pre class="mt-3 overflow-x-auto rounded border border-border bg-bg-code px-4 py-3 font-mono text-sm text-text-secondary"><code>uvx cc-sentiment</code></pre>
 				<p class="mt-2 text-sm text-text-dim">
-					Or install it permanently:
+					Or set it up on a schedule:
 				</p>
 				<pre class="mt-2 overflow-x-auto rounded border border-border bg-bg-code px-4 py-3 font-mono text-sm text-text-secondary"><code>uv tool install cc-sentiment
-cc-sentiment</code></pre>
+cc-sentiment install</code></pre>
+				<p class="mt-2 text-sm text-text-dim">
+					Runs once a day in the background. Undo any time with <code class="rounded bg-bg-code px-1 py-0.5 font-mono text-xs">cc-sentiment uninstall</code>.
+				</p>
 				<p class="mt-3 text-sm text-text-muted">
 					The wizard confirms your GitHub identity, scores your sessions on your Mac,
 					and uploads the numeric scores. If anything's missing, it'll set it up for you.

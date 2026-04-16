@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+
+import anyio
 import click
 
 from cc_sentiment.models import AppState
@@ -14,6 +17,79 @@ def main(ctx: click.Context, model_repo: str | None) -> None:
 
     from cc_sentiment.tui import CCSentimentApp
     CCSentimentApp(state=AppState.load(), model_repo=model_repo).run()
+
+
+@main.command()
+def setup() -> None:
+    from cc_sentiment.tui import CCSentimentApp
+    CCSentimentApp(state=AppState.load(), setup_only=True).run()
+
+
+@main.command()
+def install() -> None:
+    from cc_sentiment.daemon import LaunchAgent
+
+    LaunchAgent.install()
+    click.echo(
+        "Scheduled daily. Your transcripts will be scored and uploaded in the background. "
+        "Undo with `cc-sentiment uninstall`."
+    )
+
+
+@main.command()
+def uninstall() -> None:
+    from cc_sentiment.daemon import LaunchAgent
+
+    if not LaunchAgent.is_installed():
+        click.echo("Not scheduled — nothing to remove.")
+        return
+    LaunchAgent.uninstall()
+    click.echo("Removed the daily schedule.")
+
+
+@main.command()
+def run() -> None:
+    from cc_sentiment.headless import (
+        HeadlessAuthError,
+        HeadlessClaudeEngineBlocked,
+        HeadlessNotConfigured,
+        HeadlessNothingToDo,
+        HeadlessOk,
+        HeadlessRunner,
+        HeadlessUploadError,
+    )
+    from cc_sentiment.repo import Repository
+
+    state = AppState.load()
+    repo = Repository.open(Repository.default_path())
+    try:
+        outcome = anyio.run(HeadlessRunner.run, state, repo)
+    finally:
+        repo.close()
+
+    match outcome:
+        case HeadlessOk(scored=s, uploaded=u):
+            click.echo(f"Scored {s}, uploaded {u}.")
+        case HeadlessNothingToDo():
+            click.echo("Nothing new to score.")
+        case HeadlessNotConfigured():
+            click.echo(
+                "Not configured yet. Run `cc-sentiment setup` first.", err=True
+            )
+            sys.exit(2)
+        case HeadlessClaudeEngineBlocked():
+            click.echo(
+                "The claude engine needs interactive cost confirmation. "
+                "Run `cc-sentiment` instead.",
+                err=True,
+            )
+            sys.exit(2)
+        case HeadlessAuthError(detail=d):
+            click.echo(d, err=True)
+            sys.exit(3)
+        case HeadlessUploadError(detail=d):
+            click.echo(d, err=True)
+            sys.exit(4)
 
 
 @main.command(hidden=True)
