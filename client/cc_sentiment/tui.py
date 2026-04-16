@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
 import subprocess
 import tempfile
@@ -1205,10 +1206,9 @@ class CCSentimentApp(App[None]):
         if transcripts and bucket_count > 0:
             self._set_total(bucket_count, engine)
             self._update_status(f"[dim]Loading {engine} engine...[/]")
-            on_bucket = lambda n: self.call_from_thread(self._add_buckets, n)
             await Pipeline.run(
                 self.repo, engine, self.model_repo, transcripts,
-                self._add_records, on_bucket,
+                on_records=self._add_records, on_bucket=self._add_buckets,
             )
 
         pending = await anyio.to_thread.run_sync(self.repo.pending_records)
@@ -1333,6 +1333,7 @@ class CCSentimentApp(App[None]):
         self.stage = Scoring(total=total, engine=engine)
 
     def _add_buckets(self, n: int) -> None:
+        asyncio.get_running_loop()
         self.scored += n
         self.query_one("#scan-progress", ProgressBar).update(progress=self.scored)
         self.query_one("#progress-label", Label).update(
@@ -1344,6 +1345,7 @@ class CCSentimentApp(App[None]):
         self.query_one("#stat-rate", Static).update(f"{rate:.1f}")
 
     def _add_records(self, new_records: list[SentimentRecord]) -> None:
+        asyncio.get_running_loop()
         self.records.extend(new_records)
 
         for r in new_records:
