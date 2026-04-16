@@ -4,16 +4,11 @@
 	import annotationPlugin from 'chartjs-plugin-annotation';
 	import type { ChartOptions } from 'chart.js';
 	import type { HourlyPoint } from '$lib/types.js';
-	import { ACCENT_BAR, ACCENT_BAR_HOVER, GRID, TICK, TOOLTIP, sentimentColor } from '$lib/chart-theme.js';
+	import { ACCENT_BAR, ACCENT_BAR_HOVER, GRID, TICK, TOOLTIP, SENTIMENT_EMOJI, sentimentColor } from '$lib/chart-theme.js';
 
 	Chart.register(BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend, BarController, LineController, annotationPlugin);
 
 	const { data: raw }: { data: HourlyPoint[] } = $props();
-
-	const allHours = $derived.by(() => {
-		const byHour = new Map(raw.map((d) => [d.hour, d]));
-		return Array.from({ length: 24 }, (_, i) => byHour.get(i) ?? { hour: i, avg_score: 0, count: 0 });
-	});
 
 	function fmtHour(h: number): string {
 		if (h === 0) return '12a';
@@ -22,14 +17,26 @@
 		return `${h - 12}p`;
 	}
 
-	const currentUTCHour = new Date().getUTCHours();
+	const currentPTHour = (() => {
+		const raw = Number(new Intl.DateTimeFormat('en-US', {
+			timeZone: 'America/Los_Angeles', hour: '2-digit', hour12: false
+		}).format(new Date()));
+		return raw === 24 ? 0 : raw;
+	})();
 
-	// 5-7 PM PT (0:00-2:00 UTC) is typical peak usage for US-based devs — shade the band as reference.
+	const allHours = $derived.by(() => {
+		const byHour = new Map(raw.map((d) => [d.hour, d]));
+		return Array.from({ length: 24 }, (_, pt) => {
+			const src = byHour.get(pt);
+			return { hour: pt, avg_score: src?.avg_score ?? 0, count: src?.count ?? 0 };
+		});
+	});
+
 	const peakAnnotations = {
 		peakUsage: {
 			type: 'box' as const,
-			xMin: '12a',
-			xMax: '2a',
+			xMin: '5p',
+			xMax: '7p',
 			backgroundColor: 'rgba(220, 38, 38, 0.08)',
 			borderColor: 'rgba(220, 38, 38, 0.25)',
 			borderWidth: 1,
@@ -45,8 +52,8 @@
 		},
 		currentHour: {
 			type: 'line' as const,
-			xMin: fmtHour(currentUTCHour),
-			xMax: fmtHour(currentUTCHour),
+			xMin: fmtHour(currentPTHour),
+			xMax: fmtHour(currentPTHour),
 			borderColor: 'rgba(99, 102, 241, 0.5)',
 			borderWidth: 2,
 			borderDash: [3, 3],
@@ -116,7 +123,12 @@
 				position: 'right' as const,
 				min: 1, max: 5,
 				grid: { drawOnChartArea: false },
-				ticks: { color: TICK, font: { size: 10 }, stepSize: 1 },
+				ticks: {
+					color: TICK,
+					font: { size: 14 },
+					stepSize: 1,
+					callback: (v: number | string) => SENTIMENT_EMOJI[Number(v)] ?? String(v)
+				},
 				border: { display: false },
 				title: { display: true, text: 'sentiment', color: TICK, font: { size: 10 } }
 			}

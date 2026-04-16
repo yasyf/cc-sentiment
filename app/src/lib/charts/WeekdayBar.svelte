@@ -2,7 +2,7 @@
 	import { Chart as ChartComponent } from 'svelte5-chartjs';
 	import { Chart, BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend, BarController, LineController } from 'chart.js';
 	import type { WeekdayPoint } from '$lib/types.js';
-	import { ACCENT_BAR, ACCENT_BAR_HOVER, GRID, TICK, TOOLTIP, sentimentColor } from '$lib/chart-theme.js';
+	import { ACCENT_BAR, ACCENT_BAR_HOVER, GRID, TICK, TOOLTIP, SENTIMENT_EMOJI, sentimentColor } from '$lib/chart-theme.js';
 
 	Chart.register(BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend, BarController, LineController);
 
@@ -64,7 +64,12 @@
 				position: 'right' as const,
 				min: 1, max: 5,
 				grid: { drawOnChartArea: false },
-				ticks: { color: TICK, font: { size: 10 }, stepSize: 1 },
+				ticks: {
+					color: TICK,
+					font: { size: 14 },
+					stepSize: 1,
+					callback: (v: number | string) => SENTIMENT_EMOJI[Number(v)] ?? String(v)
+				},
 				border: { display: false }
 			}
 		},

@@ -13,8 +13,6 @@ const DataResponseSchema = z.object({
 		avg_edits_without_prior_read_ratio: z.number().nullable().default(null),
 		avg_tool_calls_per_turn: z.number().nullable().default(null)
 	})),
-	hourly: z.array(z.object({ hour: z.number(), avg_score: z.number(), count: z.number() })),
-	weekday: z.array(z.object({ dow: z.number(), avg_score: z.number(), count: z.number() })),
 	distribution: z.array(z.object({ score: z.number(), count: z.number() })),
 	total_records: z.number(),
 	total_sessions: z.number(),

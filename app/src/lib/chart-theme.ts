@@ -10,12 +10,24 @@ export const SENTIMENT: Record<number, string> = {
 	1: '#dc2626', 2: '#ea580c', 3: '#ca8a04', 4: '#16a34a', 5: '#0891b2'
 };
 
+export const SENTIMENT_EMOJI: Record<number, string> = {
+	1: '😡', 2: '😕', 3: '😐', 4: '🙂', 5: '😄'
+};
+
 export function sentimentColor(v: number): string {
 	if (v < 2) return SENTIMENT[1];
 	if (v < 2.5) return SENTIMENT[2];
 	if (v < 3.5) return SENTIMENT[3];
 	if (v < 4.5) return SENTIMENT[4];
 	return SENTIMENT[5];
+}
+
+export function sentimentEmoji(v: number): string {
+	if (v < 2) return SENTIMENT_EMOJI[1];
+	if (v < 2.5) return SENTIMENT_EMOJI[2];
+	if (v < 3.5) return SENTIMENT_EMOJI[3];
+	if (v < 4.5) return SENTIMENT_EMOJI[4];
+	return SENTIMENT_EMOJI[5];
 }
 
 export const TOOLTIP = {

@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { Line } from 'svelte5-chartjs';
-	import { Chart, LineElement, PointElement, LinearScale, TimeScale, Filler, Tooltip } from 'chart.js';
+	import { Chart, LineElement, PointElement, LinearScale, TimeScale, Tooltip } from 'chart.js';
 	import annotationPlugin from 'chartjs-plugin-annotation';
-	import 'chartjs-adapter-date-fns';
+	import 'chartjs-adapter-luxon';
 	import type { TimelinePoint } from '$lib/types.js';
 	import { GRID, TICK, TOOLTIP } from '$lib/chart-theme.js';
 
-	Chart.register(LineElement, PointElement, LinearScale, TimeScale, Filler, Tooltip, annotationPlugin);
+	Chart.register(LineElement, PointElement, LinearScale, TimeScale, Tooltip, annotationPlugin);
 
 	const { data: raw }: { data: TimelinePoint[] } = $props();
 
@@ -21,9 +21,8 @@
 		datasets: [{
 			data: sorted.map((d) => (d.avg_edits_without_prior_read_ratio ?? 0) * 100),
 			borderColor: '#6366f1',
-			backgroundColor: 'rgba(99, 102, 241, 0.08)',
-			fill: true,
-			tension: 0.3,
+			fill: false,
+			tension: 0,
 			pointRadius: 2,
 			pointHoverRadius: 5,
 			pointBackgroundColor: sorted.map((d) => {
@@ -33,8 +32,7 @@
 				return '#dc2626';
 			}),
 			pointBorderColor: 'transparent',
-			borderWidth: 1.5,
-			cubicInterpolationMode: 'monotone' as const
+			borderWidth: 1.5
 		}]
 	});
 
@@ -45,7 +43,8 @@
 		scales: {
 			x: {
 				type: 'time' as const,
-				time: { unit: 'day' as const, tooltipFormat: 'MMM d, yyyy HH:mm' },
+				time: { unit: 'day' as const, tooltipFormat: 'LLL d, yyyy HH:mm ZZZZ' },
+				adapters: { date: { zone: 'America/Los_Angeles' } },
 				grid: { color: GRID },
 				ticks: { color: TICK, font: { size: 11 }, maxTicksLimit: 8 },
 				border: { display: false }

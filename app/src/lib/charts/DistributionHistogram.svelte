@@ -2,7 +2,7 @@
 	import { Bar } from 'svelte5-chartjs';
 	import { Chart, BarElement, CategoryScale, LinearScale, Tooltip } from 'chart.js';
 	import type { DistributionPoint } from '$lib/types.js';
-	import { GRID, TICK, TOOLTIP, SENTIMENT } from '$lib/chart-theme.js';
+	import { GRID, TICK, TOOLTIP, SENTIMENT, SENTIMENT_EMOJI } from '$lib/chart-theme.js';
 
 	Chart.register(BarElement, CategoryScale, LinearScale, Tooltip);
 
@@ -15,7 +15,11 @@
 	const sorted = $derived(raw.toSorted((a, b) => a.score - b.score));
 
 	const chartData = $derived({
-		labels: sorted.map((d) => LABELS[d.score] ?? String(d.score)),
+		labels: sorted.map((d) => {
+			const emoji = SENTIMENT_EMOJI[d.score] ?? '';
+			const label = LABELS[d.score] ?? String(d.score);
+			return emoji ? `${emoji} ${label}` : label;
+		}),
 		datasets: [{
 			data: sorted.map((d) => d.count),
 			backgroundColor: sorted.map((d) => (SENTIMENT[d.score] ?? '#6366f1') + '30'),

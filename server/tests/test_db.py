@@ -113,8 +113,6 @@ class TestQueryAll:
 
         assert isinstance(result, DataResponse)
         assert result.timeline == []
-        assert result.hourly == []
-        assert result.weekday == []
         assert result.distribution == []
         assert result.total_records == 0
         assert result.total_sessions == 0
@@ -136,8 +134,6 @@ class TestQueryAll:
         assert result.total_sessions == 1
         assert result.total_contributors == 1
         assert len(result.distribution) >= 1
-        assert len(result.hourly) >= 1
-        assert len(result.weekday) >= 1
 
     @pytest.mark.asyncio
     async def test_distribution_counts(self, db: Database) -> None:

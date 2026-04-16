@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Line } from 'svelte5-chartjs';
 	import { Chart, LineElement, PointElement, LinearScale, TimeScale, Filler, Tooltip } from 'chart.js';
-	import 'chartjs-adapter-date-fns';
+	import 'chartjs-adapter-luxon';
 	import type { TimelinePoint } from '$lib/types.js';
 	import { GRID, TICK, TOOLTIP, ACCENT, ACCENT_LIGHT } from '$lib/chart-theme.js';
 
@@ -39,7 +39,8 @@
 		scales: {
 			x: {
 				type: 'time' as const,
-				time: { unit: 'day' as const, tooltipFormat: 'MMM d, yyyy HH:mm' },
+				time: { unit: 'day' as const, tooltipFormat: 'LLL d, yyyy HH:mm ZZZZ' },
+				adapters: { date: { zone: 'America/Los_Angeles' } },
 				grid: { color: GRID },
 				ticks: { color: TICK, font: { size: 11 }, maxTicksLimit: 8 },
 				border: { display: false }

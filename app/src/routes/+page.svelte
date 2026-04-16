@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { DateTime } from 'luxon';
 	import SentimentTimeline from '$lib/charts/SentimentTimeline.svelte';
 	import HourlyHeatmap from '$lib/charts/HourlyHeatmap.svelte';
 	import WeekdayBar from '$lib/charts/WeekdayBar.svelte';
@@ -7,13 +8,18 @@
 	import EditsWithoutReadTimeline from '$lib/charts/EditsWithoutReadTimeline.svelte';
 	import ToolCallsPerTurnTimeline from '$lib/charts/ToolCallsPerTurnTimeline.svelte';
 	import ModelBreakdown from '$lib/charts/ModelBreakdown.svelte';
+	import { sentimentEmoji } from '$lib/chart-theme.js';
 	import type { PageProps } from './$types.js';
+
+	const DISPLAY_TZ = 'America/Los_Angeles';
 
 	let { data }: PageProps = $props();
 
 	const lastUpdated = $derived(
 		new Date(data.last_updated).toLocaleString('en-US', {
-			month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+			timeZone: 'America/Los_Angeles',
+			month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+			timeZoneName: 'short'
 		})
 	);
 
@@ -51,22 +57,52 @@
 		return sentimentDelta > 0 ? `up ${abs.toFixed(1)}` : `down ${abs.toFixed(1)}`;
 	});
 
+	const sessionsTrendDescription = $derived.by(() => {
+		if (sessionsDelta == null) return null;
+		const abs = Math.abs(sessionsDelta);
+		if (abs < 5) return 'about the same as last week';
+		return `${sessionsDelta > 0 ? 'up' : 'down'} ${abs.toFixed(0)}% vs last week`;
+	});
+
 	function fmtHour(h: number): string {
 		const ampm = h < 12 ? 'AM' : 'PM';
 		const display = h === 0 ? 12 : h > 12 ? h - 12 : h;
 		return `${display} ${ampm}`;
 	}
 
-	function utcToPT(h: number): string {
-		const pt = (h - 7 + 24) % 24;
-		return fmtHour(pt);
+	function bucketTimelineBy(keyFn: (dt: DateTime) => number, size: number) {
+		const sums = new Array(size).fill(null).map(() => ({ score: 0, count: 0 }));
+		for (const point of data.timeline) {
+			const dt = DateTime.fromISO(point.time, { zone: DISPLAY_TZ });
+			if (!dt.isValid) continue;
+			const bucket = sums[keyFn(dt)];
+			bucket.score += point.avg_score * point.count;
+			bucket.count += point.count;
+		}
+		return sums.map((s, i) => ({
+			key: i,
+			avg_score: s.count > 0 ? s.score / s.count : 0,
+			count: s.count
+		}));
 	}
 
+	const hourlyData = $derived.by(() =>
+		bucketTimelineBy((dt) => dt.hour, 24).map(({ key, avg_score, count }) => ({
+			hour: key, avg_score, count
+		}))
+	);
+
+	const weekdayData = $derived.by(() =>
+		bucketTimelineBy((dt) => dt.weekday % 7, 7).map(({ key, avg_score, count }) => ({
+			dow: key, avg_score, count
+		}))
+	);
+
 	const worstSentimentHour = $derived.by(() => {
-		const significant = data.hourly.filter((h) => h.count >= 5);
+		const significant = hourlyData.filter((h) => h.count >= 5);
 		if (significant.length === 0) return null;
 		const worst = significant.toSorted((a, b) => a.avg_score - b.avg_score)[0];
-		return { label: fmtHour(worst.hour), ptLabel: utcToPT(worst.hour), score: worst.avg_score, count: worst.count };
+		return { ptLabel: fmtHour(worst.hour), score: worst.avg_score, count: worst.count };
 	});
 
 	const frustratedPct = $derived.by(() => {
@@ -75,13 +111,6 @@
 		const frustrated = data.distribution.filter((d) => d.score <= 2).reduce((s, d) => s + d.count, 0);
 		return (frustrated / total) * 100;
 	});
-
-	function readEditColor(v: number | null): string {
-		if (v == null) return 'text-text-dim';
-		if (v >= 4) return 'text-sentiment-4';
-		if (v >= 2) return 'text-sentiment-3';
-		return 'text-sentiment-1';
-	}
 
 	let showAdvanced = $state(false);
 </script>
@@ -115,7 +144,7 @@
 				{verdict.text}
 			</h2>
 			<p class="mt-2 text-lg text-text-muted">
-				{overallAvg.toFixed(1)}/5 across {data.total_sessions.toLocaleString()} sessions this week — {trendDescription}.
+				{overallAvg.toFixed(1)}/5 across {data.trend.sessions_current.toLocaleString()} sessions this week — {trendDescription}.
 			</p>
 			<p class="mt-1 max-w-2xl text-sm text-text-dim">
 				An open experiment: does developer sentiment with Claude Code vary by time of day, day of week, or model?
@@ -133,8 +162,21 @@
 		{:else}
 			<div class="mb-10 grid grid-cols-2 gap-4 sm:grid-cols-4">
 				<div class="rounded-lg border border-border bg-bg-card p-4">
-					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Sentiment</p>
-					<p class="mt-2 text-3xl font-semibold tabular-nums {sentimentLabel.color}">{overallAvg.toFixed(1)}<span class="text-base text-text-dim">/5</span></p>
+					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Peak frustration</p>
+					{#if worstSentimentHour}
+						<p class="mt-2 text-3xl font-semibold tabular-nums text-sentiment-1">{worstSentimentHour.ptLabel}</p>
+						<p class="mt-0.5 text-xs text-text-muted">{sentimentEmoji(worstSentimentHour.score)} {worstSentimentHour.score.toFixed(2)} avg</p>
+					{:else}
+						<p class="mt-2 text-3xl font-semibold text-text-dim">--</p>
+						<p class="mt-0.5 text-xs text-text-dim">not enough data yet</p>
+					{/if}
+				</div>
+
+				<div class="rounded-lg border border-border bg-bg-card p-4">
+					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Sentiment this week</p>
+					<p class="mt-2 text-3xl font-semibold tabular-nums {sentimentLabel.color}">
+						{overallAvg.toFixed(1)} <span class="text-2xl">{sentimentEmoji(overallAvg)}</span>
+					</p>
 					<p class="mt-0.5 text-xs text-text-muted">
 						{sentimentLabel.text}
 						{#if Math.abs(sentimentDelta) >= 0.1}
@@ -146,58 +188,44 @@
 				</div>
 
 				<div class="rounded-lg border border-border bg-bg-card p-4">
-					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Read:Edit Ratio</p>
-					{#if data.avg_read_edit_ratio != null}
-						<p class="mt-2 text-3xl font-semibold tabular-nums {readEditColor(data.avg_read_edit_ratio)}">{data.avg_read_edit_ratio.toFixed(1)}</p>
-						<p class="mt-0.5 text-xs text-text-muted">reads per edit</p>
-					{:else}
-						<p class="mt-2 text-3xl font-semibold text-text-dim">--</p>
-						<p class="mt-0.5 text-xs text-text-dim">no data yet</p>
-					{/if}
-				</div>
-
-				<div class="rounded-lg border border-border bg-bg-card p-4">
-					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Peak frustration</p>
-					{#if worstSentimentHour}
-						<p class="mt-2 text-3xl font-semibold tabular-nums text-sentiment-1">{worstSentimentHour.ptLabel}</p>
-						<p class="mt-0.5 text-xs text-text-muted">{worstSentimentHour.score.toFixed(2)} avg · {worstSentimentHour.label} UTC</p>
-					{:else}
-						<p class="mt-2 text-3xl font-semibold text-text-dim">--</p>
-					{/if}
-				</div>
-
-				<div class="rounded-lg border border-border bg-bg-card p-4">
-					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Community</p>
-					<p class="mt-2 text-3xl font-semibold tabular-nums text-text">{data.total_sessions.toLocaleString()}</p>
+					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Sessions this week</p>
+					<p class="mt-2 text-3xl font-semibold tabular-nums text-text">{data.trend.sessions_current.toLocaleString()}</p>
 					<p class="mt-0.5 text-xs text-text-muted">
-						{data.total_contributors} contributor{data.total_contributors === 1 ? '' : 's'}
-						{#if sessionsDelta != null && Math.abs(sessionsDelta) >= 5}
-							<span class={sessionsDelta > 0 ? 'text-sentiment-4' : 'text-sentiment-1'}>
-								{sessionsDelta > 0 ? '+' : ''}{sessionsDelta.toFixed(0)}%
+						{#if sessionsTrendDescription}
+							<span class={sessionsDelta != null && sessionsDelta < -5 ? 'text-sentiment-1' : sessionsDelta != null && sessionsDelta > 5 ? 'text-sentiment-4' : ''}>
+								{sessionsTrendDescription}
 							</span>
+						{:else}
+							first week with data
 						{/if}
 					</p>
+				</div>
+
+				<div class="rounded-lg border border-border bg-bg-card p-4">
+					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Contributors</p>
+					<p class="mt-2 text-3xl font-semibold tabular-nums text-text">{data.total_contributors}</p>
+					<p class="mt-0.5 text-xs text-text-muted">people who shared data</p>
 				</div>
 			</div>
 
 			<div class="space-y-8">
 				<section>
-					<h3 class="mb-0.5 text-sm font-medium text-text-secondary">The trend</h3>
+					<h3 class="mb-0.5 text-sm font-medium text-text-secondary">By hour of day</h3>
 					<p class="mb-2 text-xs text-text-dim">
-						Average sentiment and session volume over time.
+						Average sentiment and session volume by hour (PT, last 30 days).
 					</p>
 					<div class="rounded-lg border border-border bg-bg-card p-5">
-						<SentimentTimeline data={data.timeline} />
+						<HourlyHeatmap data={hourlyData} />
 					</div>
 				</section>
 
 				<section>
-					<h3 class="mb-0.5 text-sm font-medium text-text-secondary">By hour of day</h3>
+					<h3 class="mb-0.5 text-sm font-medium text-text-secondary">The trend</h3>
 					<p class="mb-2 text-xs text-text-dim">
-						Average sentiment and session volume by hour (UTC).
+						Daily sentiment and session volume (last 30 days).
 					</p>
 					<div class="rounded-lg border border-border bg-bg-card p-5">
-						<HourlyHeatmap data={data.hourly} />
+						<SentimentTimeline data={data.timeline} />
 					</div>
 				</section>
 
@@ -205,7 +233,7 @@
 					<section>
 						<h3 class="mb-0.5 text-sm font-medium text-text-secondary">How sessions feel</h3>
 						<p class="mb-2 text-xs text-text-dim">
-							{frustratedPct.toFixed(0)}% of sessions score frustrated or annoyed.
+							Distribution of sentiment this week — {frustratedPct.toFixed(0)}% score frustrated or annoyed.
 						</p>
 						<div class="rounded-lg border border-border bg-bg-card p-5">
 							<DistributionHistogram data={data.distribution} />
@@ -215,10 +243,10 @@
 					<section>
 						<h3 class="mb-0.5 text-sm font-medium text-text-secondary">Day of week</h3>
 						<p class="mb-2 text-xs text-text-dim">
-							Session volume and sentiment by weekday.
+							Session volume and sentiment by weekday (last 30 days).
 						</p>
 						<div class="rounded-lg border border-border bg-bg-card p-5">
-							<WeekdayBar data={data.weekday} />
+							<WeekdayBar data={weekdayData} />
 						</div>
 					</section>
 				</div>
@@ -238,7 +266,7 @@
 								<section>
 									<h3 class="mb-0.5 text-sm font-medium text-text-secondary">Read:Edit ratio over time</h3>
 									<p class="mb-2 text-xs text-text-dim">
-										How many files Claude reads before making an edit. Higher is better — green (&gt;4) means thorough research, red (&lt;2) means lazy editing.
+										How many files Claude reads before making an edit (last 30 days). Higher is better — green (&gt;4) means thorough research, red (&lt;2) means lazy editing.
 									</p>
 									<div class="rounded-lg border border-border bg-bg-card p-5">
 										<ReadEditTimeline data={data.timeline} />
@@ -250,7 +278,7 @@
 								<section>
 									<h3 class="mb-0.5 text-sm font-medium text-text-secondary">Edits without prior read</h3>
 									<p class="mb-2 text-xs text-text-dim">
-										Share of edits where Claude hadn't yet read the file in this session. Lower means more research before changes.
+										Share of edits where Claude hadn't yet read the file in this session (last 30 days). Lower means more research before changes.
 									</p>
 									<div class="rounded-lg border border-border bg-bg-card p-5">
 										<EditsWithoutReadTimeline data={data.timeline} />
@@ -262,7 +290,7 @@
 								<section>
 									<h3 class="mb-0.5 text-sm font-medium text-text-secondary">Tool calls per turn</h3>
 									<p class="mb-2 text-xs text-text-dim">
-										Average number of tools Claude invokes between user messages.
+										Average number of tools Claude invokes between user messages (last 30 days).
 									</p>
 									<div class="rounded-lg border border-border bg-bg-card p-5">
 										<ToolCallsPerTurnTimeline data={data.timeline} />
@@ -274,7 +302,7 @@
 								<section>
 									<h3 class="mb-0.5 text-sm font-medium text-text-secondary">By model</h3>
 									<p class="mb-2 text-xs text-text-dim">
-										Average sentiment by Claude model, across scored sessions.
+										Average sentiment by Claude model (last 30 days).
 									</p>
 									<div class="rounded-lg border border-border bg-bg-card p-5">
 										<ModelBreakdown data={data.model_breakdown} />

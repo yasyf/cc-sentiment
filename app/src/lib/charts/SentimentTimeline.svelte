@@ -2,10 +2,10 @@
 	import { Chart as ChartComponent } from 'svelte5-chartjs';
 	import { Chart, LineElement, PointElement, BarElement, LinearScale, TimeScale, Filler, Tooltip, Legend, BarController, LineController } from 'chart.js';
 	import annotationPlugin from 'chartjs-plugin-annotation';
-	import 'chartjs-adapter-date-fns';
+	import 'chartjs-adapter-luxon';
 	import type { TimelinePoint } from '$lib/types.js';
 	import { EVENTS } from '$lib/events.js';
-	import { ACCENT, ACCENT_LIGHT, GRID, TICK, TOOLTIP } from '$lib/chart-theme.js';
+	import { ACCENT, GRID, TICK, TOOLTIP } from '$lib/chart-theme.js';
 
 	Chart.register(LineElement, PointElement, BarElement, LinearScale, TimeScale, Filler, Tooltip, Legend, BarController, LineController, annotationPlugin);
 
@@ -66,8 +66,7 @@
 				label: 'Sentiment',
 				data: sorted.map((d) => d.avg_score),
 				borderColor: ACCENT,
-				backgroundColor: ACCENT_LIGHT,
-				fill: true,
+				fill: false,
 				tension: 0.2,
 				pointRadius: 1.5,
 				pointHoverRadius: 5,
@@ -88,7 +87,8 @@
 		scales: {
 			x: {
 				type: 'time' as const,
-				time: { unit: 'day' as const, tooltipFormat: 'MMM d, yyyy HH:mm' },
+				time: { unit: 'day' as const, tooltipFormat: 'LLL d, yyyy HH:mm ZZZZ' },
+				adapters: { date: { zone: 'America/Los_Angeles' } },
 				grid: { color: GRID },
 				ticks: { color: TICK, font: { size: 11 }, maxTicksLimit: 8 },
 				border: { display: false }
@@ -130,6 +130,6 @@
 	});
 </script>
 
-<div class="h-80 w-full">
+<div class="h-48 w-full">
 	<ChartComponent type="bar" data={chartData} options={chartOptions} />
 </div>

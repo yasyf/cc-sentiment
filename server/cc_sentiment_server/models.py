@@ -12,8 +12,6 @@ __all__ = [
     "VerifyRequest",
     "StatusResponse",
     "TimelinePoint",
-    "HourlyPoint",
-    "WeekdayPoint",
     "DistributionPoint",
     "TrendComparison",
     "ModelBreakdown",
@@ -84,22 +82,6 @@ class TimelinePoint(BaseModel):
     avg_tool_calls_per_turn: float | None
 
 
-class HourlyPoint(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    hour: int
-    avg_score: float
-    count: int
-
-
-class WeekdayPoint(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    dow: int
-    avg_score: float
-    count: int
-
-
 class DistributionPoint(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -133,8 +115,6 @@ class DataResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     timeline: list[TimelinePoint]
-    hourly: list[HourlyPoint]
-    weekday: list[WeekdayPoint]
     distribution: list[DistributionPoint]
     total_records: int
     total_sessions: int

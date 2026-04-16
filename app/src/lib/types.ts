@@ -44,8 +44,6 @@ export interface ModelBreakdown {
 
 export interface DataResponse {
 	timeline: TimelinePoint[];
-	hourly: HourlyPoint[];
-	weekday: WeekdayPoint[];
 	distribution: DistributionPoint[];
 	total_records: number;
 	total_sessions: number;
