@@ -13,6 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
+import anyio.to_thread
 import httpx
 
 from cc_sentiment.models import ConversationBucket, SentimentScore
@@ -60,11 +61,14 @@ Score ONLY the developer's messages."""
 STRUCTURED_OUTPUTS_CHOICE = ["1", "2", "3", "4", "5"]
 
 
+NOOP_PROGRESS: Callable[[int], None] = lambda _: None
+
+
 class InferenceEngine(Protocol):
     async def score(
         self,
         buckets: list[ConversationBucket],
-        on_progress: Callable[[int], None] | None = None,
+        on_progress: Callable[[int], None] = NOOP_PROGRESS,
     ) -> list[SentimentScore]: ...
     def peak_memory_gb(self) -> float: ...
     async def close(self) -> None: ...
@@ -77,17 +81,30 @@ def check_frustration(bucket: ConversationBucket) -> bool:
     )
 
 
-def partition_frustration(
-    buckets: list[ConversationBucket],
-) -> tuple[list[SentimentScore], list[tuple[int, ConversationBucket]]]:
-    scores: list[SentimentScore] = [SentimentScore(0)] * len(buckets)
-    to_infer: list[tuple[int, ConversationBucket]] = []
-    for i, bucket in enumerate(buckets):
-        if check_frustration(bucket):
-            scores[i] = SentimentScore(1)
-        else:
-            to_infer.append((i, bucket))
-    return scores, to_infer
+class FrustrationFilter:
+    def __init__(self, inner: InferenceEngine) -> None:
+        self.inner = inner
+
+    async def score(
+        self,
+        buckets: list[ConversationBucket],
+        on_progress: Callable[[int], None] = NOOP_PROGRESS,
+    ) -> list[SentimentScore]:
+        flags = [check_frustration(b) for b in buckets]
+        to_infer = [(i, b) for i, (b, f) in enumerate(zip(buckets, flags)) if not f]
+        if pre := sum(flags):
+            on_progress(pre)
+        inferred = await self.inner.score([b for _, b in to_infer], on_progress)
+        scores = [SentimentScore(1) if f else SentimentScore(0) for f in flags]
+        for (idx, _), s in zip(to_infer, inferred):
+            scores[idx] = s
+        return scores
+
+    def peak_memory_gb(self) -> float:
+        return self.inner.peak_memory_gb()
+
+    async def close(self) -> None:
+        await self.inner.close()
 
 
 def format_conversation(bucket: ConversationBucket) -> str:
@@ -278,26 +295,18 @@ class OMLXEngine:
     async def score(
         self,
         buckets: list[ConversationBucket],
-        on_progress: Callable[[int], None] | None = None,
+        on_progress: Callable[[int], None] = NOOP_PROGRESS,
     ) -> list[SentimentScore]:
-        scores, to_infer = partition_frustration(buckets)
-        pre_scored = len(buckets) - len(to_infer)
-        if on_progress and pre_scored:
-            on_progress(pre_scored)
+        scores: list[SentimentScore] = [SentimentScore(0)] * len(buckets)
+        indexed = list(enumerate(buckets))
 
-        for chunk_start in range(0, len(to_infer), SERVER_RESTART_THRESHOLD):
+        for chunk_start in range(0, len(indexed), SERVER_RESTART_THRESHOLD):
             if chunk_start > 0:
-                if self._next_server:
-                    await self._switch_to_next_server()
-                else:
-                    await self._cold_restart_server()
-
-            if chunk_start + SERVER_RESTART_THRESHOLD < len(to_infer):
+                await self._rotate_server()
+            if chunk_start + SERVER_RESTART_THRESHOLD < len(indexed):
                 self._start_next_server_background()
 
-            chunk = to_infer[chunk_start : chunk_start + SERVER_RESTART_THRESHOLD]
-            remaining = list(chunk)
-
+            remaining = indexed[chunk_start : chunk_start + SERVER_RESTART_THRESHOLD]
             while remaining:
                 sem = asyncio.Semaphore(8)
                 stalled = False
@@ -312,29 +321,24 @@ class OMLXEngine:
                         except StallDetected:
                             stalled = True
                             return idx, None
-                        if on_progress:
-                            on_progress(1)
+                        on_progress(1)
                         return idx, result
 
                 results = await asyncio.gather(*(bounded(i, b) for i, b in remaining))
-                by_idx = dict(remaining)
-                retry: list[tuple[int, ConversationBucket]] = []
                 for i, s in results:
                     if s is not None:
                         scores[i] = s
-                    else:
-                        retry.append((i, by_idx[i]))
-
-                if retry:
-                    if self._next_server:
-                        await self._switch_to_next_server()
-                    else:
-                        await self._cold_restart_server()
-                    remaining = retry
-                else:
-                    break
+                remaining = [(i, b) for (i, b), (_, s) in zip(remaining, results) if s is None]
+                if remaining:
+                    await self._rotate_server()
 
         return scores
+
+    async def _rotate_server(self) -> None:
+        if self._next_server:
+            await self._switch_to_next_server()
+        else:
+            await self._cold_restart_server()
 
     async def _score_one(self, bucket: ConversationBucket) -> SentimentScore:
         assert self.client is not None
@@ -464,27 +468,38 @@ class ClaudeCLIEngine:
     async def score(
         self,
         buckets: list[ConversationBucket],
-        on_progress: Callable[[int], None] | None = None,
+        on_progress: Callable[[int], None] = NOOP_PROGRESS,
     ) -> list[SentimentScore]:
-        scores, to_infer = partition_frustration(buckets)
-        pre_scored = len(buckets) - len(to_infer)
-        if on_progress and pre_scored:
-            on_progress(pre_scored)
         sem = asyncio.Semaphore(CLAUDE_CLI_CONCURRENCY)
 
-        async def score_bucket(idx: int, bucket: ConversationBucket) -> tuple[int, SentimentScore]:
+        async def one(bucket: ConversationBucket) -> SentimentScore:
             async with sem:
                 score = await self.score_one(bucket)
-            if on_progress:
-                on_progress(1)
-            return idx, score
+            on_progress(1)
+            return score
 
-        for idx, score in await asyncio.gather(*(score_bucket(i, b) for i, b in to_infer)):
-            scores[idx] = score
-        return scores
+        return list(await asyncio.gather(*(one(b) for b in buckets)))
 
     def peak_memory_gb(self) -> float:
         return 0.0
 
     async def close(self) -> None:
         pass
+
+
+async def build_engine(kind: str, model_repo: str | None = None) -> InferenceEngine:
+    match kind:
+        case "mlx":
+            from cc_sentiment.sentiment import SentimentClassifier
+            inner: InferenceEngine = (
+                SentimentClassifier(model_repo) if model_repo else SentimentClassifier()
+            )
+        case "omlx":
+            omlx = await anyio.to_thread.run_sync(OMLXEngine, model_repo)
+            await omlx.warm_system_prompt()
+            inner = omlx
+        case "claude":
+            inner = ClaudeCLIEngine(model=model_repo or HAIKU_MODEL)
+        case _:
+            raise ValueError(f"Unknown engine: {kind}")
+    return FrustrationFilter(inner)

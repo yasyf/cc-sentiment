@@ -12,7 +12,7 @@ from statistics import mean, median, stdev
 import anyio
 import click
 
-from cc_sentiment.engines import DEFAULT_MODEL, InferenceEngine, OMLXEngine
+from cc_sentiment.engines import DEFAULT_MODEL, InferenceEngine, build_engine
 from cc_sentiment.labeled_data import build_labeled_dataset
 from cc_sentiment.models import ConversationBucket, SentimentScore
 from cc_sentiment.transcripts import (
@@ -73,16 +73,7 @@ class BenchmarkRunner:
 
     @staticmethod
     async def create_engine(engine_name: str, model_repo: str | None = None) -> InferenceEngine:
-        match engine_name:
-            case "mlx":
-                from cc_sentiment.sentiment import SentimentClassifier
-                return SentimentClassifier(model_repo) if model_repo else SentimentClassifier()
-            case "omlx":
-                engine = OMLXEngine(model_repo=model_repo)
-                await engine.warm_system_prompt()
-                return engine
-            case _:
-                raise ValueError(f"Unknown engine: {engine_name}")
+        return await build_engine(engine_name, model_repo)
 
     @classmethod
     async def run_engine(

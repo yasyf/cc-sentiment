@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections.abc import Callable
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,7 +13,9 @@ from cc_sentiment.engines import (
     CLAUDE_EST_OUTPUT_TOKENS_PER_BUCKET,
     HAIKU_INPUT_USD_PER_MTOK,
     HAIKU_OUTPUT_USD_PER_MTOK,
+    NOOP_PROGRESS,
     ClaudeCLIEngine,
+    FrustrationFilter,
     check_frustration,
     claude_cli_available,
     default_engine,
@@ -180,14 +183,6 @@ class TestClaudeCLIEngine:
              pytest.raises(RuntimeError, match="claude.*not found"):
             ClaudeCLIEngine(model="claude-haiku-4-5")
 
-    def test_score_frustration_bypasses_api(self) -> None:
-        import asyncio
-        with patch("cc_sentiment.engines.shutil.which", return_value="/usr/bin/claude"):
-            engine = ClaudeCLIEngine(model="claude-haiku-4-5")
-        scores = asyncio.run(engine.score([make_bucket("this is fucking broken")]))
-        assert scores == [SentimentScore(1)]
-        assert engine.total_cost_usd == 0.0
-
     def test_score_parses_json_response_and_tracks_cost(self) -> None:
         import asyncio
         response = json.dumps({
@@ -220,40 +215,92 @@ class TestClaudeCLIEngine:
             asyncio.run(engine.score([make_bucket("please help me fix this")]))
 
 
-class TestPartitionFrustration:
-    def test_separates_frustrated_from_non_frustrated(self) -> None:
-        from cc_sentiment.engines import partition_frustration
+class StubEngine:
+    def __init__(self, scores: list[SentimentScore]) -> None:
+        self.scores = scores
+        self.received: list[ConversationBucket] | None = None
+        self.closed = False
 
+    async def score(
+        self,
+        buckets: list[ConversationBucket],
+        on_progress: Callable[[int], None] = NOOP_PROGRESS,
+    ) -> list[SentimentScore]:
+        self.received = list(buckets)
+        for _ in buckets:
+            on_progress(1)
+        return self.scores[: len(buckets)]
+
+    def peak_memory_gb(self) -> float:
+        return 0.42
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class TestFrustrationFilter:
+    def test_all_frustrated_skips_inner(self) -> None:
+        import asyncio
+        stub = StubEngine(scores=[])
+        wrapper = FrustrationFilter(stub)
+        buckets = [make_bucket("wtf is this"), make_bucket("this is fucking broken")]
+        scores = asyncio.run(wrapper.score(buckets))
+        assert scores == [SentimentScore(1), SentimentScore(1)]
+        assert stub.received == []
+
+    def test_none_frustrated_forwards_all(self) -> None:
+        import asyncio
+        stub = StubEngine(scores=[SentimentScore(4), SentimentScore(3)])
+        wrapper = FrustrationFilter(stub)
+        buckets = [make_bucket("please help me"), make_bucket("great job")]
+        scores = asyncio.run(wrapper.score(buckets))
+        assert scores == [SentimentScore(4), SentimentScore(3)]
+        assert stub.received == buckets
+
+    def test_mixed_scatters_by_index(self) -> None:
+        import asyncio
+        stub = StubEngine(scores=[SentimentScore(4)])
+        wrapper = FrustrationFilter(stub)
         buckets = [
-            make_bucket("this is fucking broken"),
-            make_bucket("please help me fix the login form"),
             make_bucket("wtf is this"),
+            make_bucket("please help me"),
+            make_bucket("fuck you"),
         ]
-        scores, to_infer = partition_frustration(buckets)
+        scores = asyncio.run(wrapper.score(buckets))
+        assert scores == [SentimentScore(1), SentimentScore(4), SentimentScore(1)]
+        assert stub.received == [buckets[1]]
 
-        assert scores[0] == SentimentScore(1)
-        assert scores[2] == SentimentScore(1)
-        assert [idx for idx, _ in to_infer] == [1]
+    def test_on_progress_fires_pre_then_per_inferred(self) -> None:
+        import asyncio
+        stub = StubEngine(scores=[SentimentScore(4)])
+        wrapper = FrustrationFilter(stub)
+        buckets = [
+            make_bucket("wtf is this"),
+            make_bucket("please help me"),
+            make_bucket("fuck you"),
+        ]
+        calls: list[int] = []
+        asyncio.run(wrapper.score(buckets, on_progress=calls.append))
+        assert calls == [2, 1]
 
-    def test_handles_empty_input(self) -> None:
-        from cc_sentiment.engines import partition_frustration
+    def test_on_progress_skipped_when_no_frustration(self) -> None:
+        import asyncio
+        stub = StubEngine(scores=[SentimentScore(4)])
+        wrapper = FrustrationFilter(stub)
+        calls: list[int] = []
+        asyncio.run(wrapper.score([make_bucket("please help me")], on_progress=calls.append))
+        assert calls == [1]
 
-        scores, to_infer = partition_frustration([])
-        assert scores == []
-        assert to_infer == []
+    def test_close_and_peak_memory_delegate(self) -> None:
+        import asyncio
+        stub = StubEngine(scores=[])
+        wrapper = FrustrationFilter(stub)
+        assert wrapper.peak_memory_gb() == 0.42
+        asyncio.run(wrapper.close())
+        assert stub.closed is True
 
 
 class TestClaudeCLIEngineProgress:
-    def test_score_fires_on_progress_for_frustration_skip(self) -> None:
-        import asyncio
-
-        with patch("cc_sentiment.engines.shutil.which", return_value="/usr/bin/claude"):
-            engine = ClaudeCLIEngine(model="claude-haiku-4-5")
-
-        calls: list[int] = []
-        asyncio.run(engine.score([make_bucket("wtf is this")], on_progress=calls.append))
-        assert calls == [1]
-
     def test_score_fires_on_progress_for_inference_path(self) -> None:
         import asyncio
         response = json.dumps({

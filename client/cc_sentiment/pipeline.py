@@ -6,7 +6,7 @@ from pathlib import Path
 import anyio
 import anyio.to_thread
 
-from cc_sentiment.engines import HAIKU_MODEL, ClaudeCLIEngine, InferenceEngine, OMLXEngine
+from cc_sentiment.engines import NOOP_PROGRESS, InferenceEngine, build_engine
 from cc_sentiment.models import (
     BucketKey,
     BucketMetrics,
@@ -89,7 +89,7 @@ class Pipeline:
         path: Path,
         classifier: InferenceEngine,
         scored_buckets: frozenset[BucketKey] = frozenset(),
-        on_bucket: Callable[[int], None] | None = None,
+        on_bucket: Callable[[int], None] = NOOP_PROGRESS,
     ) -> list[SentimentRecord]:
         new_buckets, metrics_by_key = await anyio.to_thread.run_sync(
             cls._parse_buckets_with_metrics, path, scored_buckets
@@ -130,23 +130,10 @@ class Pipeline:
         engine: str = "omlx",
         model_repo: str | None = None,
         new_transcripts: list[tuple[Path, float]] | None = None,
-        on_records: Callable[[list[SentimentRecord]], None] | None = None,
-        on_bucket: Callable[[int], None] | None = None,
+        on_records: Callable[[list[SentimentRecord]], None] = lambda _: None,
+        on_bucket: Callable[[int], None] = NOOP_PROGRESS,
     ) -> list[SentimentRecord]:
-        match engine:
-            case "mlx":
-                from cc_sentiment.sentiment import SentimentClassifier
-                classifier: InferenceEngine = (
-                    SentimentClassifier(model_repo) if model_repo
-                    else SentimentClassifier()
-                )
-            case "omlx":
-                classifier = await anyio.to_thread.run_sync(OMLXEngine, model_repo)
-                await classifier.warm_system_prompt()
-            case "claude":
-                classifier = ClaudeCLIEngine(model=model_repo or HAIKU_MODEL)
-            case _:
-                raise ValueError(f"Unknown engine: {engine}")
+        classifier = await build_engine(engine, model_repo)
 
         try:
             transcripts = new_transcripts or await anyio.to_thread.run_sync(
@@ -167,7 +154,7 @@ class Pipeline:
                 all_records.extend(records)
                 await anyio.to_thread.run_sync(repo.save_records, str(path), mtime, records)
 
-                if on_records and records:
+                if records:
                     on_records(records)
 
             return all_records

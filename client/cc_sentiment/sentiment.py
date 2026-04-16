@@ -9,10 +9,10 @@ from anyio import to_thread
 
 from cc_sentiment.engines import (
     DEFAULT_MODEL,
+    NOOP_PROGRESS,
     SYSTEM_PROMPT,
     extract_score,
     format_conversation,
-    partition_frustration,
 )
 from cc_sentiment.models import (
     ConversationBucket,
@@ -122,24 +122,14 @@ class SentimentClassifier:
     async def score(
         self,
         buckets: list[ConversationBucket],
-        on_progress: Callable[[int], None] | None = None,
+        on_progress: Callable[[int], None] = NOOP_PROGRESS,
         batch_size: int = 8,
     ) -> list[SentimentScore]:
-        scores, to_infer = partition_frustration(buckets)
-        pre_scored = len(buckets) - len(to_infer)
-        if on_progress and pre_scored:
-            on_progress(pre_scored)
-
-        for chunk_start in range(0, len(to_infer), batch_size):
-            chunk = to_infer[chunk_start : chunk_start + batch_size]
-            chunk_scores = await to_thread.run_sync(
-                self._score_chunk, [b for _, b in chunk]
-            )
-            for (idx, _), s in zip(chunk, chunk_scores):
-                scores[idx] = s
-            if on_progress:
-                on_progress(len(chunk))
-
+        scores: list[SentimentScore] = []
+        for chunk_start in range(0, len(buckets), batch_size):
+            chunk = buckets[chunk_start : chunk_start + batch_size]
+            scores.extend(await to_thread.run_sync(self._score_chunk, chunk))
+            on_progress(len(chunk))
         return scores
 
     def peak_memory_gb(self) -> float:
