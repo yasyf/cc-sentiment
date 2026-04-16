@@ -206,7 +206,10 @@ class KeyDiscovery:
 
     @staticmethod
     def parse_armored_fingerprints(armor: str) -> frozenset[str]:
-        return frozenset(gnupg.GPG().scan_keys_mem(armor).fingerprints)
+        with tempfile.TemporaryDirectory(prefix="cc-sentiment-gpg-") as home:
+            return frozenset(
+                gnupg.GPG(gnupghome=home).scan_keys_mem(armor).fingerprints
+            )
 
     @classmethod
     def match_gpg_key(cls, username: str) -> GPGBackend | None:

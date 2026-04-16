@@ -96,23 +96,26 @@ class TestKeyDiscovery:
     def test_parse_armored_fingerprints_empty_armor(self) -> None:
         assert KeyDiscovery.parse_armored_fingerprints("") == frozenset()
 
-    def test_parse_armored_fingerprints_does_not_pollute_keyring(self, tmp_path: Path) -> None:
-        import gnupg
+    def test_parse_armored_fingerprints_uses_isolated_gnupghome(self) -> None:
         armor = (Path(__file__).parent / "fixtures" / "two_gpg_keys.asc").read_text()
+        default_home = str(Path.home() / ".gnupg")
+        seen: list[str | None] = []
 
-        gpg_home = tmp_path / "gnupg"
-        gpg_home.mkdir(mode=0o700)
+        import gnupg
+        real_cls = gnupg.GPG
 
-        real_gpg_cls = gnupg.GPG
-        def make_gpg(*args, **kwargs):
-            kwargs.setdefault("gnupghome", str(gpg_home))
-            return real_gpg_cls(*args, **kwargs)
+        def spy(*args, **kwargs):
+            seen.append(kwargs.get("gnupghome"))
+            return real_cls(*args, **kwargs)
 
-        with patch("cc_sentiment.signing.gnupg.GPG", side_effect=make_gpg):
+        with patch("cc_sentiment.signing.gnupg.GPG", side_effect=spy):
             KeyDiscovery.parse_armored_fingerprints(armor)
 
-        keys = real_gpg_cls(gnupghome=str(gpg_home)).list_keys()
-        assert list(keys) == []
+        assert seen, "gnupg.GPG was not invoked"
+        for home in seen:
+            assert home is not None, "parse_armored_fingerprints must pass an explicit gnupghome"
+            assert home != default_home, "parse_armored_fingerprints must not touch the real keyring"
+            assert not Path(home).exists(), "temporary gnupghome must be cleaned up"
 
     @patch.object(KeyDiscovery, "fetch_github_gpg_keys")
     @patch.object(KeyDiscovery, "find_gpg_keys")
