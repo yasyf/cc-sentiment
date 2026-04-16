@@ -28,7 +28,6 @@ dependencies = [
     "orjson>=3.10",
     "textual>=3.0",
     "python-gnupg>=0.5.4",
-    "omlx[grammar] @ git+https://github.com/jundot/omlx.git",
 ]
 
 [project.scripts]
@@ -42,9 +41,6 @@ Issues = "https://github.com/yasyf/cc-sentiment/issues"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["cc_sentiment"]

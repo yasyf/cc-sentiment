@@ -27,7 +27,7 @@ jobs:
           python-version: "3.13"
           cache-dependency-glob: client/uv.lock
 
-      - name: Patch version, strip omlx, drop hatch.metadata
+      - name: Patch version
         env:
           VERSION: "0.1.${{ github.run_number }}"
         run: |
@@ -37,11 +37,6 @@ jobs:
           path = Path("client/pyproject.toml")
           data = tomllib.loads(path.read_text())
           data["project"]["version"] = os.environ["VERSION"]
-          data["project"]["dependencies"] = [
-              d for d in data["project"]["dependencies"]
-              if not d.startswith("omlx")
-          ]
-          data.get("tool", {}).get("hatch", {}).pop("metadata", None)
           path.write_text(tomli_w.dumps(data))
           PY
 

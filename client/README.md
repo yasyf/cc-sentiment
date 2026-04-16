@@ -7,10 +7,8 @@ Your conversations stay on your Mac. Only anonymous numeric scores are uploaded.
 ## Run it
 
 ```bash
-uvx --from https://sentiments.cc/run cc-sentiment
+uvx cc-sentiment
 ```
-
-Also installable from PyPI as `cc-sentiment`. The command above installs faster.
 
 Needs macOS on Apple Silicon, Python 3.13+, and [uv](https://docs.astral.sh/uv/). The first run links your GitHub account, scores transcripts in `~/.claude/projects/`, and uploads the numbers.
 

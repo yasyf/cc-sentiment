@@ -140,26 +140,10 @@ class OMLXEngine:
         self._next_server: tuple[subprocess.Popen, int] | None = None
         self._start_server()
 
-    def _start_server(self) -> None:
-        self.port = find_free_port()
-        self.base_url = f"http://localhost:{self.port}"
-        self.process = subprocess.Popen(
+    def _spawn_server(self, port: int) -> subprocess.Popen:
+        return subprocess.Popen(
             [
-                "omlx", "serve",
-                "--port", str(self.port),
-                "--model-dir", str(self.omlx_dir),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        self.model_name = None
-        self._wait_for_ready()
-        self.client = httpx.AsyncClient(base_url=self.base_url, timeout=300.0)
-
-    def _start_next_server_background(self) -> None:
-        port = find_free_port()
-        proc = subprocess.Popen(
-            [
+                "uvx", "--from", "omlx[grammar] @ git+https://github.com/jundot/omlx.git",
                 "omlx", "serve",
                 "--port", str(port),
                 "--model-dir", str(self.omlx_dir),
@@ -167,6 +151,18 @@ class OMLXEngine:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
+
+    def _start_server(self) -> None:
+        self.port = find_free_port()
+        self.base_url = f"http://localhost:{self.port}"
+        self.process = self._spawn_server(self.port)
+        self.model_name = None
+        self._wait_for_ready()
+        self.client = httpx.AsyncClient(base_url=self.base_url, timeout=300.0)
+
+    def _start_next_server_background(self) -> None:
+        port = find_free_port()
+        proc = self._spawn_server(port)
         self._next_server = (proc, port)
 
         def warm() -> None:
