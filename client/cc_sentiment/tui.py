@@ -70,7 +70,8 @@ def format_duration(seconds: float) -> str:
         return "a few seconds"
     if seconds < 3600:
         return f"~{max(1, round(seconds / 60))} min"
-    return f"~{max(1, round(seconds / 3600))} hours"
+    hours = max(1, round(seconds / 3600))
+    return f"~{hours} hour" if hours == 1 else f"~{hours} hours"
 
 
 def detect_git_username() -> str | None:

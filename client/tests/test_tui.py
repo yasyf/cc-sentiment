@@ -575,7 +575,7 @@ def test_format_duration_minutes():
 
 
 def test_format_duration_hours():
-    assert format_duration(3600) == "~1 hours"
+    assert format_duration(3600) == "~1 hour"
     assert format_duration(7200) == "~2 hours"
 
 
