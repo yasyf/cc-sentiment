@@ -109,7 +109,7 @@ class BucketMetrics(BaseModel, frozen=True):
                 writes_only / write_edit_total if write_edit_total else None
             ),
             tool_calls_per_turn=len(all_calls) / len(users),
-            subagent_count=tool_counts.get("Task", 0),
+            subagent_count=tool_counts.get("Agent", 0),
             turn_count=len(users),
             thinking_present=thinking > 0,
             thinking_chars=thinking,

@@ -163,8 +163,8 @@ class TestBucketMetrics:
             self._user(),
             self._assistant(tool_calls=(
                 ToolCall(name="Read", file_path="/a.py"),
-                ToolCall(name="Task"),
-                ToolCall(name="Task"),
+                ToolCall(name="Agent"),
+                ToolCall(name="Agent"),
             )),
         ))
         assert metrics.tool_calls_per_turn == 3.0
