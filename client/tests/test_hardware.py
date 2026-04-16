@@ -73,7 +73,7 @@ class TestEstimateBucketsPerSec:
             assert Hardware.estimate_buckets_per_sec("omlx") is None
 
     def test_estimate_returns_none_for_mlx_when_baseline_unfilled(self) -> None:
-        # MLX baseline is 0.0 (silent fallback per plan); asserts the expected behavior
+        assert Hardware.BASELINE_MLX_BUCKETS_PER_SEC == 0.0
         assert Hardware.estimate_buckets_per_sec("mlx") is None
 
     def test_estimate_scales_with_chip_family(self) -> None:

@@ -525,8 +525,7 @@ async def test_authenticate_unauthorized_clears_config_and_pushes_setup(tmp_path
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    async def fake_push_screen_wait(screen) -> bool:
-        # Simulate user canceling setup → returns False → loop exits
+    async def user_cancels_setup(screen) -> bool:
         return False
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
@@ -536,7 +535,7 @@ async def test_authenticate_unauthorized_clears_config_and_pushes_setup(tmp_path
              new_callable=AsyncMock,
              return_value=AuthUnauthorized(status=401),
          ), \
-         patch.object(CCSentimentApp, "push_screen_wait", side_effect=fake_push_screen_wait) as mock_push:
+         patch.object(CCSentimentApp, "push_screen_wait", side_effect=user_cancels_setup) as mock_push:
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)

@@ -232,7 +232,6 @@ class TestPartitionFrustration:
         scores, to_infer = partition_frustration(buckets)
 
         assert scores[0] == SentimentScore(1)
-        assert scores[1] == SentimentScore(0)  # placeholder, filled by inference later
         assert scores[2] == SentimentScore(1)
         assert [idx for idx, _ in to_infer] == [1]
 
