@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -72,6 +73,10 @@ SELECT create_hypertable('sentiment', 'time',
     if_not_exists => TRUE)
 """
 
+CREATE_TOOLKIT_EXTENSION_SQL = """
+CREATE EXTENSION IF NOT EXISTS timescaledb_toolkit
+"""
+
 CREATE_INDEXES_SQL = [
     """
     CREATE INDEX IF NOT EXISTS idx_sentiment_time_score
@@ -80,6 +85,10 @@ CREATE_INDEXES_SQL = [
     """
     CREATE INDEX IF NOT EXISTS idx_sentiment_contributor_time
         ON sentiment (contributor_id, time DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_sentiment_ingested_at
+        ON sentiment (ingested_at DESC)
     """,
 ]
 
@@ -105,6 +114,26 @@ SELECT add_continuous_aggregate_policy('sentiment_hourly',
     if_not_exists => TRUE)
 """
 
+CREATE_TOTALS_CAGG_SQL = """
+CREATE MATERIALIZED VIEW IF NOT EXISTS sentiment_totals_daily
+WITH (timescaledb.continuous) AS
+SELECT time_bucket(INTERVAL '1 day', time, 'UTC') AS day,
+       COUNT(*)::bigint AS total,
+       hyperloglog(4096, conversation_id) AS hll_sessions,
+       hyperloglog(4096, contributor_id) AS hll_contributors
+FROM sentiment
+GROUP BY day
+WITH NO DATA
+"""
+
+ADD_TOTALS_CAGG_POLICY_SQL = """
+SELECT add_continuous_aggregate_policy('sentiment_totals_daily',
+    start_offset => INTERVAL '30 days',
+    end_offset => INTERVAL '1 hour',
+    schedule_interval => INTERVAL '1 hour',
+    if_not_exists => TRUE)
+"""
+
 ENABLE_COMPRESSION_SQL = """
 ALTER TABLE sentiment SET (
     timescaledb.compress,
@@ -119,11 +148,14 @@ SELECT add_compression_policy('sentiment', INTERVAL '30 days',
 """
 
 SEED_STATEMENTS = [
+    CREATE_TOOLKIT_EXTENSION_SQL,
     CREATE_TABLE_SQL,
     CREATE_HYPERTABLE_SQL,
     *CREATE_INDEXES_SQL,
     CREATE_CONTINUOUS_AGGREGATE_SQL,
     ADD_CAGG_POLICY_SQL,
+    CREATE_TOTALS_CAGG_SQL,
+    ADD_TOTALS_CAGG_POLICY_SQL,
     ENABLE_COMPRESSION_SQL,
     ADD_COMPRESSION_POLICY_SQL,
 ]
@@ -159,16 +191,11 @@ GROUP BY score
 ORDER BY score
 """
 
-TOTAL_COUNT_SQL = """
-SELECT COUNT(*)::int AS total FROM sentiment
-"""
-
-TOTAL_SESSIONS_SQL = """
-SELECT COUNT(DISTINCT conversation_id)::int FROM sentiment
-"""
-
-TOTAL_CONTRIBUTORS_SQL = """
-SELECT COUNT(DISTINCT contributor_id)::int FROM sentiment
+LIFETIME_STATS_SQL = """
+SELECT COALESCE(SUM(total)::bigint, 0) AS total,
+       COALESCE(distinct_count(rollup(hll_sessions))::int, 0) AS total_sessions,
+       COALESCE(distinct_count(rollup(hll_contributors))::int, 0) AS total_contributors
+FROM sentiment_totals_daily
 """
 
 LAST_UPDATED_SQL = """
@@ -213,7 +240,7 @@ WHERE time > NOW() - make_interval(days => %(days)s)
 
 class Database:
     def __init__(self, dsn: str) -> None:
-        self.pool = AsyncConnectionPool(dsn, open=False)
+        self.pool = AsyncConnectionPool(dsn, open=False, min_size=4, max_size=16)
 
     async def open(self) -> None:
         await self.pool.open()
@@ -225,6 +252,14 @@ class Database:
         async with self.pool.connection() as conn:
             for sql in SEED_STATEMENTS:
                 await conn.execute(sql)
+
+    async def _fetch_all(self, sql: str, params: dict | None = None) -> list[tuple]:
+        async with self.pool.connection() as conn:
+            return await (await conn.execute(sql, params or {})).fetchall()
+
+    async def _fetch_one(self, sql: str, params: dict | None = None) -> tuple:
+        async with self.pool.connection() as conn:
+            return await (await conn.execute(sql, params or {})).fetchone()
 
     async def ingest(self, records: list[SentimentRecord], contributor_id: str, contributor_type: str) -> None:
         async with self.pool.connection() as conn:
@@ -257,18 +292,16 @@ class Database:
                 )
 
     async def query_window(self, days: int) -> WindowStats:
-        async with self.pool.connection() as conn:
-            distribution = [
-                DistributionPoint(score=row[0], count=row[1])
-                for row in await (await conn.execute(DISTRIBUTION_SQL, {"days": days})).fetchall()
-            ]
-            trend_current = await (await conn.execute(TREND_CURRENT_SQL, {"days": days})).fetchone()
-            trend_previous = await (await conn.execute(
-                TREND_PREVIOUS_SQL, {"days": days, "days_double": days * 2}
-            )).fetchone()
-
+        distribution_rows, trend_current, trend_previous = await asyncio.gather(
+            self._fetch_all(DISTRIBUTION_SQL, {"days": days}),
+            self._fetch_one(TREND_CURRENT_SQL, {"days": days}),
+            self._fetch_one(TREND_PREVIOUS_SQL, {"days": days, "days_double": days * 2}),
+        )
         return WindowStats(
-            distribution=distribution,
+            distribution=[
+                DistributionPoint(score=row[0], count=row[1])
+                for row in distribution_rows
+            ],
             trend=TrendComparison(
                 sentiment_current=trend_current[0] or 0.0,
                 sentiment_previous=trend_previous[0] or 0.0,
@@ -280,8 +313,13 @@ class Database:
         )
 
     async def query_trends(self, days: int = 30) -> TrendsStats:
-        async with self.pool.connection() as conn:
-            timeline = [
+        timeline_rows, model_rows, summary = await asyncio.gather(
+            self._fetch_all(TIMELINE_SQL, {"days": days}),
+            self._fetch_all(MODEL_BREAKDOWN_SQL, {"days": days}),
+            self._fetch_one(SUMMARY_AVERAGES_SQL, {"days": days}),
+        )
+        return TrendsStats(
+            timeline=[
                 TimelinePoint(
                     time=row[0],
                     avg_score=row[1],
@@ -290,9 +328,9 @@ class Database:
                     avg_edits_without_prior_read_ratio=row[4],
                     avg_tool_calls_per_turn=row[5],
                 )
-                for row in await (await conn.execute(TIMELINE_SQL, {"days": days})).fetchall()
-            ]
-            model_breakdown = [
+                for row in timeline_rows
+            ],
+            model_breakdown=[
                 ModelBreakdown(
                     claude_model=row[0],
                     avg_score=row[1],
@@ -301,13 +339,8 @@ class Database:
                     avg_write_edit_ratio=row[4],
                     avg_subagent_count=row[5],
                 )
-                for row in await (await conn.execute(MODEL_BREAKDOWN_SQL, {"days": days})).fetchall()
-            ]
-            summary = await (await conn.execute(SUMMARY_AVERAGES_SQL, {"days": days})).fetchone()
-
-        return TrendsStats(
-            timeline=timeline,
-            model_breakdown=model_breakdown,
+                for row in model_rows
+            ],
             avg_read_edit_ratio=summary[0],
             avg_edits_without_prior_read_ratio=summary[1],
             avg_tool_calls_per_turn=summary[2],
@@ -316,23 +349,23 @@ class Database:
         )
 
     async def query_lifetime(self) -> LifetimeStats:
-        async with self.pool.connection() as conn:
-            total = (await (await conn.execute(TOTAL_COUNT_SQL)).fetchone())[0]
-            total_sessions = (await (await conn.execute(TOTAL_SESSIONS_SQL)).fetchone())[0]
-            total_contributors = (await (await conn.execute(TOTAL_CONTRIBUTORS_SQL)).fetchone())[0]
-            last_updated = (await (await conn.execute(LAST_UPDATED_SQL)).fetchone())[0]
-
+        lifetime_row, last_updated_row = await asyncio.gather(
+            self._fetch_one(LIFETIME_STATS_SQL),
+            self._fetch_one(LAST_UPDATED_SQL),
+        )
         return LifetimeStats(
-            total_records=total,
-            total_sessions=total_sessions,
-            total_contributors=total_contributors,
-            last_updated=last_updated or datetime.now(timezone.utc),
+            total_records=lifetime_row[0],
+            total_sessions=lifetime_row[1],
+            total_contributors=lifetime_row[2],
+            last_updated=last_updated_row[0] or datetime.now(timezone.utc),
         )
 
     async def query_all(self, days: int) -> DataResponse:
-        window = await self.query_window(days)
-        trends = await self.query_trends()
-        lifetime = await self.query_lifetime()
+        window, trends, lifetime = await asyncio.gather(
+            self.query_window(days),
+            self.query_trends(),
+            self.query_lifetime(),
+        )
         return DataResponse(
             timeline=trends.timeline,
             distribution=window.distribution,
