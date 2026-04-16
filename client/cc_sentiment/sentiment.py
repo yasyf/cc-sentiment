@@ -93,54 +93,54 @@ class SentimentClassifier:
         from mlx_lm.models.cache import load_prompt_cache
         return [load_prompt_cache(str(PROMPT_CACHE_FILE)) for _ in range(n)]
 
-    def _score_sync(
-        self,
-        buckets: list[ConversationBucket],
-        batch_size: int = 8,
-        on_progress: Callable[[int], None] | None = None,
-    ) -> list[SentimentScore]:
+    def _score_chunk(self, buckets: list[ConversationBucket]) -> list[SentimentScore]:
         from mlx_lm import batch_generate
 
-        scores, to_infer = partition_frustration(buckets, on_progress)
-
-        for chunk_start in range(0, len(to_infer), batch_size):
-            chunk = to_infer[chunk_start : chunk_start + batch_size]
-            prompts = [
-                self.tokenizer.apply_chat_template(
-                    [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": f"CONVERSATION:\n{format_conversation(b)}"},
-                    ],
-                    tokenize=True,
-                    add_generation_prompt=True,
-                    enable_thinking=False,
-                )
-                for _, b in chunk
-            ]
-            caches = self._load_prompt_caches(len(chunk))
-            result = batch_generate(
-                self.model,
-                self.tokenizer,
-                prompts,
-                prompt_caches=caches,
-                max_tokens=1,
-                logits_processors=[self.logit_processor],
+        prompts = [
+            self.tokenizer.apply_chat_template(
+                [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": f"CONVERSATION:\n{format_conversation(b)}"},
+                ],
+                tokenize=True,
+                add_generation_prompt=True,
+                enable_thinking=False,
             )
-            for (idx, _), text in zip(chunk, result.texts):
-                scores[idx] = extract_score(text)
-            if on_progress:
-                on_progress(len(chunk))
-
-        return scores
+            for b in buckets
+        ]
+        caches = self._load_prompt_caches(len(buckets))
+        result = batch_generate(
+            self.model,
+            self.tokenizer,
+            prompts,
+            prompt_caches=caches,
+            max_tokens=1,
+            logits_processors=[self.logit_processor],
+        )
+        return [extract_score(text) for text in result.texts]
 
     async def score(
         self,
         buckets: list[ConversationBucket],
         on_progress: Callable[[int], None] | None = None,
+        batch_size: int = 8,
     ) -> list[SentimentScore]:
-        return await to_thread.run_sync(
-            lambda: self._score_sync(buckets, on_progress=on_progress)
-        )
+        scores, to_infer = partition_frustration(buckets)
+        pre_scored = len(buckets) - len(to_infer)
+        if on_progress and pre_scored:
+            on_progress(pre_scored)
+
+        for chunk_start in range(0, len(to_infer), batch_size):
+            chunk = to_infer[chunk_start : chunk_start + batch_size]
+            chunk_scores = await to_thread.run_sync(
+                self._score_chunk, [b for _, b in chunk]
+            )
+            for (idx, _), s in zip(chunk, chunk_scores):
+                scores[idx] = s
+            if on_progress:
+                on_progress(len(chunk))
+
+        return scores
 
     def peak_memory_gb(self) -> float:
         import resource

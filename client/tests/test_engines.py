@@ -235,18 +235,6 @@ class TestPartitionFrustration:
         assert scores[2] == SentimentScore(1)
         assert [idx for idx, _ in to_infer] == [1]
 
-    def test_fires_on_progress_only_for_frustration_hits(self) -> None:
-        from cc_sentiment.engines import partition_frustration
-
-        calls: list[int] = []
-        buckets = [
-            make_bucket("wtf is this"),
-            make_bucket("please fix this"),
-            make_bucket("I give up"),
-        ]
-        partition_frustration(buckets, on_progress=calls.append)
-        assert calls == [1, 1]
-
     def test_handles_empty_input(self) -> None:
         from cc_sentiment.engines import partition_frustration
 

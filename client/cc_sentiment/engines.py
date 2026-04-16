@@ -80,15 +80,12 @@ def check_frustration(bucket: ConversationBucket) -> bool:
 
 def partition_frustration(
     buckets: list[ConversationBucket],
-    on_progress: Callable[[int], None] | None = None,
 ) -> tuple[list[SentimentScore], list[tuple[int, ConversationBucket]]]:
     scores: list[SentimentScore] = [SentimentScore(0)] * len(buckets)
     to_infer: list[tuple[int, ConversationBucket]] = []
     for i, bucket in enumerate(buckets):
         if check_frustration(bucket):
             scores[i] = SentimentScore(1)
-            if on_progress:
-                on_progress(1)
         else:
             to_infer.append((i, bucket))
     return scores, to_infer
@@ -281,7 +278,10 @@ class OMLXEngine:
         buckets: list[ConversationBucket],
         on_progress: Callable[[int], None] | None = None,
     ) -> list[SentimentScore]:
-        scores, to_infer = partition_frustration(buckets, on_progress)
+        scores, to_infer = partition_frustration(buckets)
+        pre_scored = len(buckets) - len(to_infer)
+        if on_progress and pre_scored:
+            on_progress(pre_scored)
 
         for chunk_start in range(0, len(to_infer), SERVER_RESTART_THRESHOLD):
             if chunk_start > 0:
@@ -307,12 +307,12 @@ class OMLXEngine:
                             return idx, None
                         try:
                             result = await self._score_one(b)
-                            if on_progress:
-                                on_progress(1)
-                            return idx, result
                         except StallDetected:
                             stalled = True
                             return idx, None
+                        if on_progress:
+                            on_progress(1)
+                        return idx, result
 
                 results = await asyncio.gather(*(bounded(i, b) for i, b in remaining))
                 by_idx = dict(remaining)
@@ -456,7 +456,10 @@ class ClaudeCLIEngine:
         buckets: list[ConversationBucket],
         on_progress: Callable[[int], None] | None = None,
     ) -> list[SentimentScore]:
-        scores, to_infer = partition_frustration(buckets, on_progress)
+        scores, to_infer = partition_frustration(buckets)
+        pre_scored = len(buckets) - len(to_infer)
+        if on_progress and pre_scored:
+            on_progress(pre_scored)
         sem = asyncio.Semaphore(CLAUDE_CLI_CONCURRENCY)
 
         async def score_bucket(idx: int, bucket: ConversationBucket) -> tuple[int, SentimentScore]:
