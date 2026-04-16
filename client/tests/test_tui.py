@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, ContentSwitcher, DataTable, Input, Label, Static
+from textual.widgets import Button, ContentSwitcher, DataTable, Input, Label
 
 from cc_sentiment.models import AppState, ContributorId, GPGConfig, SSHConfig
 from cc_sentiment.repo import Repository
@@ -50,7 +50,7 @@ class SetupHarness(App[None]):
 
 @pytest.fixture
 def no_auto_setup():
-    with patch("cc_sentiment.tui.auto_setup_silent", new_callable=AsyncMock, return_value=False), \
+    with patch("cc_sentiment.tui.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
          patch("cc_sentiment.tui.detect_git_username", return_value=None), \
          patch("cc_sentiment.upload.Uploader.probe_credentials", new_callable=AsyncMock, return_value=AuthOk()):
         yield
@@ -89,7 +89,7 @@ async def test_setup_empty_username_blocked(no_auto_setup):
 
 
 async def test_setup_auto_detect_prepopulates_username():
-    with patch("cc_sentiment.tui.auto_setup_silent", return_value=False), \
+    with patch("cc_sentiment.tui.AutoSetup.run", new_callable=AsyncMock, return_value=(False, "testuser")), \
          patch("cc_sentiment.tui.detect_git_username", return_value="testuser"):
         async with SetupHarness(AppState()).run_test() as pilot:
             await pilot.pause(delay=0.3)
@@ -99,11 +99,11 @@ async def test_setup_auto_detect_prepopulates_username():
 async def test_setup_auto_success_jumps_to_done():
     state = AppState()
 
-    def fake_auto_setup(s: AppState) -> bool:
-        s.config = SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519"))
-        return True
+    async def fake_run(self) -> tuple[bool, str | None]:
+        self.state.config = SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519"))
+        return True, "testuser"
 
-    with patch("cc_sentiment.tui.auto_setup_silent", side_effect=fake_auto_setup), \
+    with patch("cc_sentiment.tui.AutoSetup.run", new=fake_run), \
          patch.object(AppState, "save"):
         async with SetupHarness(state).run_test() as pilot:
             await pilot.pause(delay=0.3)
@@ -378,7 +378,7 @@ async def test_ccsentiment_app_pushes_setup_when_no_config(tmp_path: Path):
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 0.0)]), \
-         patch("cc_sentiment.tui.auto_setup_silent", return_value=False), \
+         patch("cc_sentiment.tui.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
          patch("cc_sentiment.tui.detect_git_username", return_value=None):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -646,19 +646,6 @@ async def test_add_buckets_updates_progress(tmp_path: Path, auth_ok):
             app._add_buckets(5)
             app._add_buckets(3)
             assert app.scored == 8
-
-
-async def test_payload_preview_rendered_on_mount(tmp_path: Path, auth_ok):
-    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
-    db_path = tmp_path / "records.db"
-
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
-        app = CCSentimentApp(state=state, db_path=db_path)
-        async with app.run_test() as pilot:
-            await pilot.pause(delay=0.3)
-            preview = app.query_one("#payload-preview", Static)
-            assert "What actually gets sent:" in str(preview.content)
 
 
 async def test_action_open_dashboard_opens_browser(tmp_path: Path, auth_ok):

@@ -6,20 +6,22 @@ import subprocess
 import tempfile
 import time
 import webbrowser
-from collections import Counter
-from dataclasses import dataclass
+from collections import Counter, deque
+from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import mean
 
 import anyio
 import anyio.to_thread
 import httpx
+from rich.spinner import Spinner
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.screen import Screen
+from textual.widget import Widget
 from textual.widgets import (
     Button,
     ContentSwitcher,
@@ -180,44 +182,173 @@ def detect_git_username() -> str | None:
     return None
 
 
-async def _save_if_ok(state: AppState, config: SSHConfig | GPGConfig) -> bool:
-    from cc_sentiment.upload import AuthOk, Uploader
-    if not isinstance(await Uploader().probe_credentials(config), AuthOk):
-        return False
-    state.config = config
-    await anyio.to_thread.run_sync(state.save)
-    return True
+@dataclass(frozen=True)
+class Phase:
+    emitter: StatusEmitter
+    idx: int
+
+    def ok(self, label: str) -> None:
+        self.emitter.replace(self.idx, "[green]✓[/]", label)
+
+    def skip(self, label: str) -> None:
+        self.emitter.replace(self.idx, "[yellow]—[/]", label)
+
+    def unreachable(self, label: str) -> None:
+        self.emitter.replace(self.idx, "[yellow]?[/]", label)
 
 
-async def auto_setup_silent(state: AppState) -> bool:
-    username = await anyio.to_thread.run_sync(detect_git_username)
+@dataclass
+class StatusEmitter:
+    widget: Static
+    lines: list[str] = field(default_factory=list)
 
-    if username:
-        if backend := await anyio.to_thread.run_sync(KeyDiscovery.match_ssh_key, username):
-            if await _save_if_ok(
-                state,
-                SSHConfig(contributor_id=ContributorId(username), key_path=backend.private_key_path),
-            ):
-                return True
-        if backend := await anyio.to_thread.run_sync(KeyDiscovery.match_gpg_key, username):
-            if await _save_if_ok(
-                state,
-                GPGConfig(contributor_type="github", contributor_id=ContributorId(username), fpr=backend.fpr),
-            ):
-                return True
+    def begin(self, label: str) -> Phase:
+        self.lines.append(f"  [dim]...[/] [dim]{label}[/]")
+        self.widget.update("\n".join(self.lines))
+        return Phase(self, len(self.lines) - 1)
 
-    for info in await anyio.to_thread.run_sync(KeyDiscovery.find_gpg_keys):
-        if not await anyio.to_thread.run_sync(KeyDiscovery.fetch_openpgp_key, info.fpr):
-            continue
-        config = (
+    def replace(self, idx: int, marker: str, label: str) -> None:
+        self.lines[idx] = f"  {marker} [dim]{label}[/]"
+        self.widget.update("\n".join(self.lines))
+
+
+@dataclass(frozen=True)
+class AutoSetup:
+    state: AppState
+    emit: StatusEmitter
+
+    async def run(self) -> tuple[bool, str | None]:
+        username = await self.detect_username()
+        if username:
+            if (c := await self.try_github_ssh(username)) and await self.probe_and_save(c):
+                return True, username
+            if (c := await self.try_github_gpg(username)) and await self.probe_and_save(c):
+                return True, username
+        for info in await self.find_local_gpg():
+            if (c := await self.try_openpgp(info, username)) and await self.probe_and_save(c):
+                return True, username
+        return False, username
+
+    async def detect_username(self) -> str | None:
+        phase = self.emit.begin("Looking for your GitHub username")
+        username = await anyio.to_thread.run_sync(detect_git_username)
+        if not username:
+            phase.skip("No GitHub username on this machine")
+            return None
+        phase.ok(f"Found @{username}")
+        return username
+
+    async def try_github_ssh(self, username: str) -> SSHConfig | None:
+        phase = self.emit.begin(f"Checking SSH keys on github.com/{username}.keys")
+        try:
+            backend = await anyio.to_thread.run_sync(KeyDiscovery.match_ssh_key, username)
+        except httpx.HTTPError:
+            phase.unreachable("Couldn't reach GitHub")
+            return None
+        if not backend:
+            phase.skip("No SSH key on GitHub matches a local one")
+            return None
+        phase.ok(f"Matched {backend.private_key_path.name}")
+        return SSHConfig(
+            contributor_id=ContributorId(username),
+            key_path=backend.private_key_path,
+        )
+
+    async def try_github_gpg(self, username: str) -> GPGConfig | None:
+        phase = self.emit.begin(f"Checking GPG keys on github.com/{username}.gpg")
+        try:
+            backend = await anyio.to_thread.run_sync(KeyDiscovery.match_gpg_key, username)
+        except httpx.HTTPError:
+            phase.unreachable("Couldn't reach GitHub")
+            return None
+        if not backend:
+            phase.skip("No GPG key on GitHub matches a local one")
+            return None
+        phase.ok(f"Matched GPG {backend.fpr[-8:]}")
+        return GPGConfig(
+            contributor_type="github",
+            contributor_id=ContributorId(username),
+            fpr=backend.fpr,
+        )
+
+    async def find_local_gpg(self) -> tuple[GPGKeyInfo, ...]:
+        phase = self.emit.begin("Scanning local GPG keyring")
+        keys = await anyio.to_thread.run_sync(KeyDiscovery.find_gpg_keys)
+        if not keys:
+            phase.skip("No local GPG keys")
+            return ()
+        plural = "s" if len(keys) != 1 else ""
+        phase.ok(f"Found {len(keys)} GPG key{plural}")
+        return keys
+
+    async def try_openpgp(
+        self, info: GPGKeyInfo, username: str | None
+    ) -> GPGConfig | None:
+        phase = self.emit.begin(f"Checking keys.openpgp.org for {info.fpr[-8:]}")
+        try:
+            armored = await anyio.to_thread.run_sync(
+                KeyDiscovery.fetch_openpgp_key, info.fpr
+            )
+        except httpx.HTTPError:
+            phase.unreachable("Couldn't reach keys.openpgp.org")
+            return None
+        if not armored:
+            phase.skip("Not on keys.openpgp.org yet")
+            return None
+        phase.ok("Published on keys.openpgp.org")
+        return (
             GPGConfig(contributor_type="github", contributor_id=ContributorId(username), fpr=info.fpr)
             if username
             else GPGConfig(contributor_type="gpg", contributor_id=ContributorId(info.fpr), fpr=info.fpr)
         )
-        if await _save_if_ok(state, config):
-            return True
 
-    return False
+    async def probe_and_save(self, config: SSHConfig | GPGConfig) -> bool:
+        from cc_sentiment.upload import AuthOk, Uploader
+        phase = self.emit.begin("Verifying signature with the dashboard")
+        result = await Uploader().probe_credentials(config)
+        if not isinstance(result, AuthOk):
+            phase.skip("Dashboard couldn't verify yet")
+            return False
+        phase.ok("Verified")
+        self.state.config = config
+        await anyio.to_thread.run_sync(self.state.save)
+        return True
+
+
+class SpinnerLine(Static):
+    DEFAULT_CSS = "SpinnerLine { height: 1; }"
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.spinner = Spinner("dots", style="bold")
+
+    def on_mount(self) -> None:
+        self.set_interval(1 / 12, self.refresh)
+
+    def render(self) -> Spinner:
+        return self.spinner
+
+
+@dataclass
+class EngineBootView:
+    app: App
+    section: Widget
+    status: SpinnerLine
+    log: Static
+    lines: deque[str] = field(default_factory=lambda: deque(maxlen=8))
+
+    def show(self, engine: str) -> None:
+        self.status.spinner.text = f"Loading {engine} engine"
+        self.lines.clear()
+        self.log.update("")
+        self.section.add_class("active")
+
+    def hide(self) -> None:
+        self.section.remove_class("active")
+
+    def write_from_thread(self, line: str) -> None:
+        self.lines.append(f"[dim]{line}[/]")
+        self.app.call_from_thread(self.log.update, "\n".join(self.lines))
 
 
 class ScoreBar(Static):
@@ -405,8 +536,9 @@ class SetupScreen(Screen[bool]):
             yield Label("Setting things up...", classes="step-title")
             yield Label(
                 "Checking if we can verify your uploads automatically.",
-                id="loading-status", classes="status",
+                classes="status",
             )
+            yield Static("", id="loading-activity", classes="status")
 
     def compose_username_step(self) -> ComposeResult:
         with Vertical(id="step-username"):
@@ -508,10 +640,11 @@ class SetupScreen(Screen[bool]):
 
     @work()
     async def try_auto_setup(self) -> None:
-        if await auto_setup_silent(self.state):
+        emit = StatusEmitter(self.query_one("#loading-activity", Static))
+        ok, username = await AutoSetup(self.state, emit).run()
+        if ok:
             self._on_auto_setup_success()
             return
-        username = await anyio.to_thread.run_sync(detect_git_username)
         self._on_auto_setup_fail(username)
 
     def _on_auto_setup_success(self) -> None:
@@ -963,13 +1096,15 @@ class CCSentimentApp(App[None]):
     #sparkline-container { height: 3; margin: 0 0 1 0; }
     #score-sparkline { height: 3; }
     #distribution { height: auto; }
+    #engine-boot-section { height: auto; margin: 1 0 0 0; display: none; }
+    #engine-boot-section.active { display: block; }
+    #engine-boot-status { height: 1; }
+    #engine-boot-log { height: auto; max-height: 8; color: $text-muted; }
     #stats-section { height: auto; margin: 1 0 0 0; }
     #stats-row { height: 3; }
     .stat-card { width: 1fr; height: 3; padding: 0 1; border: tall $primary-background; }
     .stat-card .stat-value { text-style: bold; }
     .stat-card .stat-label { color: $text-muted; }
-    #payload-section { height: auto; margin: 1 0 0 0; }
-    #payload-preview { height: auto; color: $text-muted; }
     #status-line { height: 1; margin: 1 0 0 0; }
     #cached-line { height: 1; color: $text-muted; }
     """
@@ -1033,8 +1168,9 @@ class CCSentimentApp(App[None]):
                         self._score_bars[s] = bar
                         yield bar
 
-            with Vertical(id="payload-section"):
-                yield Static("", id="payload-preview")
+            with Vertical(id="engine-boot-section"):
+                yield SpinnerLine(id="engine-boot-status")
+                yield Static("", id="engine-boot-log")
 
             with Vertical(id="stats-section"):
                 Rule()
@@ -1059,7 +1195,6 @@ class CCSentimentApp(App[None]):
         self.title = "cc-sentiment"
         self._start_time = time.monotonic()
         self.repo = await anyio.to_thread.run_sync(Repository.open, self.db_path)
-        self.query_one("#payload-preview", Static).update(render_sample_payload())
         await self._seed_from_repo()
         if self.setup_only:
             await self.push_screen_wait(SetupScreen(self.state))
@@ -1202,11 +1337,21 @@ class CCSentimentApp(App[None]):
 
         if transcripts and bucket_count > 0:
             self._set_total(bucket_count, engine)
-            self._update_status(f"[dim]Loading {engine} engine...[/]")
-            await Pipeline.run(
-                self.repo, engine, self.model_repo, transcripts,
-                on_records=self._add_records, on_bucket=self._add_buckets,
+            boot = EngineBootView(
+                app=self,
+                section=self.query_one("#engine-boot-section"),
+                status=self.query_one("#engine-boot-status", SpinnerLine),
+                log=self.query_one("#engine-boot-log", Static),
             )
+            boot.show(engine)
+            try:
+                await Pipeline.run(
+                    self.repo, engine, self.model_repo, transcripts,
+                    on_records=self._add_records, on_bucket=self._add_buckets,
+                    on_engine_log=boot.write_from_thread,
+                )
+            finally:
+                boot.hide()
 
         pending = await anyio.to_thread.run_sync(self.repo.pending_records)
         uploaded = False

@@ -132,8 +132,9 @@ class Pipeline:
         new_transcripts: list[tuple[Path, float]] | None = None,
         on_records: Callable[[list[SentimentRecord]], None] = lambda _: None,
         on_bucket: Callable[[int], None] = NOOP_PROGRESS,
+        on_engine_log: Callable[[str], None] | None = None,
     ) -> list[SentimentRecord]:
-        classifier = await build_engine(engine, model_repo)
+        classifier = await build_engine(engine, model_repo, on_engine_log)
 
         try:
             transcripts = new_transcripts or await anyio.to_thread.run_sync(

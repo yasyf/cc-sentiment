@@ -9,8 +9,10 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -131,12 +133,29 @@ class StallDetected(Exception):
     pass
 
 
+SILENT_LOG: Callable[[str], None] = lambda _: None
+
+
+@dataclass(frozen=True)
+class WarmServer:
+    process: subprocess.Popen
+    port: int
+
+    @property
+    def base_url(self) -> str:
+        return f"http://localhost:{self.port}"
+
+
 class OMLXEngine:
     STALL_TIMEOUT = 10.0
     RESTART_THRESHOLD = 350
     CONCURRENCY = 8
 
-    def __init__(self, model_repo: str | None = None) -> None:
+    def __init__(
+        self,
+        model_repo: str | None = None,
+        on_log: Callable[[str], None] | None = None,
+    ) -> None:
         HF_MODEL_DIR = Path.home() / ".cache" / "huggingface" / "hub"
 
         self.repo = model_repo or DEFAULT_MODEL
@@ -144,36 +163,47 @@ class OMLXEngine:
         self.process: subprocess.Popen | None = None
         self.client: httpx.AsyncClient | None = None
         self.model_name: str | None = None
-        self._next_server: tuple[subprocess.Popen, int] | None = None
+        self._next_server: WarmServer | None = None
         self._next_warm_task: asyncio.Task[None] | None = None
+        self.on_log: Callable[[str], None] = on_log or SILENT_LOG
         self._start_server()
 
-    def _spawn_server(self, port: int) -> subprocess.Popen:
-        return subprocess.Popen(
+    def _spawn_server(self, port: int, capture_log: bool) -> subprocess.Popen:
+        proc = subprocess.Popen(
             [
                 "uvx", "--from", "omlx[grammar] @ git+https://github.com/jundot/omlx.git",
                 "omlx", "serve",
                 "--port", str(port),
                 "--model-dir", str(self.omlx_dir),
             ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE if capture_log else subprocess.DEVNULL,
         )
+        if capture_log:
+            threading.Thread(target=self._drain, args=(proc,), daemon=True).start()
+        return proc
+
+    def _drain(self, proc: subprocess.Popen) -> None:
+        assert proc.stderr is not None
+        for raw in proc.stderr:
+            line = raw.decode("utf-8", errors="replace").rstrip()
+            if line:
+                self.on_log(line)
 
     def _start_server(self) -> None:
         self.port = find_free_port()
         self.base_url = f"http://localhost:{self.port}"
-        self.process = self._spawn_server(self.port)
+        self.process = self._spawn_server(self.port, capture_log=True)
         self.model_name = None
         self._wait_for_ready()
         self.client = httpx.AsyncClient(base_url=self.base_url, timeout=300.0)
 
     def _start_next_server_background(self) -> None:
         port = find_free_port()
-        proc = self._spawn_server(port)
-        self._next_server = (proc, port)
+        proc = self._spawn_server(port, capture_log=False)
+        self._next_server = WarmServer(process=proc, port=port)
         self._next_warm_task = asyncio.create_task(
-            self._warm_next_server(f"http://localhost:{port}")
+            self._warm_next_server(self._next_server.base_url)
         )
 
     async def _warm_next_server(self, base: str) -> None:
@@ -208,11 +238,11 @@ class OMLXEngine:
     async def _switch_to_next_server(self) -> None:
         await self._stop_current()
         assert self._next_server is not None
-        proc, port = self._next_server
+        next_server = self._next_server
         self._next_server = None
-        self.process = proc
-        self.port = port
-        self.base_url = f"http://localhost:{port}"
+        self.process = next_server.process
+        self.port = next_server.port
+        self.base_url = next_server.base_url
         self.model_name = None
         self._wait_for_ready()
         self.client = httpx.AsyncClient(base_url=self.base_url, timeout=300.0)
@@ -238,6 +268,7 @@ class OMLXEngine:
                 if resp.status_code == 200:
                     if models := resp.json().get("data", []):
                         self.model_name = models[0]["id"]
+                    self.on_log = SILENT_LOG
                     return
             except httpx.ConnectError:
                 pass
@@ -356,11 +387,11 @@ class OMLXEngine:
                 self.process.kill()
                 self.process.wait(timeout=5)
         if self._next_server:
-            self._next_server[0].terminate()
+            self._next_server.process.terminate()
             try:
-                self._next_server[0].wait(timeout=10)
+                self._next_server.process.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                self._next_server[0].kill()
+                self._next_server.process.kill()
             self._next_server = None
 
     def __del__(self) -> None:
@@ -472,7 +503,11 @@ class ClaudeCLIEngine:
         pass
 
 
-async def build_engine(kind: str, model_repo: str | None = None) -> InferenceEngine:
+async def build_engine(
+    kind: str,
+    model_repo: str | None = None,
+    on_engine_log: Callable[[str], None] | None = None,
+) -> InferenceEngine:
     match kind:
         case "mlx":
             from cc_sentiment.sentiment import SentimentClassifier
@@ -480,7 +515,7 @@ async def build_engine(kind: str, model_repo: str | None = None) -> InferenceEng
                 SentimentClassifier, model_repo or DEFAULT_MODEL
             )
         case "omlx":
-            omlx = await anyio.to_thread.run_sync(OMLXEngine, model_repo)
+            omlx = await anyio.to_thread.run_sync(OMLXEngine, model_repo, on_engine_log)
             await omlx.warm_system_prompt()
             inner = omlx
         case "claude":
