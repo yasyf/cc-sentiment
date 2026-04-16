@@ -70,6 +70,8 @@ class TranscriptParser:
                     thinking_chars=0,
                     cc_version=data["version"],
                 )
+            case "assistant" if data["message"]["model"] == "<synthetic>":
+                return None
             case "assistant":
                 blocks = data["message"]["content"]
                 text_blocks = [

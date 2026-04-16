@@ -75,6 +75,15 @@ class TestTranscriptParser:
         assert len(msg.content) == ASSISTANT_TRUNCATION + len("[...]")
         assert msg.content.endswith("[...]")
 
+    def test_skips_synthetic_terminator_assistant_lines(self) -> None:
+        line = (
+            '{"parentUuid":"p","message":{"model":"<synthetic>","type":"message",'
+            '"role":"assistant","stop_reason":"stop_sequence",'
+            '"content":[{"type":"text","text":"No response requested."}]},'
+            '"type":"assistant","uuid":"u","timestamp":"2026-04-10T07:40:00.000Z","sessionId":"s"}'
+        )
+        assert TranscriptParser.parse_line(line) is None
+
 
 class TestConversationBucketer:
     def test_bucket_count(self) -> None:
