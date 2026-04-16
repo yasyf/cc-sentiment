@@ -12,14 +12,21 @@ class TestSingleCommand:
     def test_no_scan_subcommand(self) -> None:
         assert main.get_command(None, "scan") is None
 
-    def test_no_setup_subcommand(self) -> None:
-        assert main.get_command(None, "setup") is None
-
     def test_no_upload_subcommand(self) -> None:
         assert main.get_command(None, "upload") is None
 
     def test_no_rescan_subcommand(self) -> None:
         assert main.get_command(None, "rescan") is None
+
+    def test_setup_subcommand_public(self) -> None:
+        cmd = main.get_command(None, "setup")
+        assert cmd is not None
+        assert cmd.hidden is False
+
+    def test_run_subcommand_public(self) -> None:
+        cmd = main.get_command(None, "run")
+        assert cmd is not None
+        assert cmd.hidden is False
 
     def test_benchmark_hidden(self) -> None:
         cmd = main.get_command(None, "benchmark")
