@@ -21,7 +21,8 @@
 </script>
 
 <p class="mt-2 text-sm text-text-dim">
-	Add your data now: $
+	Add your data now:
+	<span class="font-mono text-[0.9em] text-text-muted align-baseline">$</span>
 	<button
 		type="button"
 		onclick={copy}
