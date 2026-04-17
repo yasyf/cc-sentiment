@@ -53,8 +53,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: "0.1.${{ github.run_number }}"
         run: |
-          gh release create "client-v${VERSION}" \
-            --title "client v${VERSION}" \
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
             --target "${{ github.sha }}" \
             --generate-notes \
             --latest \
