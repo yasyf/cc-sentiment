@@ -84,6 +84,29 @@ class TestTranscriptParser:
         )
         assert TranscriptParser.parse_line(line) is None
 
+    def test_skips_ephemeral_sdk_entrypoints(self) -> None:
+        for entrypoint in ("sdk-cli", "sdk-ts"):
+            line = (
+                '{"parentUuid":null,"isSidechain":false,"type":"user",'
+                '"message":{"role":"user","content":"one-shot"},'
+                f'"entrypoint":"{entrypoint}",'
+                '"uuid":"u","timestamp":"2026-04-10T07:36:00.000Z",'
+                '"sessionId":"s","version":"2.1.92"}'
+            )
+            assert TranscriptParser.parse_line(line) is None
+
+    def test_allows_cli_entrypoint(self) -> None:
+        line = (
+            '{"parentUuid":null,"isSidechain":false,"type":"user",'
+            '"message":{"role":"user","content":"hello"},'
+            '"entrypoint":"cli",'
+            '"uuid":"u","timestamp":"2026-04-10T07:36:00.000Z",'
+            '"sessionId":"s","version":"2.1.92"}'
+        )
+        msg = TranscriptParser.parse_line(line)
+        assert msg is not None
+        assert msg.content == "hello"
+
 
 class TestConversationBucketer:
     def test_bucket_count(self) -> None:
@@ -118,6 +141,30 @@ class TestConversationBucketer:
             b for b in buckets if b.session_id == SessionId("session-bbb")
         ]
         assert len(session_bbb_buckets) == 1
+
+    def test_drops_single_user_turn_sessions(self) -> None:
+        messages = [
+            UserMessage(
+                content="one-shot prompt",
+                timestamp=datetime(2026, 4, 10, 7, 36, 0, tzinfo=timezone.utc),
+                session_id=SessionId("one-shot"),
+                uuid="u1",
+                tool_calls=(),
+                thinking_chars=0,
+                cc_version="2.1.92",
+            ),
+            AssistantMessage(
+                content="sure",
+                timestamp=datetime(2026, 4, 10, 7, 36, 30, tzinfo=timezone.utc),
+                session_id=SessionId("one-shot"),
+                uuid="a1",
+                tool_calls=(),
+                thinking_chars=0,
+                claude_model="claude-sonnet-4-20250514",
+            ),
+        ]
+        buckets = ConversationBucketer.bucket_messages(messages)
+        assert [b for b in buckets if b.session_id == SessionId("one-shot")] == []
 
 
 class TestBucketMetrics:

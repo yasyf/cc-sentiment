@@ -905,7 +905,7 @@ class ChartHarness(App[None]):
         yield HourlyChart(id="chart")
 
 
-async def test_hourly_chart_renders_dots_at_correct_rows():
+async def test_hourly_chart_renders_sparkline_and_axis():
     from datetime import datetime, timezone
 
     records = [
@@ -918,9 +918,29 @@ async def test_hourly_chart_renders_dots_at_correct_rows():
         chart.update_chart(records)
         await pilot.pause()
         text = str(chart.content)
-        assert "●" in text
         lines = text.split("\n")
-        assert len(lines) == 7
+        assert len(lines) == 2
+        assert any(block in lines[0] for block in HourlyChart.BLOCKS)
+        assert "12a" in lines[1]
+        assert "6a" in lines[1]
+        assert "12p" in lines[1]
+
+
+async def test_hourly_chart_preserves_fractional_differences():
+    from datetime import datetime, timezone
+
+    records = [
+        make_record(score=3, time=datetime(2026, 4, 10, 8, 0, tzinfo=timezone.utc)),
+        make_record(score=4, time=datetime(2026, 4, 10, 8, 1, tzinfo=timezone.utc)),
+        make_record(score=3, time=datetime(2026, 4, 10, 9, 0, tzinfo=timezone.utc)),
+    ]
+    async with ChartHarness().run_test() as pilot:
+        chart = pilot.app.query_one("#chart", HourlyChart)
+        chart.update_chart(records)
+        await pilot.pause()
+        bar = str(chart.content).split("\n")[0]
+        assert "▅" in bar
+        assert "▆" in bar
 
 
 async def test_hourly_chart_empty_records():

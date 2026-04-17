@@ -20,6 +20,8 @@ from cc_sentiment.models import (
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 BUCKET_MINUTES = 5
 ASSISTANT_TRUNCATION = 1024
+EPHEMERAL_ENTRYPOINTS: frozenset[str] = frozenset({"sdk-cli", "sdk-ts"})
+MIN_USER_TURNS_PER_SESSION = 2
 
 WRAPPER_TAG_RE = re.compile(
     r"<(?:system[_-]instruction|local-command-stdout|command-(?:name|message|args))>"
@@ -47,6 +49,9 @@ class TranscriptParser:
         try:
             data = orjson.loads(line)
         except orjson.JSONDecodeError:
+            return None
+
+        if data.get("entrypoint") in EPHEMERAL_ENTRYPOINTS:
             return None
 
         match data["type"]:
@@ -151,6 +156,8 @@ class ConversationBucketer:
 
         buckets: list[ConversationBucket] = []
         for session_id, session_msgs in by_session.items():
+            if sum(1 for m in session_msgs if isinstance(m, UserMessage)) < MIN_USER_TURNS_PER_SESSION:
+                continue
             session_msgs.sort(key=lambda m: m.timestamp)
             session_start = cls.align_to_bucket(session_msgs[0].timestamp)
 

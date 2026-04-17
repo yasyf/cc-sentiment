@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -108,6 +109,17 @@ class Repository:
                 (path,),
             )
         )
+
+    def scored_buckets_for_all(self) -> dict[str, frozenset[BucketKey]]:
+        out: dict[str, set[BucketKey]] = defaultdict(set)
+        for row in self.conn.execute(
+            "SELECT path, session_id, bucket_index FROM scored_buckets"
+        ):
+            out[row["path"]].add(BucketKey(
+                session_id=SessionId(row["session_id"]),
+                bucket_index=BucketIndex(row["bucket_index"]),
+            ))
+        return {p: frozenset(s) for p, s in out.items()}
 
     def save_records(
         self, path: str, mtime: float, records: list[SentimentRecord]

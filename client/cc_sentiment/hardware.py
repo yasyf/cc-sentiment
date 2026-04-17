@@ -21,7 +21,7 @@ class HardwareProfile:
 
 
 class Hardware:
-    BASELINE_OMLX_BUCKETS_PER_SEC: float = 29.0
+    BASELINE_OMLX_BUCKETS_PER_SEC: float = 113.0
     BASELINE_MLX_BUCKETS_PER_SEC: float = 0.0
 
     BANDWIDTH_GBPS: dict[tuple[int, ChipVariant], int] = {

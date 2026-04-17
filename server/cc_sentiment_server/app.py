@@ -232,7 +232,7 @@ image = (
 )
 
 
-@app.cls(image=image, secrets=[modal.Secret.from_name("cc-sentiment-db")], scaledown_window=120)
+@app.cls(image=image, secrets=[modal.Secret.from_name("cc-sentiment-db")], scaledown_window=600)
 @modal.concurrent(max_inputs=100)
 class API:
     db: Database

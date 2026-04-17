@@ -17,6 +17,7 @@ import anyio
 import anyio.to_thread
 import httpx
 from urllib.parse import urlencode
+from rich.markup import escape
 from rich.spinner import Spinner
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -37,7 +38,6 @@ from textual.widgets import (
     ProgressBar,
     RadioButton,
     RadioSet,
-    Rule,
     Static,
 )
 
@@ -365,7 +365,8 @@ class SpinnerLine(Static):
 @dataclass
 class EngineBootView:
     MAX_SNIPPET_CHARS: ClassVar[int] = 60
-    SNIPPET_RATE_LIMIT: ClassVar[float] = 0.5
+    SNIPPET_RATE_LIMIT: ClassVar[float] = 0.9
+    SNIPPET_WEIGHTS: ClassVar[dict[int, float]] = {1: 1.0, 2: 0.5, 3: 0.15, 4: 0.5, 5: 1.0}
     WITTY_COMMENTS: ClassVar[dict[int, tuple[str, ...]]] = {
         1: ("oof", "yikes", "time to take a walk", "we've all been there", "send help", "cursed"),
         2: ("mood", "same energy", "try again later", "nope nope nope", "sigh", "bargaining stage"),
@@ -395,12 +396,14 @@ class EngineBootView:
         self.section.remove_class("active")
 
     def write_from_thread(self, line: str) -> None:
-        self.lines.append(f"[dim]{line}[/]")
+        self.lines.append(f"[dim]{escape(line)}[/]")
         self.app.call_from_thread(self.log.update, "\n".join(self.lines))
 
     def add_snippet(self, snippet: str, score: int) -> None:
         now = time.monotonic()
         if now - self.last_snippet_at < self.SNIPPET_RATE_LIMIT:
+            return
+        if random.random() > self.SNIPPET_WEIGHTS[score]:
             return
         self.last_snippet_at = now
         if not self.snippet_started:
@@ -409,7 +412,7 @@ class EngineBootView:
             self.status.display = False
         comment = random.choice(self.WITTY_COMMENTS[score])
         truncated = snippet if len(snippet) <= self.MAX_SNIPPET_CHARS else snippet[:self.MAX_SNIPPET_CHARS - 1] + "…"
-        self.lines.append(f'{ScoreBar.ICONS[score]} {score}  "{truncated}"  [dim]{comment}[/]')
+        self.lines.append(f'{ScoreBar.ICONS[score]} {score}  "{escape(truncated)}"  [dim]{escape(comment)}[/]')
         self.log.update("\n".join(self.lines))
 
 
@@ -439,11 +442,11 @@ class ScoreBar(Static):
 
 class HourlyChart(Static):
     DEFAULT_CSS = """
-    HourlyChart { height: 7; }
+    HourlyChart { height: 2; }
     """
 
+    BLOCKS: ClassVar[str] = "▁▂▃▄▅▆▇█"
     COLORS: ClassVar[dict[int, str]] = {1: "red", 2: "dark_orange", 3: "yellow", 4: "green", 5: "cyan"}
-    Y_TICKS: ClassVar[dict[int, str]] = {5: "😄", 4: "🙂", 3: "😐", 2: "😕", 1: "😡"}
     X_LABELS: ClassVar[dict[int, str]] = {0: "12a", 6: "6a", 12: "12p", 18: "6p", 23: "11p"}
 
     def update_chart(self, records: list[SentimentRecord]) -> None:
@@ -453,50 +456,26 @@ class HourlyChart(Static):
             h = r.time.astimezone().hour
             sums[h] += int(r.sentiment_score)
             counts[h] += 1
-        avgs: list[float | None] = [
-            sums[h] / counts[h] if counts[h] else None for h in range(24)
-        ]
-
-        if all(a is None for a in avgs):
+        if not any(counts):
             self.update("[dim]no data yet[/]")
             return
 
-        rows: list[str] = []
-        for row_score in range(5, 0, -1):
-            tick = self.Y_TICKS[row_score]
-            cells: list[str] = []
-            for h in range(24):
-                avg = avgs[h]
-                if avg is not None and round(avg) == row_score:
-                    cells.append(f"[{self.COLORS[row_score]}]●[/]")
-                elif self._on_line_segment(h, row_score, avgs):
-                    cells.append("[dim]│[/]")
-                else:
-                    cells.append(" ")
-            rows.append(f"{tick} " + "".join(cells))
+        cells: list[str] = []
+        for h in range(24):
+            if counts[h] == 0:
+                cells.append(" ")
+            else:
+                avg = sums[h] / counts[h]
+                block = self.BLOCKS[min(7, int((avg - 1) / 4 * 8))]
+                color = self.COLORS[max(1, min(5, round(avg)))]
+                cells.append(f"[{color}]{block}[/]")
 
-        rows.append("   " + "─" * 24)
-        buf = list(" " * 27)
+        axis_buf = list(" " * 24)
         for h, lbl in self.X_LABELS.items():
             for i, ch in enumerate(lbl):
-                buf[h + i] = ch
-        rows.append("   " + "".join(buf).rstrip())
-
-        self.update("\n".join(rows))
-
-    @staticmethod
-    def _on_line_segment(h: int, row_score: int, avgs: list[float | None]) -> bool:
-        if avgs[h] is not None:
-            return False
-        prev_h = next((i for i in range(h - 1, -1, -1) if avgs[i] is not None), None)
-        next_h = next((i for i in range(h + 1, 24) if avgs[i] is not None), None)
-        if prev_h is None or next_h is None:
-            return False
-        prev_avg = avgs[prev_h]
-        next_avg = avgs[next_h]
-        assert prev_avg is not None and next_avg is not None
-        lo, hi = sorted((round(prev_avg), round(next_avg)))
-        return lo < row_score < hi
+                if h + i < 24:
+                    axis_buf[h + i] = ch
+        self.update("".join(cells) + "\n" + "".join(axis_buf).rstrip())
 
 
 class BootingScreen(Screen[None]):
@@ -1401,22 +1380,22 @@ class CCSentimentApp(App[None]):
     #title-text { width: 1fr; }
     #score-digits { width: auto; min-width: 20; }
     #score-label { text-align: right; height: 1; color: $text-muted; }
-    #progress-section { height: auto; margin: 1 0; }
+    #progress-section { height: auto; margin: 1 0 0 0; padding: 0 1; border: round $primary-background; }
     #progress-row { height: auto; }
     #progress-label { width: auto; min-width: 24; }
     #scan-progress { width: 1fr; }
-    #chart-section { height: auto; margin: 1 0 0 0; }
+    #chart-section { height: auto; margin: 1 0 0 0; padding: 0 1; border: round $primary-background; }
     #chart-section.inactive, #stats-section.inactive { display: none; }
     #charts-row { height: auto; }
     #hourly-column { width: 1fr; height: auto; margin: 0 2 0 0; }
     #hourly-chart-label { height: 1; color: $text-muted; }
-    #hourly-chart { height: 7; }
+    #hourly-chart { height: 2; }
     #distribution { width: 1fr; height: auto; }
-    #engine-boot-section { height: auto; margin: 1 0 0 0; display: none; }
+    #engine-boot-section { height: auto; margin: 1 0 0 0; padding: 0 1; border: round $primary-background; display: none; }
     #engine-boot-section.active { display: block; }
     #engine-boot-status { height: 1; }
     #engine-boot-log { height: auto; max-height: 8; color: $text-muted; }
-    #stats-section { height: auto; margin: 1 0 0 0; }
+    #stats-section { height: auto; margin: 1 0 0 0; padding: 0 1; border: round $primary-background; }
     #stats-row { height: 4; }
     .stat-card { width: 1fr; height: 4; padding: 0 1; border: tall $primary-background; }
     .stat-card .stat-value { text-style: bold; }
@@ -1473,8 +1452,6 @@ class CCSentimentApp(App[None]):
                     yield Label("Preparing...", id="progress-label")
                     yield ProgressBar(id="scan-progress", total=100, show_eta=False, show_percentage=True)
 
-            Rule(line_style="heavy")
-
             with Vertical(id="chart-section", classes="inactive"):
                 with Horizontal(id="charts-row"):
                     with Vertical(id="hourly-column"):
@@ -1492,7 +1469,6 @@ class CCSentimentApp(App[None]):
                 yield Static("", id="engine-boot-log")
 
             with Vertical(id="stats-section", classes="inactive"):
-                Rule()
                 with Horizontal(id="stats-row"):
                     with Vertical(classes="stat-card"):
                         yield Static("--", id="stat-buckets", classes="stat-value")
@@ -1678,9 +1654,7 @@ class CCSentimentApp(App[None]):
         bucket_count = 0
         if transcripts:
             self._set_boot_status("Sizing things up...")
-            bucket_count = await anyio.to_thread.run_sync(
-                Pipeline.count_new_buckets, self.repo, transcripts
-            )
+            bucket_count = await Pipeline.count_new_buckets(self.repo, transcripts)
             self._debug(f"bucket_count={bucket_count}")
             rate = Hardware.estimate_buckets_per_sec(engine)
             if rate and rate > 0:

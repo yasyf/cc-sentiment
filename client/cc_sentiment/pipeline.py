@@ -48,16 +48,27 @@ class Pipeline:
         ]
 
     @staticmethod
-    def count_new_buckets(repo: Repository, transcripts: list[tuple[Path, float]]) -> int:
-        return sum(
-            sum(
+    async def count_new_buckets(repo: Repository, transcripts: list[tuple[Path, float]]) -> int:
+        scored_by_path = await anyio.to_thread.run_sync(repo.scored_buckets_for_all)
+
+        def count_one(path: Path) -> int:
+            if not (messages := TranscriptParser.parse_file(path)):
+                return 0
+            scored = scored_by_path.get(str(path), frozenset())
+            return sum(
                 BucketKey(session_id=b.session_id, bucket_index=b.bucket_index) not in scored
                 for b in ConversationBucketer.bucket_messages(messages)
             )
-            for path, _ in transcripts
-            if (messages := TranscriptParser.parse_file(path))
-            if (scored := repo.scored_buckets_for(str(path))) is not None
-        )
+
+        results: list[int] = []
+
+        async def run_one(path: Path) -> None:
+            results.append(await anyio.to_thread.run_sync(count_one, path))
+
+        async with anyio.create_task_group() as tg:
+            for path, _ in transcripts:
+                tg.start_soon(run_one, path)
+        return sum(results)
 
     @staticmethod
     def _parse_buckets_with_metrics(

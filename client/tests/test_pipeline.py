@@ -159,8 +159,12 @@ class TestCrossBucketReadHistory:
     def test_edit_without_any_prior_read_marked(self, tmp_path: Path) -> None:
         path = tmp_path / "noread.jsonl"
         path.write_text(
-            '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"edit"},"uuid":"u1","timestamp":"2026-04-10T07:36:00.000Z","sessionId":"session-x","version":"2.1.92"}\n'
-            '{"parentUuid":"u1","message":{"model":"claude-sonnet-4-20250514","type":"message","role":"assistant","content":[{"type":"text","text":"k"},{"type":"tool_use","id":"t","name":"Edit","input":{"file_path":"/a.py"}}]},"type":"assistant","uuid":"a1","timestamp":"2026-04-10T07:36:30.000Z","sessionId":"session-x"}'
+            "\n".join([
+                '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"edit"},"uuid":"u1","timestamp":"2026-04-10T07:36:00.000Z","sessionId":"session-x","version":"2.1.92"}',
+                '{"parentUuid":"u1","message":{"model":"claude-sonnet-4-20250514","type":"message","role":"assistant","content":[{"type":"text","text":"k"},{"type":"tool_use","id":"t","name":"Edit","input":{"file_path":"/a.py"}}]},"type":"assistant","uuid":"a1","timestamp":"2026-04-10T07:36:30.000Z","sessionId":"session-x"}',
+                '{"parentUuid":"a1","isSidechain":false,"type":"user","message":{"role":"user","content":"thanks"},"uuid":"u2","timestamp":"2026-04-10T07:37:00.000Z","sessionId":"session-x","version":"2.1.92"}',
+                '{"parentUuid":"u2","message":{"model":"claude-sonnet-4-20250514","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}]},"type":"assistant","uuid":"a2","timestamp":"2026-04-10T07:37:30.000Z","sessionId":"session-x"}',
+            ])
         )
 
         _, metrics_by_key = Pipeline._parse_buckets_with_metrics(path, frozenset())
