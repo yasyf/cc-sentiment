@@ -16,6 +16,7 @@ from typing import ClassVar
 import anyio
 import anyio.to_thread
 import httpx
+from urllib.parse import urlencode
 from rich.spinner import Spinner
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -51,6 +52,7 @@ from cc_sentiment.models import (
     AppState,
     ContributorId,
     GPGConfig,
+    MyStat,
     SentimentRecord,
     SSHConfig,
 )
@@ -471,6 +473,71 @@ class PlatformErrorScreen(Screen[None]):
         self.dismiss(None)
 
     def action_done(self) -> None:
+        self.dismiss(None)
+
+
+class StatShareScreen(Screen[None]):
+    DEFAULT_CSS = """
+    StatShareScreen { align: center middle; }
+    #stat-box { width: 76; height: auto; border: heavy $accent; padding: 2 3; }
+    #stat-box .title { text-style: bold; color: $text; margin: 0 0 1 0; }
+    #stat-box .stat { color: $accent; text-style: bold; margin: 0 0 1 0; }
+    #stat-box .detail { color: $text-muted; margin: 0 0 1 0; }
+    #stat-box Button { margin: 1 1 0 0; }
+    """
+
+    BINDINGS = [
+        ("enter", "tweet", "Tweet"),
+        ("escape", "skip", "Skip"),
+    ]
+
+    TWEET_INTENT_URL: ClassVar[str] = "https://twitter.com/intent/tweet"
+
+    def __init__(self, stat: MyStat, contributor_id: str, contributor_type: str) -> None:
+        super().__init__()
+        self.stat = stat
+        self.contributor_id = contributor_id
+        self.contributor_type = contributor_type
+
+    @property
+    def share_url(self) -> str:
+        params = {"t": self.stat.text} | (
+            {"u": self.contributor_id} if self.contributor_type == "github" else {}
+        )
+        return f"{CCSentimentApp.DASHBOARD_URL}/?{urlencode(params)}"
+
+    @property
+    def tweet_url(self) -> str:
+        return f"{self.TWEET_INTENT_URL}?{urlencode({'text': self.stat.tweet_text, 'url': self.share_url})}"
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="stat-box"):
+            yield Label("Your cc-sentiment snapshot", classes="title")
+            yield Label(f"You are {self.stat.text}.", classes="stat")
+            yield Label(
+                "Share it? The card on Twitter will show your GitHub avatar and this stat.",
+                classes="detail",
+            )
+            with Horizontal():
+                yield Button("Tweet it", id="stat-tweet", variant="primary")
+                yield Button("Not now", id="stat-skip", variant="default")
+
+    @on(Button.Pressed, "#stat-tweet")
+    async def on_tweet_button(self) -> None:
+        await self._open_tweet()
+
+    @on(Button.Pressed, "#stat-skip")
+    def on_skip_button(self) -> None:
+        self.dismiss(None)
+
+    async def action_tweet(self) -> None:
+        await self._open_tweet()
+
+    def action_skip(self) -> None:
+        self.dismiss(None)
+
+    async def _open_tweet(self) -> None:
+        await anyio.to_thread.run_sync(webbrowser.open, self.tweet_url)
         self.dismiss(None)
 
 
@@ -1516,7 +1583,24 @@ class CCSentimentApp(App[None]):
         await self._enter_idle(uploaded=uploaded)
 
         if uploaded:
+            await self._offer_stat_share()
             await self._offer_daemon_install()
+
+    async def _offer_stat_share(self) -> None:
+        from cc_sentiment.upload import Uploader
+
+        assert self.state.config is not None
+        try:
+            stat = await Uploader().fetch_my_stat(self.state.config)
+        except (httpx.HTTPError, httpx.InvalidURL):
+            return
+        if stat is None:
+            return
+        await self.push_screen_wait(StatShareScreen(
+            stat=stat,
+            contributor_id=self.state.config.contributor_id,
+            contributor_type=self.state.config.contributor_type,
+        ))
 
     async def _offer_daemon_install(self) -> None:
         if self.state.daemon_prompt_dismissed or LaunchAgent.is_installed():

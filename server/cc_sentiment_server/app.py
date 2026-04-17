@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Protocol
+from typing import Callable, ClassVar, Protocol
 
 import httpx
 import modal
@@ -19,17 +20,16 @@ from slowapi.util import get_remote_address
 from cc_sentiment_server.db import Database
 from cc_sentiment_server.models import (
     DataResponse,
+    MyStatResponse,
     StatusResponse,
     UploadPayload,
     UploadResponse,
     VerifyRequest,
 )
+from cc_sentiment_server.utils import noop
 from cc_sentiment_server.verify import ModalKeyCache, Verifier
 
 __all__ = ["app", "create_app"]
-
-STATS_STALE_AFTER_SECONDS = 60
-DEFAULT_DAYS = 7
 
 
 class Cache(Protocol):
@@ -39,6 +39,10 @@ class Cache(Protocol):
 
 class RefreshSpawner(Protocol):
     async def __call__(self, days: int) -> None: ...
+
+
+class MyStatSpawner(Protocol):
+    async def __call__(self, contributor_id: str) -> None: ...
 
 
 @dataclass
@@ -67,23 +71,53 @@ class ModalDictCache:
 
 @dataclass(frozen=True)
 class StatsCache:
+    STALE_AFTER_SECONDS: ClassVar[int] = 60
+    DEFAULT_DAYS: ClassVar[int] = 7
+
     cache: Cache
     db: Database
     spawn: RefreshSpawner
 
+    @staticmethod
+    def key(days: int) -> str:
+        return f"data:{days}"
+
     async def get(self, days: int) -> object:
         try:
-            cached_at, cached = await self.cache.get(f"data:{days}")
+            cached_at, cached = await self.cache.get(self.key(days))
         except KeyError:
             return await self.refresh(days)
-        if time.time() - cached_at > STATS_STALE_AFTER_SECONDS:
+        if time.time() - cached_at > self.STALE_AFTER_SECONDS:
             await self.spawn(days)
         return cached
 
     async def refresh(self, days: int) -> object:
         result = await self.db.query_all(days)
         payload = result.model_dump(mode="json")
-        await self.cache.put(f"data:{days}", (time.time(), payload))
+        await self.cache.put(self.key(days), (time.time(), payload))
+        return payload
+
+
+@dataclass(frozen=True)
+class MyStatCache:
+    cache: Cache
+    db: Database
+
+    @staticmethod
+    def key(contributor_id: str) -> str:
+        return f"my-stat:{contributor_id}"
+
+    async def get_or_compute(self, contributor_id: str) -> dict | None:
+        try:
+            wrapped = await self.cache.get(self.key(contributor_id))
+        except KeyError:
+            return await self.refresh(contributor_id)
+        return wrapped["result"]
+
+    async def refresh(self, contributor_id: str) -> dict | None:
+        result = await self.db.query_my_stat(contributor_id)
+        payload = result.model_dump(mode="json") if result else None
+        await self.cache.put(self.key(contributor_id), {"result": payload})
         return payload
 
 
@@ -92,11 +126,13 @@ def create_app(
     verifier: Verifier,
     data_cache: Cache,
     spawn: RefreshSpawner,
+    spawn_my_stat: MyStatSpawner,
     allowed_origins: list[str],
     data_api_token: str = "",
 ) -> FastAPI:
     limiter = Limiter(key_func=get_remote_address)
     stats_cache = StatsCache(data_cache, db, spawn)
+    my_stat_cache = MyStatCache(data_cache, db)
 
     web_app = FastAPI(title="cc-sentiment", docs_url=None, redoc_url=None)
     web_app.state.limiter = limiter
@@ -137,15 +173,33 @@ def create_app(
             return JSONResponse({"detail": "Signature verification failed"}, status_code=401)
 
         await db.ingest(payload.records, payload.contributor_id, payload.contributor_type)
-        await stats_cache.spawn(DEFAULT_DAYS)
-        await revalidate_dashboard.spawn.aio("dashboard")
+        await asyncio.gather(
+            stats_cache.spawn(StatsCache.DEFAULT_DAYS),
+            spawn_my_stat(payload.contributor_id),
+            revalidate_dashboard.spawn.aio("dashboard"),
+            revalidate_dashboard.spawn.aio(f"user:{payload.contributor_id}"),
+        )
         return UploadResponse(ingested=len(payload.records))
+
+    @web_app.get("/my-stats")
+    @limiter.limit("30/minute")
+    async def my_stats(
+        request: Request,
+        contributor_id: str = Query(min_length=1),
+    ) -> MyStatResponse:
+        payload = await my_stat_cache.get_or_compute(contributor_id)
+        if payload is None:
+            return JSONResponse({"detail": "Not enough data yet"}, status_code=404)
+        return JSONResponse(
+            payload,
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
 
     @web_app.get("/data")
     @limiter.limit("120/minute")
     async def data(
         request: Request,
-        days: int = Query(default=DEFAULT_DAYS, ge=1, le=365),
+        days: int = Query(default=StatsCache.DEFAULT_DAYS, ge=1, le=365),
         authorization: str = Header(),
     ) -> DataResponse:
         if not data_api_token or authorization != f"Bearer {data_api_token}":
@@ -179,7 +233,7 @@ class API:
         await self.db.open()
         self.verifier = Verifier(key_cache=ModalKeyCache(modal.Dict.from_name("github-keys", create_if_missing=True)))
         self.data_cache = ModalDictCache(modal.Dict.from_name("data-cache", create_if_missing=True))
-        await refresh_stats.spawn.aio(DEFAULT_DAYS)
+        await refresh_stats.spawn.aio(StatsCache.DEFAULT_DAYS)
 
     @modal.exit()
     async def shutdown(self) -> None:
@@ -189,8 +243,10 @@ class API:
     def serve(self) -> Callable:
         async def spawn(days: int) -> None:
             await refresh_stats.spawn.aio(days)
+        async def spawn_my_stat(contributor_id: str) -> None:
+            await refresh_my_stat.spawn.aio(contributor_id)
         return create_app(
-            self.db, self.verifier, self.data_cache, spawn,
+            self.db, self.verifier, self.data_cache, spawn, spawn_my_stat,
             os.environ["ALLOWED_ORIGINS"].split(","),
             os.environ["DATA_API_TOKEN"],
         )
@@ -210,17 +266,34 @@ async def seed() -> None:
 @app.function(image=image, secrets=[modal.Secret.from_name("cc-sentiment-db")])
 @modal.batched(max_batch_size=100, wait_ms=5_000)
 async def refresh_stats(days_list: list[int]) -> list[None]:
-    unique = sorted(set(days_list))
     db = Database(os.environ["TIMESCALE_DSN"])
     await db.open()
     try:
-        cache = ModalDictCache(modal.Dict.from_name("data-cache", create_if_missing=True))
-        for days in unique:
-            result = await db.query_all(days)
-            await cache.put(f"data:{days}", (time.time(), result.model_dump(mode="json")))
+        cache = StatsCache(
+            ModalDictCache(modal.Dict.from_name("data-cache", create_if_missing=True)),
+            db,
+            noop,
+        )
+        await asyncio.gather(*(cache.refresh(d) for d in sorted(set(days_list))))
     finally:
         await db.close()
     return [None] * len(days_list)
+
+
+@app.function(image=image, secrets=[modal.Secret.from_name("cc-sentiment-db")])
+@modal.batched(max_batch_size=100, wait_ms=5_000)
+async def refresh_my_stat(contributor_ids: list[str]) -> list[None]:
+    db = Database(os.environ["TIMESCALE_DSN"])
+    await db.open()
+    try:
+        cache = MyStatCache(
+            ModalDictCache(modal.Dict.from_name("data-cache", create_if_missing=True)),
+            db,
+        )
+        await asyncio.gather(*(cache.refresh(c) for c in sorted(set(contributor_ids))))
+    finally:
+        await db.close()
+    return [None] * len(contributor_ids)
 
 
 @app.function(image=image, secrets=[modal.Secret.from_name("cc-sentiment-vercel")])

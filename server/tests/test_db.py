@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from cc_sentiment_server.db import Database, INGEST_SQL
-from cc_sentiment_server.models import DataResponse, SentimentRecord
+from cc_sentiment_server.models import DataResponse, MyStatResponse, SentimentRecord
 
 
 def make_record(
@@ -14,6 +14,10 @@ def make_record(
     conv_id: str = "abc-123",
     t: datetime | None = None,
     claude_model: str = "claude-sonnet-4-20250514",
+    tool_calls_per_turn: float = 0.0,
+    turn_count: int = 1,
+    thinking_chars: int = 0,
+    subagent_count: int = 0,
 ) -> SentimentRecord:
     return SentimentRecord(
         time=t or datetime(2026, 4, 12, 10, 30, tzinfo=timezone.utc),
@@ -26,11 +30,11 @@ def make_record(
         read_edit_ratio=None,
         edits_without_prior_read_ratio=None,
         write_edit_ratio=None,
-        tool_calls_per_turn=0.0,
-        subagent_count=0,
-        turn_count=1,
-        thinking_present=False,
-        thinking_chars=0,
+        tool_calls_per_turn=tool_calls_per_turn,
+        subagent_count=subagent_count,
+        turn_count=turn_count,
+        thinking_present=thinking_chars > 0,
+        thinking_chars=thinking_chars,
         cc_version="2.1.92",
     )
 
@@ -150,3 +154,84 @@ class TestQueryAll:
         dist = {d.score: d.count for d in result.distribution}
         assert dist[4] == 2
         assert dist[1] == 1
+
+
+class TestQueryMyStat:
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_data(self, db: Database) -> None:
+        assert await db.query_my_stat("nobody") is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_unknown_contributor(self, db: Database) -> None:
+        await db.ingest([make_record(score=4)], "octocat", "github")
+        await db.ingest([make_record(score=3, conv_id="x")], "otheruser", "github")
+        assert await db.query_my_stat("ghost") is None
+
+    @pytest.mark.asyncio
+    async def test_returns_my_stat_response(self, db: Database) -> None:
+        await db.ingest([make_record(score=5, conv_id="a")], "topuser", "github")
+        await db.ingest([make_record(score=3, conv_id="b")], "middleuser", "github")
+        await db.ingest([make_record(score=1, conv_id="c")], "lowuser", "github")
+
+        result = await db.query_my_stat("topuser")
+
+        assert isinstance(result, MyStatResponse)
+        assert result.total_contributors == 3
+        assert result.kind in {
+            "kindness", "thinking", "tool_calls", "turn_length",
+            "read_before_edit", "subagents", "volume",
+        }
+        assert result.text
+        assert result.tweet_text.startswith("I'm ")
+        assert 0 <= result.percentile <= 100
+
+    @pytest.mark.asyncio
+    async def test_high_kindness_framed_as_nicer(self, db: Database) -> None:
+        await db.ingest([make_record(score=5, conv_id="a")], "topuser", "github")
+        await db.ingest([make_record(score=1, conv_id="b")], "lowuser", "github")
+        await db.ingest([make_record(score=1, conv_id="c")], "lowuser2", "github")
+
+        result = await db.query_my_stat("topuser")
+
+        assert result is not None
+        assert result.kind == "kindness"
+        assert "nicer to Claude" in result.text
+        assert result.percentile >= 50
+
+    @pytest.mark.asyncio
+    async def test_low_kindness_framed_as_tougher(self, db: Database) -> None:
+        await db.ingest([make_record(score=5, conv_id="a")], "topuser", "github")
+        await db.ingest([make_record(score=5, conv_id="b")], "topuser2", "github")
+        await db.ingest([make_record(score=1, conv_id="c")], "meanuser", "github")
+
+        result = await db.query_my_stat("meanuser")
+
+        assert result is not None
+        assert result.kind == "kindness"
+        assert "tougher on Claude" in result.text
+        assert result.percentile >= 50
+
+    @pytest.mark.asyncio
+    async def test_picks_most_distinctive_stat(self, db: Database) -> None:
+        await db.ingest(
+            [make_record(score=3, conv_id="a", thinking_chars=10_000)],
+            "thinker", "github",
+        )
+        await db.ingest(
+            [make_record(score=3, conv_id="b", thinking_chars=0)],
+            "others", "github",
+        )
+        await db.ingest(
+            [make_record(score=3, conv_id="c", thinking_chars=0)],
+            "others2", "github",
+        )
+
+        result = await db.query_my_stat("thinker")
+
+        assert result is not None
+        assert result.percentile >= 50
+
+    @pytest.mark.asyncio
+    async def test_single_contributor_returns_none(self, db: Database) -> None:
+        await db.ingest([make_record(score=4)], "onlyuser", "github")
+        assert await db.query_my_stat("onlyuser") is None

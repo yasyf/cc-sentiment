@@ -1,12 +1,126 @@
 import { ImageResponse } from '@vercel/og';
 import { addCacheTag } from '@vercel/functions';
 import { fetchData } from '$lib/api.js';
+import { verdictFor, type VerdictSeverity } from '$lib/verdict.js';
 import type { RequestHandler } from './$types.js';
 
-export const config = { isr: { expiration: 3600 } };
+const VERDICT_HEX: Record<VerdictSeverity, string> = {
+	1: '#dc2626',
+	2: '#ea580c',
+	3: '#ca8a04',
+	4: '#16a34a',
+	5: '#059669',
+};
 
-export const GET: RequestHandler = async ({ fetch }) => {
+export const config = { isr: { expiration: 604800 } };
+
+const WIDTH = 1200;
+const HEIGHT = 630;
+
+export const GET: RequestHandler = async ({ fetch, url }) => {
+	const u = url.searchParams.get('u');
+	const t = url.searchParams.get('t');
+
+	if (u && t) {
+		addCacheTag(`user:${u}`);
+		return personalCard(u, t);
+	}
+
 	addCacheTag('dashboard');
+	return aggregateCard(fetch);
+};
+
+function personalCard(u: string, t: string): ImageResponse {
+	const avatarUrl = `https://github.com/${encodeURIComponent(u)}.png?size=400`;
+
+	const html = {
+		type: 'div',
+		props: {
+			style: {
+				display: 'flex',
+				width: '100%',
+				height: '100%',
+				padding: '60px 80px',
+				backgroundColor: '#fafafa',
+				fontFamily: 'Inter, system-ui, sans-serif',
+				alignItems: 'center',
+				gap: '64px',
+			},
+			children: [
+				{
+					type: 'img',
+					props: {
+						src: avatarUrl,
+						width: 320,
+						height: 320,
+						style: {
+							borderRadius: '50%',
+							border: '6px solid #e4e4e7',
+						},
+					},
+				},
+				{
+					type: 'div',
+					props: {
+						style: { display: 'flex', flexDirection: 'column', flex: 1 },
+						children: [
+							{
+								type: 'span',
+								props: {
+									style: {
+										fontSize: '24px',
+										color: '#71717a',
+										letterSpacing: '0.02em',
+									},
+									children: `@${u}`,
+								},
+							},
+							{
+								type: 'div',
+								props: {
+									style: {
+										marginTop: '24px',
+										fontSize: '52px',
+										fontWeight: 700,
+										color: '#18181b',
+										lineHeight: 1.15,
+										display: 'flex',
+										flexWrap: 'wrap',
+									},
+									children: [
+										{
+											type: 'span',
+											props: { style: { color: '#18181b' }, children: 'is ' },
+										},
+										{
+											type: 'span',
+											props: { style: { color: '#6366f1' }, children: `${t}.` },
+										},
+									],
+								},
+							},
+							{
+								type: 'div',
+								props: {
+									style: {
+										marginTop: '40px',
+										fontSize: '22px',
+										color: '#71717a',
+									},
+									children: 'cc-sentiment · sentiments.cc',
+								},
+							},
+						],
+					},
+				},
+			],
+		},
+	};
+
+	return new ImageResponse(html, { width: WIDTH, height: HEIGHT });
+}
+
+async function aggregateCard(fetch: typeof globalThis.fetch): Promise<ImageResponse> {
 	const data = await fetchData(fetch);
 
 	const total = data.distribution.reduce((s, d) => s + d.count, 0);
@@ -14,21 +128,8 @@ export const GET: RequestHandler = async ({ fetch }) => {
 		? (data.distribution.reduce((s, d) => s + d.score * d.count, 0) / total).toFixed(1)
 		: '?';
 
-	const numAvg = Number(avg);
-
-	const verdict =
-		numAvg < 2.0 ? 'Developers are frustrated.' :
-		numAvg < 2.5 ? 'Developers are struggling.' :
-		numAvg < 3.5 ? 'Developers are getting by.' :
-		numAvg < 4.0 ? 'Developers are happy.' :
-		'Developers are thriving.';
-
-	const verdictColor =
-		numAvg < 2.0 ? '#dc2626' :
-		numAvg < 2.5 ? '#ea580c' :
-		numAvg < 3.5 ? '#ca8a04' :
-		numAvg < 4.0 ? '#16a34a' :
-		'#059669';
+	const { text: verdict, severity } = verdictFor(Number(avg));
+	const verdictColor = VERDICT_HEX[severity];
 
 	const sentimentDelta = data.trend.sentiment_current - data.trend.sentiment_previous;
 	const trendAbs = Math.abs(sentimentDelta);
@@ -131,5 +232,5 @@ export const GET: RequestHandler = async ({ fetch }) => {
 		},
 	};
 
-	return new ImageResponse(html, { width: 1200, height: 630 });
-};
+	return new ImageResponse(html, { width: WIDTH, height: HEIGHT });
+}

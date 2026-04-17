@@ -10,6 +10,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 from cc_sentiment.models import (
     AppState,
     GPGConfig,
+    MyStat,
     SentimentRecord,
     SSHConfig,
     UploadPayload,
@@ -138,3 +139,19 @@ class Uploader:
         await anyio.to_thread.run_sync(
             repo.mark_sessions_uploaded, {r.conversation_id for r in records}
         )
+
+    async def fetch_my_stat(self, config: SSHConfig | GPGConfig) -> MyStat | None:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.server_url}/my-stats",
+                params={"contributor_id": config.contributor_id},
+                timeout=15.0,
+            )
+        match response.status_code:
+            case 200:
+                return MyStat.model_validate_json(response.text)
+            case 404:
+                return None
+            case _:
+                response.raise_for_status()
+                return None

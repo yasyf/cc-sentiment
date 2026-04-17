@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import ClassVar
 
 from psycopg_pool import AsyncConnectionPool
 
@@ -10,12 +11,13 @@ from cc_sentiment_server.models import (
     DataResponse,
     DistributionPoint,
     ModelBreakdown,
+    MyStatResponse,
     SentimentRecord,
     TimelinePoint,
     TrendComparison,
 )
 
-__all__ = ["Database", "WindowStats", "TrendsStats", "LifetimeStats"]
+__all__ = ["Database", "WindowStats", "TrendsStats", "LifetimeStats", "StatCandidate"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,7 +240,93 @@ WHERE time > NOW() - make_interval(days => %(days)s)
 """
 
 
+@dataclass(frozen=True, slots=True)
+class StatCandidate:
+    QUERY_TEMPLATE: ClassVar[str] = """
+    WITH per_user AS (
+        SELECT contributor_id, ({metric}) AS val
+        FROM sentiment
+        GROUP BY contributor_id
+        HAVING ({metric}) IS NOT NULL
+    ),
+    ranked AS (
+        SELECT contributor_id, val, PERCENT_RANK() OVER (ORDER BY val) AS pr
+        FROM per_user
+    )
+    SELECT
+        (SELECT pr FROM ranked WHERE contributor_id = %(contributor_id)s) AS pr,
+        (SELECT COUNT(*)::int FROM per_user) AS total
+    """
+
+    kind: str
+    metric_sql: str
+    high_text: str
+    low_text: str
+
+    @property
+    def query(self) -> str:
+        return self.QUERY_TEMPLATE.format(metric=self.metric_sql)
+
+    def build(self, pr: float, total: int) -> MyStatResponse:
+        high_pct = round(pr * 100)
+        percentile = high_pct if high_pct >= 50 else 100 - high_pct
+        template = self.high_text if high_pct >= 50 else self.low_text
+        text = template.format(p=percentile)
+        return MyStatResponse(
+            kind=self.kind,
+            percentile=percentile,
+            text=text,
+            tweet_text=f"I'm {text}.",
+            total_contributors=total,
+        )
+
+
 class Database:
+    STAT_CANDIDATES: ClassVar[tuple[StatCandidate, ...]] = (
+        StatCandidate(
+            kind="kindness",
+            metric_sql="AVG(sentiment_score::float)",
+            high_text="nicer to Claude than {p}% of developers",
+            low_text="tougher on Claude than {p}% of developers",
+        ),
+        StatCandidate(
+            kind="thinking",
+            metric_sql="AVG(thinking_chars::float)",
+            high_text="getting Claude to think harder than {p}% of developers",
+            low_text="getting straight answers from Claude more than {p}% of developers",
+        ),
+        StatCandidate(
+            kind="tool_calls",
+            metric_sql="AVG(tool_calls_per_turn)",
+            high_text="keeping Claude busier per turn than {p}% of developers",
+            low_text="running leaner turns than {p}% of developers",
+        ),
+        StatCandidate(
+            kind="turn_length",
+            metric_sql="AVG(turn_count::float)",
+            high_text="running longer sessions than {p}% of developers",
+            low_text="running snappier sessions than {p}% of developers",
+        ),
+        StatCandidate(
+            kind="read_before_edit",
+            metric_sql="AVG(read_edit_ratio)",
+            high_text="reading before editing more than {p}% of developers",
+            low_text="editing bolder than {p}% of developers",
+        ),
+        StatCandidate(
+            kind="subagents",
+            metric_sql="AVG(subagent_count::float)",
+            high_text="delegating to subagents more than {p}% of developers",
+            low_text="keeping it single-threaded more than {p}% of developers",
+        ),
+        StatCandidate(
+            kind="volume",
+            metric_sql="COUNT(DISTINCT conversation_id)::float",
+            high_text="running more Claude Code sessions than {p}% of developers",
+            low_text="running more focused sessions than {p}% of developers",
+        ),
+    )
+
     def __init__(self, dsn: str) -> None:
         self.pool = AsyncConnectionPool(dsn, open=False, min_size=4, max_size=16)
 
@@ -359,6 +447,25 @@ class Database:
             total_contributors=lifetime_row[2],
             last_updated=last_updated_row[0] or datetime.now(timezone.utc),
         )
+
+    async def _score_candidate(
+        self, candidate: StatCandidate, contributor_id: str
+    ) -> tuple[StatCandidate, float, int] | None:
+        match await self._fetch_one(candidate.query, {"contributor_id": contributor_id}):
+            case (float(pr), int(total)) if total >= 2:
+                return (candidate, pr, total)
+            case _:
+                return None
+
+    async def query_my_stat(self, contributor_id: str) -> MyStatResponse | None:
+        scored = await asyncio.gather(
+            *(self._score_candidate(c, contributor_id) for c in self.STAT_CANDIDATES)
+        )
+        match max(filter(None, scored), key=lambda r: abs(r[1] - 0.5), default=None):
+            case None:
+                return None
+            case (candidate, pr, total):
+                return candidate.build(pr, total)
 
     async def query_all(self, days: int) -> DataResponse:
         window, trends, lifetime = await asyncio.gather(

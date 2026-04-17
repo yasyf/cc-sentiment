@@ -3,11 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from textual.app import App
 from textual.widgets import Button, ContentSwitcher, DataTable, Input, Label
 
-from cc_sentiment.models import AppState, ContributorId, GPGConfig, SSHConfig
+from cc_sentiment.models import AppState, ContributorId, GPGConfig, MyStat, SSHConfig
 from cc_sentiment.repo import Repository
 from cc_sentiment.signing import GPGKeyInfo, SSHKeyInfo
 from cc_sentiment.tui import (
@@ -23,6 +24,7 @@ from cc_sentiment.tui import (
     Scoring,
     SetupScreen,
     Stage,
+    StatShareScreen,
     Uploading,
     format_duration,
 )
@@ -819,3 +821,129 @@ async def test_hourly_chart_empty_records():
         chart.update_chart([])
         await pilot.pause()
         assert "no data yet" in str(chart.content)
+
+
+class StatShareHarness(App[None]):
+    def __init__(self, stat: MyStat, contributor_id: str, contributor_type: str) -> None:
+        super().__init__()
+        self.stat = stat
+        self.contributor_id = contributor_id
+        self.contributor_type = contributor_type
+
+    def on_mount(self) -> None:
+        self.push_screen(StatShareScreen(self.stat, self.contributor_id, self.contributor_type))
+
+
+STAT = MyStat(
+    kind="kindness",
+    percentile=72,
+    text="nicer to Claude than 72% of developers",
+    tweet_text="I'm nicer to Claude than 72% of developers.",
+    total_contributors=100,
+)
+
+
+async def test_stat_share_renders_stat_text():
+    harness = StatShareHarness(STAT, "testuser", "github")
+    async with harness.run_test() as pilot:
+        await pilot.pause()
+        text = " ".join(str(lbl.content) for lbl in pilot.app.screen.query(Label))
+        assert "nicer to Claude than 72% of developers" in text
+
+
+async def test_stat_share_tweet_button_opens_twitter_with_username():
+    harness = StatShareHarness(STAT, "testuser", "github")
+    with patch("cc_sentiment.tui.webbrowser.open") as mock_open:
+        async with harness.run_test() as pilot:
+            await pilot.pause()
+            await pilot.click("#stat-tweet")
+            await pilot.pause(delay=0.2)
+
+    mock_open.assert_called_once()
+    url = mock_open.call_args[0][0]
+    assert "twitter.com/intent/tweet" in url
+    assert "testuser" in url
+    assert "nicer+to+Claude" in url or "nicer%20to%20Claude" in url
+
+
+async def test_stat_share_gpg_user_omits_username_from_share_url():
+    harness = StatShareHarness(STAT, "gpg-user-id", "gpg")
+    with patch("cc_sentiment.tui.webbrowser.open") as mock_open:
+        async with harness.run_test() as pilot:
+            await pilot.pause()
+            await pilot.click("#stat-tweet")
+            await pilot.pause(delay=0.2)
+
+    mock_open.assert_called_once()
+    url = mock_open.call_args[0][0]
+    assert "twitter.com/intent/tweet" in url
+    assert "u%3Dgpg-user-id" not in url
+    assert "u=gpg-user-id" not in url
+
+
+async def test_stat_share_skip_dismisses_without_opening_browser():
+    harness = StatShareHarness(STAT, "testuser", "github")
+    with patch("cc_sentiment.tui.webbrowser.open") as mock_open:
+        async with harness.run_test() as pilot:
+            await pilot.pause()
+            await pilot.click("#stat-skip")
+            await pilot.pause(delay=0.2)
+
+    mock_open.assert_not_called()
+
+
+async def test_stat_share_escape_dismisses_without_opening_browser():
+    harness = StatShareHarness(STAT, "testuser", "github")
+    with patch("cc_sentiment.tui.webbrowser.open") as mock_open:
+        async with harness.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("escape")
+            await pilot.pause(delay=0.2)
+
+    mock_open.assert_not_called()
+
+
+async def test_offer_stat_share_skipped_on_http_error(tmp_path: Path, auth_ok):
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
+
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch(
+             "cc_sentiment.upload.Uploader.fetch_my_stat",
+             new_callable=AsyncMock,
+             side_effect=httpx.ConnectError("no net"),
+         ) as mock_fetch, \
+         patch.object(CCSentimentApp, "push_screen_wait", new_callable=AsyncMock) as mock_push:
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            await app._offer_stat_share()
+
+    mock_fetch.assert_awaited_once()
+    for call in mock_push.call_args_list:
+        args = call.args
+        assert not (args and isinstance(args[0], StatShareScreen))
+
+
+async def test_offer_stat_share_skipped_when_none(tmp_path: Path, auth_ok):
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
+
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch(
+             "cc_sentiment.upload.Uploader.fetch_my_stat",
+             new_callable=AsyncMock,
+             return_value=None,
+         ) as mock_fetch, \
+         patch.object(CCSentimentApp, "push_screen_wait", new_callable=AsyncMock) as mock_push:
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            await app._offer_stat_share()
+
+    mock_fetch.assert_awaited_once()
+    for call in mock_push.call_args_list:
+        args = call.args
+        assert not (args and isinstance(args[0], StatShareScreen))

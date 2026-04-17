@@ -155,6 +155,14 @@ class UploadPayload(BaseModel, frozen=True):
     records: tuple[SentimentRecord, ...]
 
 
+class MyStat(BaseModel, frozen=True):
+    kind: str
+    percentile: int
+    text: str
+    tweet_text: str
+    total_contributors: int
+
+
 class SSHConfig(BaseModel, frozen=True):
     key_type: Literal["ssh"] = "ssh"
     contributor_type: Literal["github"] = "github"

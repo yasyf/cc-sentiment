@@ -16,6 +16,7 @@ __all__ = [
     "TrendComparison",
     "ModelBreakdown",
     "DataResponse",
+    "MyStatResponse",
 ]
 
 
@@ -127,3 +128,13 @@ class DataResponse(BaseModel):
     avg_tool_calls_per_turn: float | None
     avg_write_edit_ratio: float | None
     avg_subagent_count: float | None
+
+
+class MyStatResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    kind: str
+    percentile: int = Field(ge=0, le=100)
+    text: str = Field(min_length=1)
+    tweet_text: str = Field(min_length=1)
+    total_contributors: int = Field(ge=1)

@@ -9,6 +9,7 @@
 	import ToolCallsPerTurnTimeline from '$lib/charts/ToolCallsPerTurnTimeline.svelte';
 	import ModelBreakdown from '$lib/charts/ModelBreakdown.svelte';
 	import { sentimentEmoji } from '$lib/chart-theme.js';
+	import { verdictFor } from '$lib/verdict.js';
 	import type { PageProps } from './$types.js';
 
 	const DISPLAY_TZ = 'America/Los_Angeles';
@@ -30,11 +31,8 @@
 	});
 
 	const verdict = $derived.by(() => {
-		if (overallAvg < 2.0) return { text: 'Developers are frustrated.', color: 'text-sentiment-1' };
-		if (overallAvg < 2.5) return { text: 'Developers are struggling.', color: 'text-sentiment-2' };
-		if (overallAvg < 3.5) return { text: 'Developers are getting by.', color: 'text-sentiment-3' };
-		if (overallAvg < 4.0) return { text: 'Developers are happy.', color: 'text-sentiment-4' };
-		return { text: 'Developers are thriving.', color: 'text-sentiment-5' };
+		const { text, severity } = verdictFor(overallAvg);
+		return { text, color: `text-sentiment-${severity}` };
 	});
 
 	const sentimentLabel = $derived.by(() => {
@@ -117,16 +115,26 @@
 	});
 
 	let showAdvanced = $state(false);
+
+	const ogImage = $derived(
+		data.share
+			? `/og?${new URLSearchParams({ u: data.share.u, t: data.share.t }).toString()}`
+			: '/og'
+	);
+
+	const shareDescription = $derived(
+		data.share ? `${data.share.u} is ${data.share.t}.` : null
+	);
 </script>
 
 <svelte:head>
 	<title>cc-sentiment</title>
-	<meta name="description" content="{verdict.text} Average sentiment is {overallAvg.toFixed(1)}/5 across {data.total_sessions.toLocaleString()} sessions. Live data scored on-device." />
+	<meta name="description" content="{shareDescription ?? `${verdict.text} Average sentiment is ${overallAvg.toFixed(1)}/5 across ${data.total_sessions.toLocaleString()} sessions. Live data scored on-device.`}" />
 	<meta property="og:title" content="cc-sentiment" />
-	<meta property="og:description" content="{verdict.text} {overallAvg.toFixed(1)}/5 across {data.total_sessions.toLocaleString()} sessions. {trendDescription} vs last week." />
-	<meta property="og:image" content="/og" />
+	<meta property="og:description" content="{shareDescription ?? `${verdict.text} ${overallAvg.toFixed(1)}/5 across ${data.total_sessions.toLocaleString()} sessions. ${trendDescription} vs last week.`}" />
+	<meta property="og:image" content="{ogImage}" />
 	<meta name="twitter:title" content="cc-sentiment" />
-	<meta name="twitter:description" content="{verdict.text} {overallAvg.toFixed(1)}/5 across {data.total_sessions.toLocaleString()} sessions. {trendDescription} vs last week." />
+	<meta name="twitter:description" content="{shareDescription ?? `${verdict.text} ${overallAvg.toFixed(1)}/5 across ${data.total_sessions.toLocaleString()} sessions. ${trendDescription} vs last week.`}" />
 </svelte:head>
 
 <div class="min-h-screen bg-bg">
