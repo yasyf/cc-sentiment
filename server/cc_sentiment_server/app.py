@@ -232,9 +232,18 @@ image = (
 )
 
 
-@app.cls(image=image, secrets=[modal.Secret.from_name("cc-sentiment-db")], scaledown_window=600)
+@app.cls(
+    image=image,
+    secrets=[modal.Secret.from_name("cc-sentiment-db")],
+    scaledown_window=600,
+    min_containers=1,
+    enable_memory_snapshot=True,
+)
 @modal.concurrent(max_inputs=100)
 class API:
+    KEYS_DICT: ClassVar[modal.Dict] = modal.Dict.from_name("github-keys", create_if_missing=True)
+    DATA_DICT: ClassVar[modal.Dict] = modal.Dict.from_name("data-cache", create_if_missing=True)
+
     db: Database
     verifier: Verifier
     data_cache: ModalDictCache
@@ -243,8 +252,8 @@ class API:
     async def startup(self) -> None:
         self.db = Database(os.environ["TIMESCALE_DSN"])
         await self.db.open()
-        self.verifier = Verifier(key_cache=ModalKeyCache(modal.Dict.from_name("github-keys", create_if_missing=True)))
-        self.data_cache = ModalDictCache(modal.Dict.from_name("data-cache", create_if_missing=True))
+        self.verifier = Verifier(key_cache=ModalKeyCache(self.KEYS_DICT))
+        self.data_cache = ModalDictCache(self.DATA_DICT)
         await refresh_stats.spawn.aio(StatsCache.DEFAULT_DAYS)
 
     @modal.exit()
@@ -277,40 +286,33 @@ async def seed() -> None:
         await db.close()
 
 
-@app.function(image=image, secrets=[modal.Secret.from_name("cc-sentiment-db")])
+@app.function(image=image, secrets=[modal.Secret.from_name("cc-sentiment-db")], enable_memory_snapshot=True)
 @modal.batched(max_batch_size=100, wait_ms=5_000)
 async def refresh_stats(days_list: list[int]) -> list[None]:
     db = Database(os.environ["TIMESCALE_DSN"])
     await db.open()
     try:
-        cache = StatsCache(
-            ModalDictCache(modal.Dict.from_name("data-cache", create_if_missing=True)),
-            db,
-            noop,
-        )
+        cache = StatsCache(ModalDictCache(API.DATA_DICT), db, noop)
         await asyncio.gather(*(cache.refresh(d) for d in sorted(set(days_list))))
     finally:
         await db.close()
     return [None] * len(days_list)
 
 
-@app.function(image=image, secrets=[modal.Secret.from_name("cc-sentiment-db")])
+@app.function(image=image, secrets=[modal.Secret.from_name("cc-sentiment-db")], enable_memory_snapshot=True)
 @modal.batched(max_batch_size=100, wait_ms=5_000)
 async def refresh_my_stat(contributor_ids: list[str]) -> list[None]:
     db = Database(os.environ["TIMESCALE_DSN"])
     await db.open()
     try:
-        cache = MyStatCache(
-            ModalDictCache(modal.Dict.from_name("data-cache", create_if_missing=True)),
-            db,
-        )
+        cache = MyStatCache(ModalDictCache(API.DATA_DICT), db)
         await asyncio.gather(*(cache.refresh(c) for c in sorted(set(contributor_ids))))
     finally:
         await db.close()
     return [None] * len(contributor_ids)
 
 
-@app.function(image=image, secrets=[modal.Secret.from_name("cc-sentiment-vercel")])
+@app.function(image=image, secrets=[modal.Secret.from_name("cc-sentiment-vercel")], enable_memory_snapshot=True)
 @modal.batched(max_batch_size=100, wait_ms=5_000)
 async def revalidate_dashboard(tags: list[str]) -> list[bool]:
     unique = sorted(set(tags))
