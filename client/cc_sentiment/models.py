@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime
+from importlib.metadata import version
 from pathlib import Path
 from typing import Annotated, Literal, NewType
 
@@ -16,7 +17,7 @@ ContributorId = NewType("ContributorId", str)
 ContributorType = Literal["github", "gpg"]
 
 PROMPT_VERSION = PromptVersion("v1")
-CLIENT_VERSION = "0.1.0"
+CLIENT_VERSION = version("cc-sentiment")
 
 
 class ToolCall(BaseModel, frozen=True):

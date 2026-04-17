@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 
 import anyio
@@ -10,19 +11,28 @@ from cc_sentiment.models import AppState
 
 @click.group(invoke_without_command=True)
 @click.option("--model", "model_repo", default=None, help="Model repo (HF for mlx/omlx) or name (claude)")
+@click.option(
+    "--debug",
+    is_flag=True,
+    default=lambda: os.environ.get("DEBUG") == "1",
+    help="Verbose diagnostics (also: DEBUG=1)",
+)
 @click.pass_context
-def main(ctx: click.Context, model_repo: str | None) -> None:
+def main(ctx: click.Context, model_repo: str | None, debug: bool) -> None:
+    ctx.ensure_object(dict)
+    ctx.obj["debug"] = debug
     if ctx.invoked_subcommand is not None:
         return
 
     from cc_sentiment.tui import CCSentimentApp
-    CCSentimentApp(state=AppState.load(), model_repo=model_repo).run()
+    CCSentimentApp(state=AppState.load(), model_repo=model_repo, debug=debug).run()
 
 
 @main.command()
-def setup() -> None:
+@click.pass_context
+def setup(ctx: click.Context) -> None:
     from cc_sentiment.tui import CCSentimentApp
-    CCSentimentApp(state=AppState.load(), setup_only=True).run()
+    CCSentimentApp(state=AppState.load(), setup_only=True, debug=ctx.obj["debug"]).run()
 
 
 @main.command()
@@ -48,7 +58,8 @@ def uninstall() -> None:
 
 
 @main.command()
-def run() -> None:
+@click.pass_context
+def run(ctx: click.Context) -> None:
     from cc_sentiment.headless import (
         HeadlessAuthError,
         HeadlessClaudeEngineBlocked,
@@ -60,10 +71,11 @@ def run() -> None:
     )
     from cc_sentiment.repo import Repository
 
+    debug = ctx.obj["debug"]
     state = AppState.load()
     repo = Repository.open(Repository.default_path())
     try:
-        outcome = anyio.run(HeadlessRunner.run, state, repo)
+        outcome = anyio.run(HeadlessRunner.run, state, repo, debug)
     finally:
         repo.close()
 

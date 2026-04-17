@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -19,6 +20,13 @@ from cc_sentiment.models import (
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 BUCKET_MINUTES = 5
 ASSISTANT_TRUNCATION = 1024
+
+WRAPPER_TAG_RE = re.compile(
+    r"<(?:system[_-]instruction|local-command-stdout|command-(?:name|message|args))>"
+    r".*?"
+    r"</(?:system[_-]instruction|local-command-stdout|command-(?:name|message|args))>",
+    re.DOTALL | re.IGNORECASE,
+)
 
 
 class TranscriptDiscovery:
@@ -61,6 +69,9 @@ class TranscriptParser:
                         content = " ".join(text_parts)
                     case _:
                         return None
+                content = WRAPPER_TAG_RE.sub("", content).strip()
+                if not content:
+                    return None
                 return UserMessage(
                     content=content,
                     timestamp=datetime.fromisoformat(data["timestamp"]),

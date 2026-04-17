@@ -33,6 +33,7 @@ SNIPPET_INLINE_CODE = re.compile(r"`[^`]*`")
 SNIPPET_LONG_PATH = re.compile(r"\S{40,}")
 SNIPPET_WHITESPACE = re.compile(r"\s+")
 SNIPPET_MAX_LEN = 80
+STREAM_CHUNK_SIZE = 16
 
 
 class Pipeline:
@@ -142,6 +143,7 @@ class Pipeline:
         scored_buckets: frozenset[BucketKey] = frozenset(),
         on_bucket: Callable[[int], None] = NOOP_PROGRESS,
         on_snippet: Callable[[str, int], None] = NOOP_SNIPPET,
+        on_records: Callable[[list[SentimentRecord]], None] = lambda _: None,
     ) -> list[SentimentRecord]:
         new_buckets, metrics_by_key = await anyio.to_thread.run_sync(
             cls._parse_buckets_with_metrics, path, scored_buckets
@@ -149,22 +151,27 @@ class Pipeline:
         if not new_buckets:
             return []
 
-        scores = await classifier.score(new_buckets, on_progress=on_bucket)
+        all_records: list[SentimentRecord] = []
+        for start in range(0, len(new_buckets), STREAM_CHUNK_SIZE):
+            chunk = new_buckets[start:start + STREAM_CHUNK_SIZE]
+            scores = await classifier.score(chunk, on_progress=on_bucket)
+            for bucket, score in zip(chunk, scores):
+                if snippet := cls.snippet_for(bucket):
+                    on_snippet(snippet, int(score))
+            chunk_records = [
+                cls.to_record(
+                    bucket,
+                    score,
+                    metrics_by_key[BucketKey(
+                        session_id=bucket.session_id, bucket_index=bucket.bucket_index
+                    )],
+                )
+                for bucket, score in zip(chunk, scores)
+            ]
+            all_records.extend(chunk_records)
+            on_records(chunk_records)
 
-        for bucket, score in zip(new_buckets, scores):
-            if snippet := cls.snippet_for(bucket):
-                on_snippet(snippet, int(score))
-
-        return [
-            cls.to_record(
-                bucket,
-                score,
-                metrics_by_key[BucketKey(
-                    session_id=bucket.session_id, bucket_index=bucket.bucket_index
-                )],
-            )
-            for bucket, score in zip(new_buckets, scores)
-        ]
+        return all_records
 
     @classmethod
     async def run(
@@ -196,12 +203,10 @@ class Pipeline:
                 records = await cls.process_transcript(
                     path, classifier, scored_buckets,
                     on_bucket=on_bucket, on_snippet=on_snippet,
+                    on_records=on_records,
                 )
                 all_records.extend(records)
                 await anyio.to_thread.run_sync(repo.save_records, str(path), mtime, records)
-
-                if records:
-                    on_records(records)
 
             return all_records
         finally:

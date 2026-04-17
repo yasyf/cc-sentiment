@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import subprocess
+import sys
+import traceback
 from dataclasses import dataclass
 
 import anyio.to_thread
@@ -60,13 +62,35 @@ HeadlessOutcome = (
 )
 
 
+UploadError = (
+    httpx.HTTPStatusError | httpx.ConnectError | httpx.TimeoutException
+    | httpx.NetworkError | subprocess.CalledProcessError
+)
+
+
 class HeadlessRunner:
+    @staticmethod
+    def trace(debug: bool, msg: str) -> None:
+        if debug:
+            print(f"debug: {msg}", file=sys.stderr)
+
+    @staticmethod
+    def upload_error_detail(error: UploadError) -> str:
+        match error:
+            case httpx.HTTPStatusError():
+                return f"server rejected upload ({error.response.status_code})"
+            case subprocess.CalledProcessError():
+                return f"signing failed ({error.returncode})"
+            case _:
+                return f"couldn't reach server: {error}"
+
     @classmethod
-    async def run(cls, state: AppState, repo: Repository) -> HeadlessOutcome:
+    async def run(cls, state: AppState, repo: Repository, debug: bool = False) -> HeadlessOutcome:
         if state.config is None:
             return HeadlessNotConfigured()
 
         engine = await anyio.to_thread.run_sync(resolve_engine, None)
+        cls.trace(debug, f"engine={engine}")
         if engine == "claude":
             return HeadlessClaudeEngineBlocked()
 
@@ -74,6 +98,7 @@ class HeadlessRunner:
             Pipeline.discover_new_transcripts, repo
         )
         pending = await anyio.to_thread.run_sync(repo.pending_records)
+        cls.trace(debug, f"transcripts={len(transcripts)} pending={len(pending)}")
         if not transcripts and not pending:
             return HeadlessNothingToDo()
 
@@ -96,18 +121,17 @@ class HeadlessRunner:
             scored = len(records)
 
         pending = await anyio.to_thread.run_sync(repo.pending_records)
-        uploaded = 0
-        if pending:
-            try:
-                await uploader.upload(pending, state, repo)
-            except httpx.HTTPStatusError as e:
-                return HeadlessUploadError(
-                    detail=f"server rejected upload ({e.response.status_code})"
-                )
-            except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as e:
-                return HeadlessUploadError(detail=f"couldn't reach server: {e}")
-            except subprocess.CalledProcessError as e:
-                return HeadlessUploadError(detail=f"signing failed ({e.returncode})")
-            uploaded = len(pending)
+        if not pending:
+            return HeadlessOk(scored=scored, uploaded=0)
 
-        return HeadlessOk(scored=scored, uploaded=uploaded)
+        try:
+            await uploader.upload(pending, state, repo)
+        except (
+            httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException,
+            httpx.NetworkError, subprocess.CalledProcessError,
+        ) as e:
+            if debug:
+                traceback.print_exc(file=sys.stderr)
+            return HeadlessUploadError(detail=cls.upload_error_detail(e))
+
+        return HeadlessOk(scored=scored, uploaded=len(pending))

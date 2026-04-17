@@ -116,7 +116,9 @@ class MyStatCache:
 
     async def refresh(self, contributor_id: str) -> dict | None:
         result = await self.db.query_my_stat(contributor_id)
-        payload = result.model_dump(mode="json") if result else None
+        if result is None:
+            return None
+        payload = result.model_dump(mode="json")
         await self.cache.put(self.key(contributor_id), {"result": payload})
         return payload
 

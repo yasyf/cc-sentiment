@@ -610,6 +610,7 @@ def test_sample_payload_fields_match_real_record_schema():
 
 
 async def test_set_total_renders_eta_when_hardware_estimates(tmp_path: Path, auth_ok):
+    from textual.widgets import Label
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
@@ -620,11 +621,13 @@ async def test_set_total_renders_eta_when_hardware_estimates(tmp_path: Path, aut
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
             app._set_total(1200, "omlx", 0)
-            assert "~2 min" in app.status_text
+            label_text = str(app.query_one("#progress-label", Label).render())
+            assert "00:02:00" in label_text
             assert "Scoring locally on your Mac" in app.status_text
 
 
 async def test_set_total_omits_eta_when_hardware_unknown(tmp_path: Path, auth_ok):
+    from textual.widgets import Label
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
@@ -635,7 +638,8 @@ async def test_set_total_omits_eta_when_hardware_unknown(tmp_path: Path, auth_ok
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
             app._set_total(500, "omlx", 0)
-            assert "~" not in app.status_text
+            label_text = str(app.query_one("#progress-label", Label).render())
+            assert "00:00:00" in label_text
             assert "Scoring locally on your Mac" in app.status_text
 
 
@@ -937,13 +941,15 @@ async def test_offer_stat_share_skipped_when_none(tmp_path: Path, auth_ok):
              new_callable=AsyncMock,
              return_value=None,
          ) as mock_fetch, \
+         patch("cc_sentiment.tui.anyio.sleep", new_callable=AsyncMock), \
          patch.object(CCSentimentApp, "push_screen_wait", new_callable=AsyncMock) as mock_push:
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await app._offer_stat_share()
 
-    mock_fetch.assert_awaited_once()
+    assert mock_fetch.await_count == 3
     for call in mock_push.call_args_list:
         args = call.args
         assert not (args and isinstance(args[0], StatShareScreen))
+    assert "warming up" in app.status_text
