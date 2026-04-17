@@ -10,7 +10,7 @@ from cc_sentiment_server.db import Database
 @pytest.fixture(scope="session")
 def timescaledb():
     container = (
-        PostgresContainer("timescale/timescaledb:latest-pg17", driver=None)
+        PostgresContainer("timescale/timescaledb-ha:pg17-all", driver=None)
         .with_command(
             "postgres -c fsync=off -c synchronous_commit=off -c full_page_writes=off"
         )

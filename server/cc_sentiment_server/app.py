@@ -45,6 +45,10 @@ class MyStatSpawner(Protocol):
     async def __call__(self, contributor_id: str) -> None: ...
 
 
+class RevalidateSpawner(Protocol):
+    async def __call__(self, tag: str) -> None: ...
+
+
 @dataclass
 class DictCache:
     data: dict[str, object] = field(default_factory=dict)
@@ -129,6 +133,7 @@ def create_app(
     data_cache: Cache,
     spawn: RefreshSpawner,
     spawn_my_stat: MyStatSpawner,
+    revalidate: RevalidateSpawner,
     allowed_origins: list[str],
     data_api_token: str = "",
 ) -> FastAPI:
@@ -178,8 +183,8 @@ def create_app(
         await asyncio.gather(
             stats_cache.spawn(StatsCache.DEFAULT_DAYS),
             spawn_my_stat(payload.contributor_id),
-            revalidate_dashboard.spawn.aio("dashboard"),
-            revalidate_dashboard.spawn.aio(f"user:{payload.contributor_id}"),
+            revalidate("dashboard"),
+            revalidate(f"user:{payload.contributor_id}"),
         )
         return UploadResponse(ingested=len(payload.records))
 
@@ -247,8 +252,10 @@ class API:
             await refresh_stats.spawn.aio(days)
         async def spawn_my_stat(contributor_id: str) -> None:
             await refresh_my_stat.spawn.aio(contributor_id)
+        async def revalidate(tag: str) -> None:
+            await revalidate_dashboard.spawn.aio(tag)
         return create_app(
-            self.db, self.verifier, self.data_cache, spawn, spawn_my_stat,
+            self.db, self.verifier, self.data_cache, spawn, spawn_my_stat, revalidate,
             os.environ["ALLOWED_ORIGINS"].split(","),
             os.environ["DATA_API_TOKEN"],
         )
