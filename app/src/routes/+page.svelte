@@ -12,6 +12,7 @@
 	import ContributeCommandInline from '$lib/ContributeCommandInline.svelte';
 	import { sentimentEmoji } from '$lib/chart-theme.js';
 	import { verdictFor } from '$lib/verdict.js';
+	import { describeTrend } from '$lib/trend.js';
 	import type { PageProps } from './$types.js';
 
 	const DISPLAY_TZ = 'America/Los_Angeles';
@@ -51,11 +52,7 @@
 		return ((data.trend.sessions_current - data.trend.sessions_previous) / data.trend.sessions_previous) * 100;
 	});
 
-	const trendDescription = $derived.by(() => {
-		const abs = Math.abs(sentimentDelta);
-		if (abs < 0.1) return 'holding steady';
-		return sentimentDelta > 0 ? `up ${abs.toFixed(1)}` : `down ${abs.toFixed(1)}`;
-	});
+	const trendDescription = $derived(describeTrend(data.trend.sentiment_current, data.trend.sentiment_previous));
 
 	const sessionsTrendDescription = $derived.by(() => {
 		if (sessionsDelta == null) return null;
@@ -135,10 +132,10 @@
 	<title>cc-sentiment</title>
 	<meta name="description" content="{shareDescription ?? `${verdict.text} Average sentiment is ${overallAvg.toFixed(1)}/5 across ${data.total_sessions.toLocaleString()} sessions. Live data scored on-device.`}" />
 	<meta property="og:title" content="cc-sentiment" />
-	<meta property="og:description" content="{shareDescription ?? `${verdict.text} ${overallAvg.toFixed(1)}/5 across ${data.total_sessions.toLocaleString()} sessions. ${trendDescription} vs last week.`}" />
+	<meta property="og:description" content="{shareDescription ?? `${verdict.text} ${overallAvg.toFixed(1)}/5 across ${data.total_sessions.toLocaleString()} sessions. ${trendDescription}.`}" />
 	<meta property="og:image" content="{ogImage}" />
 	<meta name="twitter:title" content="cc-sentiment" />
-	<meta name="twitter:description" content="{shareDescription ?? `${verdict.text} ${overallAvg.toFixed(1)}/5 across ${data.total_sessions.toLocaleString()} sessions. ${trendDescription} vs last week.`}" />
+	<meta name="twitter:description" content="{shareDescription ?? `${verdict.text} ${overallAvg.toFixed(1)}/5 across ${data.total_sessions.toLocaleString()} sessions. ${trendDescription}.`}" />
 </svelte:head>
 
 <div class="min-h-screen bg-bg">
@@ -160,7 +157,7 @@
 				{verdict.text}
 			</h2>
 			<p class="mt-2 text-lg text-text-muted">
-				{overallAvg.toFixed(1)}/5 across {data.trend.sessions_current.toLocaleString()} sessions this week. {trendDescription}.
+				{overallAvg.toFixed(1)}/5 across {data.trend.sessions_current.toLocaleString()} sessions this week, {trendDescription}.
 			</p>
 			<p class="mt-1 max-w-2xl text-sm text-text-dim">
 				An open experiment: does developer sentiment with Claude Code vary by time of day?

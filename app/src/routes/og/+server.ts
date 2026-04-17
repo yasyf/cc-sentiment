@@ -2,6 +2,7 @@ import { ImageResponse } from '@vercel/og';
 import { addCacheTag } from '@vercel/functions';
 import { fetchData } from '$lib/api.js';
 import { verdictFor, type VerdictSeverity } from '$lib/verdict.js';
+import { describeTrend } from '$lib/trend.js';
 import type { RequestHandler } from './$types.js';
 
 const VERDICT_HEX: Record<VerdictSeverity, string> = {
@@ -131,11 +132,7 @@ async function aggregateCard(fetch: typeof globalThis.fetch): Promise<ImageRespo
 	const { text: verdict, severity } = verdictFor(Number(avg));
 	const verdictColor = VERDICT_HEX[severity];
 
-	const sentimentDelta = data.trend.sentiment_current - data.trend.sentiment_previous;
-	const trendAbs = Math.abs(sentimentDelta);
-	const trendText = trendAbs < 0.1
-		? 'holding steady'
-		: sentimentDelta > 0 ? `up ${trendAbs.toFixed(1)} vs last week` : `down ${trendAbs.toFixed(1)} vs last week`;
+	const trendText = describeTrend(data.trend.sentiment_current, data.trend.sentiment_previous);
 
 	const html = {
 		type: 'div',
