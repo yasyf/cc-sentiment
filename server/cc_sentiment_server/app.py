@@ -165,7 +165,7 @@ def create_app(
         return StatusResponse()
 
     @web_app.post("/upload")
-    @limiter.limit("100/minute")
+    @limiter.limit("1000/minute")
     async def upload(request: Request, payload: UploadPayload) -> UploadResponse:
         if not await verifier.verify_signature(
             payload.contributor_type,
