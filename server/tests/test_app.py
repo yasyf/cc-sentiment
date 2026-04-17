@@ -160,6 +160,27 @@ class TestUpload:
         assert response.status_code == 200
         assert response.json()["total_records"] == 1
 
+    @pytest.mark.asyncio
+    async def test_gist_upload_stores_normalized_contributor_id(
+        self, client: httpx.AsyncClient, db: Database
+    ) -> None:
+        payload = {
+            **VALID_PAYLOAD,
+            "contributor_type": "gist",
+            "contributor_id": "octocat/abcdef1234567890abcd",
+        }
+        response = await client.post("/upload", json=payload)
+
+        assert response.status_code == 200
+
+        async with db.pool.connection() as conn:
+            row = await (await conn.execute(
+                "SELECT contributor_id, contributor_type FROM sentiment"
+            )).fetchone()
+
+        assert row[0] == "octocat"
+        assert row[1] == "gist"
+
 
 class TestVerifyEndpoint:
     @pytest.mark.asyncio

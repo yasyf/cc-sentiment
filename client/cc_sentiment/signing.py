@@ -17,6 +17,23 @@ SSH_DIR = Path.home() / ".ssh"
 SSH_KEY_CANDIDATES = ("id_ed25519", "id_rsa")
 NAMESPACE = "cc-sentiment"
 
+CC_SENTIMENT_KEY_DIR = Path.home() / ".cc-sentiment" / "keys"
+GIST_KEY_NAME = "id_ed25519"
+GIST_PUB_FILENAME = "cc-sentiment.pub"
+GIST_README_FILENAME = "README.md"
+GIST_DESCRIPTION = "cc-sentiment public key"
+GIST_README_TEMPLATE = """\
+# cc-sentiment public key
+
+This gist holds the public signing key for [cc-sentiment](https://github.com/yasyf/cc-sentiment),
+a local tool that scores Claude Code conversations and uploads a tiny summary row per conversation.
+
+The server reads this public key from here to verify that uploads came from this GitHub account.
+The matching private key stays on one machine and never leaves it.
+
+If you didn't set this up, you can safely delete this gist.
+"""
+
 
 class SigningBackend(Protocol):
     key_type: Literal["ssh", "gpg"]
@@ -203,6 +220,65 @@ class KeyDiscovery:
             if any(" ".join(gk.split()[:2]) == local_fp for gk in github_keys):
                 return SSHBackend(private_key_path=info.path)
         return None
+
+    @staticmethod
+    def gh_authenticated() -> bool:
+        if not KeyDiscovery.has_tool("gh"):
+            return False
+        result = subprocess.run(
+            ["gh", "auth", "status"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return result.returncode == 0
+
+    @staticmethod
+    def find_gist_keypair() -> Path | None:
+        key = CC_SENTIMENT_KEY_DIR / GIST_KEY_NAME
+        pub = key.with_suffix(key.suffix + ".pub")
+        return key if key.exists() and pub.exists() else None
+
+    @staticmethod
+    def generate_gist_keypair() -> Path:
+        if (existing := KeyDiscovery.find_gist_keypair()) is not None:
+            return existing
+        CC_SENTIMENT_KEY_DIR.mkdir(parents=True, exist_ok=True)
+        path = CC_SENTIMENT_KEY_DIR / GIST_KEY_NAME
+        subprocess.run(
+            ["ssh-keygen", "-t", "ed25519", "-f", str(path), "-N", "", "-C", "cc-sentiment"],
+            check=True, capture_output=True, timeout=10,
+        )
+        return path
+
+    @staticmethod
+    def create_gist(key_path: Path) -> str:
+        pub_text = key_path.with_suffix(key_path.suffix + ".pub").read_text()
+        with tempfile.TemporaryDirectory(prefix="cc-sentiment-gist-") as tmpdir:
+            tmp = Path(tmpdir)
+            pub_file = tmp / GIST_PUB_FILENAME
+            readme_file = tmp / GIST_README_FILENAME
+            pub_file.write_text(pub_text)
+            readme_file.write_text(GIST_README_TEMPLATE)
+            result = subprocess.run(
+                ["gh", "gist", "create", "--public", "-d", GIST_DESCRIPTION, str(pub_file), str(readme_file)],
+                check=True, capture_output=True, text=True, timeout=30,
+            )
+        url = result.stdout.strip().splitlines()[-1].strip()
+        return url.rsplit("/", 1)[-1]
+
+    @staticmethod
+    def find_cc_sentiment_gist_id() -> str | None:
+        if not KeyDiscovery.has_tool("gh"):
+            return None
+        result = subprocess.run(
+            ["gh", "gist", "list", "--limit", "100"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode != 0:
+            return None
+        return next(
+            (cols[0] for line in result.stdout.splitlines() if (cols := line.split("\t")) and len(cols) >= 2 and cols[1] == GIST_DESCRIPTION),
+            None,
+        )
 
     @staticmethod
     def parse_armored_fingerprints(armor: str) -> frozenset[str]:

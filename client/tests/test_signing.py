@@ -231,3 +231,115 @@ class TestKeyGeneration:
         with patch("cc_sentiment.signing.gnupg.GPG") as mock_gpg_cls:
             mock_gpg_cls.return_value.export_keys.return_value = ""
             assert KeyDiscovery.upload_github_gpg_key(key) is False
+
+
+class TestGistKeypair:
+    def test_gh_authenticated_missing_gh(self) -> None:
+        with patch.object(KeyDiscovery, "has_tool", return_value=False):
+            assert KeyDiscovery.gh_authenticated() is False
+
+    def test_gh_authenticated_success(self) -> None:
+        with (
+            patch.object(KeyDiscovery, "has_tool", return_value=True),
+            patch("cc_sentiment.signing.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            assert KeyDiscovery.gh_authenticated() is True
+
+    def test_gh_authenticated_not_logged_in(self) -> None:
+        with (
+            patch.object(KeyDiscovery, "has_tool", return_value=True),
+            patch("cc_sentiment.signing.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=1)
+            assert KeyDiscovery.gh_authenticated() is False
+
+    def test_find_gist_keypair_both_present(self, tmp_path: Path) -> None:
+        key = tmp_path / "id_ed25519"
+        pub = tmp_path / "id_ed25519.pub"
+        key.write_text("private")
+        pub.write_text("ssh-ed25519 AAA cc-sentiment")
+        with patch("cc_sentiment.signing.CC_SENTIMENT_KEY_DIR", tmp_path):
+            assert KeyDiscovery.find_gist_keypair() == key
+
+    def test_find_gist_keypair_missing_pub(self, tmp_path: Path) -> None:
+        (tmp_path / "id_ed25519").write_text("private")
+        with patch("cc_sentiment.signing.CC_SENTIMENT_KEY_DIR", tmp_path):
+            assert KeyDiscovery.find_gist_keypair() is None
+
+    def test_find_gist_keypair_missing_private(self, tmp_path: Path) -> None:
+        (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAA cc-sentiment")
+        with patch("cc_sentiment.signing.CC_SENTIMENT_KEY_DIR", tmp_path):
+            assert KeyDiscovery.find_gist_keypair() is None
+
+    def test_generate_gist_keypair_runs_ssh_keygen(self, tmp_path: Path) -> None:
+        with (
+            patch("cc_sentiment.signing.CC_SENTIMENT_KEY_DIR", tmp_path),
+            patch.object(KeyDiscovery, "find_gist_keypair", return_value=None),
+            patch("cc_sentiment.signing.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            result = KeyDiscovery.generate_gist_keypair()
+
+        assert result == tmp_path / "id_ed25519"
+        call_args = mock_run.call_args[0][0]
+        assert call_args[:3] == ["ssh-keygen", "-t", "ed25519"]
+        assert "-N" in call_args and call_args[call_args.index("-N") + 1] == ""
+        assert "-C" in call_args and call_args[call_args.index("-C") + 1] == "cc-sentiment"
+
+    def test_generate_gist_keypair_skips_regeneration(self, tmp_path: Path) -> None:
+        existing = tmp_path / "id_ed25519"
+        with (
+            patch.object(KeyDiscovery, "find_gist_keypair", return_value=existing),
+            patch("cc_sentiment.signing.subprocess.run") as mock_run,
+        ):
+            result = KeyDiscovery.generate_gist_keypair()
+
+        assert result == existing
+        mock_run.assert_not_called()
+
+    def test_create_gist_writes_files_and_returns_id(self, tmp_path: Path) -> None:
+        key_path = tmp_path / "id_ed25519"
+        pub_path = tmp_path / "id_ed25519.pub"
+        pub_path.write_text("ssh-ed25519 AAAAPUBKEY cc-sentiment")
+
+        with patch("cc_sentiment.signing.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout="https://gist.github.com/octocat/abcdef1234567890abcd\n",
+            )
+            gist_id = KeyDiscovery.create_gist(key_path)
+
+        assert gist_id == "abcdef1234567890abcd"
+        call_args = mock_run.call_args[0][0]
+        assert call_args[:3] == ["gh", "gist", "create"]
+        assert "--public" in call_args
+        assert "-d" in call_args
+        assert call_args[call_args.index("-d") + 1] == "cc-sentiment public key"
+        file_args = [a for a in call_args if a.endswith(("cc-sentiment.pub", "README.md"))]
+        assert len(file_args) == 2
+
+    def test_find_cc_sentiment_gist_id_matches_description(self) -> None:
+        tsv_output = (
+            "abc123def4567890abcd\tnotes\t1 file\tpublic\tupdated\n"
+            "fedcba987654321fedcb\tcc-sentiment public key\t2 files\tpublic\tupdated\n"
+            "1234567890abcdef1234\trandom thing\t1 file\tpublic\tupdated\n"
+        )
+        with (
+            patch.object(KeyDiscovery, "has_tool", return_value=True),
+            patch("cc_sentiment.signing.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0, stdout=tsv_output)
+            assert KeyDiscovery.find_cc_sentiment_gist_id() == "fedcba987654321fedcb"
+
+    def test_find_cc_sentiment_gist_id_no_match(self) -> None:
+        with (
+            patch.object(KeyDiscovery, "has_tool", return_value=True),
+            patch("cc_sentiment.signing.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0, stdout="abc123\tother\t1 file\tpublic\tupdated\n")
+            assert KeyDiscovery.find_cc_sentiment_gist_id() is None
+
+    def test_find_cc_sentiment_gist_id_gh_missing(self) -> None:
+        with patch.object(KeyDiscovery, "has_tool", return_value=False):
+            assert KeyDiscovery.find_cc_sentiment_gist_id() is None

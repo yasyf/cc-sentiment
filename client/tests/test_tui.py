@@ -8,7 +8,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, ContentSwitcher, DataTable, Input, Label
 
-from cc_sentiment.models import AppState, ContributorId, GPGConfig, MyStat, SSHConfig
+from cc_sentiment.models import AppState, ContributorId, GistConfig, GPGConfig, MyStat, SSHConfig
 from cc_sentiment.repo import Repository
 from cc_sentiment.signing import GPGKeyInfo, SSHKeyInfo
 from cc_sentiment.tui import (
@@ -131,7 +131,8 @@ async def test_setup_key_discovery_populates_table(no_auto_setup):
 async def test_setup_no_keys_without_gpg_disables_next(no_auto_setup):
     with patch("cc_sentiment.tui.KeyDiscovery.find_ssh_keys", return_value=()), \
          patch("cc_sentiment.tui.KeyDiscovery.find_gpg_keys", return_value=()), \
-         patch("cc_sentiment.tui.KeyDiscovery.has_tool", return_value=False):
+         patch("cc_sentiment.tui.KeyDiscovery.has_tool", return_value=False), \
+         patch("cc_sentiment.tui.KeyDiscovery.gh_authenticated", return_value=False):
         async with SetupHarness(AppState()).run_test() as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
@@ -140,7 +141,7 @@ async def test_setup_no_keys_without_gpg_disables_next(no_auto_setup):
             await pilot.pause(delay=0.5)
 
             assert screen.query_one("#key-table", DataTable).row_count == 0
-            assert getattr(screen, "_generate_gpg", None) is False
+            assert getattr(screen, "_generation_mode", "unset") is None
 
 
 async def test_setup_remote_check_ssh_found(no_auto_setup):
@@ -262,6 +263,109 @@ async def test_setup_upload_options_with_gh(no_auto_setup):
 
             assert "github-ssh" in screen._upload_actions
             assert screen.query_one("#upload-go", Button).disabled is False
+
+
+async def test_try_existing_gist_returns_config_when_found():
+    from cc_sentiment.tui import AutoSetup, StatusEmitter
+    from textual.widgets import Static
+
+    state = AppState()
+    widget = Static()
+    emit = StatusEmitter(widget=widget)
+    setup = AutoSetup(state, emit)
+
+    with patch("cc_sentiment.tui.KeyDiscovery.find_gist_keypair", return_value=Path("/home/.cc-sentiment/keys/id_ed25519")), \
+         patch("cc_sentiment.tui.KeyDiscovery.gh_authenticated", return_value=True), \
+         patch("cc_sentiment.tui.KeyDiscovery.find_cc_sentiment_gist_id", return_value="abcdef1234567890abcd"):
+        result = await setup.try_existing_gist("octocat")
+
+    assert isinstance(result, GistConfig)
+    assert result.contributor_id == ContributorId("octocat")
+    assert result.gist_id == "abcdef1234567890abcd"
+
+
+async def test_try_existing_gist_returns_none_when_no_local_keypair():
+    from cc_sentiment.tui import AutoSetup, StatusEmitter
+    from textual.widgets import Static
+
+    state = AppState()
+    widget = Static()
+    emit = StatusEmitter(widget=widget)
+    setup = AutoSetup(state, emit)
+
+    with patch("cc_sentiment.tui.KeyDiscovery.find_gist_keypair", return_value=None):
+        assert await setup.try_existing_gist("octocat") is None
+
+
+async def test_try_existing_gist_returns_none_when_gh_not_authed():
+    from cc_sentiment.tui import AutoSetup, StatusEmitter
+    from textual.widgets import Static
+
+    state = AppState()
+    widget = Static()
+    emit = StatusEmitter(widget=widget)
+    setup = AutoSetup(state, emit)
+
+    with patch("cc_sentiment.tui.KeyDiscovery.find_gist_keypair", return_value=Path("/home/.cc-sentiment/keys/id_ed25519")), \
+         patch("cc_sentiment.tui.KeyDiscovery.gh_authenticated", return_value=False):
+        assert await setup.try_existing_gist("octocat") is None
+
+
+async def test_try_existing_gist_returns_none_when_no_gist_found():
+    from cc_sentiment.tui import AutoSetup, StatusEmitter
+    from textual.widgets import Static
+
+    state = AppState()
+    widget = Static()
+    emit = StatusEmitter(widget=widget)
+    setup = AutoSetup(state, emit)
+
+    with patch("cc_sentiment.tui.KeyDiscovery.find_gist_keypair", return_value=Path("/home/.cc-sentiment/keys/id_ed25519")), \
+         patch("cc_sentiment.tui.KeyDiscovery.gh_authenticated", return_value=True), \
+         patch("cc_sentiment.tui.KeyDiscovery.find_cc_sentiment_gist_id", return_value=None):
+        assert await setup.try_existing_gist("octocat") is None
+
+
+async def test_setup_no_keys_with_gh_auth_uses_gist_mode(no_auto_setup):
+    with patch("cc_sentiment.tui.KeyDiscovery.find_ssh_keys", return_value=()), \
+         patch("cc_sentiment.tui.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch("cc_sentiment.tui.KeyDiscovery.gh_authenticated", return_value=True):
+        async with SetupHarness(AppState()).run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.5)
+
+            assert screen._generation_mode == "gist"
+            assert screen.query_one("#discovery-next", Button).disabled is False
+
+
+async def test_generate_gist_key_saves_gist_config(tmp_path: Path, no_auto_setup, auth_ok):
+    state = AppState()
+    state_file = tmp_path / "state.json"
+    key_path = tmp_path / "id_ed25519"
+
+    with patch.object(AppState, "state_path", return_value=state_file), \
+         patch("cc_sentiment.tui.KeyDiscovery.generate_gist_keypair", return_value=key_path), \
+         patch("cc_sentiment.tui.KeyDiscovery.create_gist", return_value="abcdef1234567890abcd"), \
+         patch("cc_sentiment.tui.KeyDiscovery.find_ssh_keys", return_value=()), \
+         patch("cc_sentiment.tui.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch("cc_sentiment.tui.KeyDiscovery.gh_authenticated", return_value=True):
+        async with SetupHarness(state).run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.5)
+
+            await pilot.click("#discovery-next")
+            await pilot.pause(delay=0.5)
+
+            assert isinstance(state.config, GistConfig)
+            assert state.config.contributor_id == ContributorId("testuser")
+            assert state.config.gist_id == "abcdef1234567890abcd"
+            assert state.config.key_path == key_path
 
 
 async def test_setup_upload_options_gpg_shows_openpgp(no_auto_setup):

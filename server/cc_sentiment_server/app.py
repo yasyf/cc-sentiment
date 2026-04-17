@@ -179,12 +179,17 @@ def create_app(
         ):
             return JSONResponse({"detail": "Signature verification failed"}, status_code=401)
 
-        await db.ingest(payload.records, payload.contributor_id, payload.contributor_type)
+        db_contributor_id = (
+            payload.contributor_id.split("/", 1)[0]
+            if payload.contributor_type == "gist"
+            else payload.contributor_id
+        )
+        await db.ingest(payload.records, db_contributor_id, payload.contributor_type)
         await asyncio.gather(
             stats_cache.spawn(StatsCache.DEFAULT_DAYS),
-            spawn_my_stat(payload.contributor_id),
+            spawn_my_stat(db_contributor_id),
             revalidate("dashboard"),
-            revalidate(f"user:{payload.contributor_id}"),
+            revalidate(f"user:{db_contributor_id}"),
         )
         return UploadResponse(ingested=len(payload.records))
 

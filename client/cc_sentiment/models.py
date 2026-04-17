@@ -14,7 +14,7 @@ SentimentScore = NewType("SentimentScore", int)
 PromptVersion = NewType("PromptVersion", str)
 ContributorId = NewType("ContributorId", str)
 
-ContributorType = Literal["github", "gpg"]
+ContributorType = Literal["github", "gpg", "gist"]
 
 PROMPT_VERSION = PromptVersion("v1")
 CLIENT_VERSION = version("cc-sentiment")
@@ -178,8 +178,18 @@ class GPGConfig(BaseModel, frozen=True):
     fpr: str
 
 
+class GistConfig(BaseModel, frozen=True):
+    key_type: Literal["gist"] = "gist"
+    contributor_type: Literal["gist"] = "gist"
+    contributor_id: ContributorId
+    key_path: Path
+    gist_id: str
+
+
 ClientConfig = Annotated[
-    Annotated[SSHConfig, Tag("ssh")] | Annotated[GPGConfig, Tag("gpg")],
+    Annotated[SSHConfig, Tag("ssh")]
+    | Annotated[GPGConfig, Tag("gpg")]
+    | Annotated[GistConfig, Tag("gist")],
     Discriminator(lambda v: v.get("key_type", "ssh") if isinstance(v, dict) else v.key_type),
 ]
 

@@ -52,6 +52,7 @@ from cc_sentiment.models import (
     CLIENT_VERSION,
     AppState,
     ContributorId,
+    GistConfig,
     GPGConfig,
     MyStat,
     SentimentRecord,
@@ -218,6 +219,8 @@ class AutoSetup:
                 return True, username
             if (c := await self.try_github_gpg(username)) and await self.probe_and_save(c):
                 return True, username
+            if (c := await self.try_existing_gist(username)) and await self.probe_and_save(c):
+                return True, username
         for info in await self.find_local_gpg():
             if (c := await self.try_openpgp(info, username)) and await self.probe_and_save(c):
                 return True, username
@@ -281,6 +284,26 @@ class AutoSetup:
             fpr=backend.fpr,
         )
 
+    async def try_existing_gist(self, username: str) -> GistConfig | None:
+        phase = self.emit.begin("Checking for a cc-sentiment gist")
+        key_path = await anyio.to_thread.run_sync(KeyDiscovery.find_gist_keypair)
+        if key_path is None:
+            phase.skip("No local cc-sentiment keypair")
+            return None
+        if not await anyio.to_thread.run_sync(KeyDiscovery.gh_authenticated):
+            phase.skip("gh CLI not authenticated")
+            return None
+        gist_id = await anyio.to_thread.run_sync(KeyDiscovery.find_cc_sentiment_gist_id)
+        if gist_id is None:
+            phase.skip("No cc-sentiment gist on this account")
+            return None
+        phase.ok(f"Found gist {gist_id[:7]}")
+        return GistConfig(
+            contributor_id=ContributorId(username),
+            key_path=key_path,
+            gist_id=gist_id,
+        )
+
     async def find_local_gpg(self) -> tuple[GPGKeyInfo, ...]:
         phase = self.emit.begin("Scanning local GPG keyring")
         keys = await anyio.to_thread.run_sync(KeyDiscovery.find_gpg_keys)
@@ -312,7 +335,7 @@ class AutoSetup:
             else GPGConfig(contributor_type="gpg", contributor_id=ContributorId(info.fpr), fpr=info.fpr)
         )
 
-    async def probe_and_save(self, config: SSHConfig | GPGConfig) -> bool:
+    async def probe_and_save(self, config: SSHConfig | GPGConfig | GistConfig) -> bool:
         from cc_sentiment.upload import AuthOk, Uploader
         phase = self.emit.begin("Checking your key with the server")
         result = await Uploader().probe_credentials(config)
@@ -560,7 +583,7 @@ class StatShareScreen(Screen[None]):
     @property
     def share_url(self) -> str:
         params = {"t": self.stat.text} | (
-            {"u": self.contributor_id} if self.contributor_type == "github" else {}
+            {"u": self.contributor_id} if self.contributor_type in ("github", "gist") else {}
         )
         return f"{CCSentimentApp.DASHBOARD_URL}/?{urlencode(params)}"
 
@@ -813,11 +836,20 @@ class SetupScreen(Screen[bool]):
             yield Button("Contribute my stats", id="done-btn", variant="primary")
 
     def _populate_done_info(self) -> None:
-        self.query_one("#done-identify", Static).update(
-            "[b]How we know it's you:[/] each upload is signed locally with "
-            "your private key. The dashboard checks the signature against "
-            "your public key. No account, no password, no permissions."
-        )
+        identify = self.query_one("#done-identify", Static)
+        match self.state.config:
+            case GistConfig(gist_id=g):
+                identify.update(
+                    "[b]How we know it's you:[/] each upload is signed with a cc-sentiment "
+                    f"key stored only on this machine. Its public half lives in gist {g[:7]} "
+                    "on your GitHub; the dashboard reads it from there to verify signatures."
+                )
+            case _:
+                identify.update(
+                    "[b]How we know it's you:[/] each upload is signed locally with "
+                    "your private key. The dashboard checks the signature against "
+                    "your public key. No account, no password, no permissions."
+                )
         process = self.query_one("#done-process", Static)
         match default_engine():
             case "omlx":
@@ -890,6 +922,8 @@ class SetupScreen(Screen[bool]):
                 summary.update(f"Signed in as [b]{cid}[/] using SSH key [dim]{p.name}[/]")
             case GPGConfig(contributor_id=cid, fpr=f):
                 summary.update(f"Signed in as [b]{cid}[/] using GPG [dim]{f[-8:]}[/]")
+            case GistConfig(contributor_id=cid, gist_id=g):
+                summary.update(f"Signed in as [b]{cid}[/] using cc-sentiment gist [dim]{g[:7]}[/]")
         self.query_one("#done-verify", Label).update(
             "[green]You're set up. Ready to upload.[/]"
         )
@@ -957,19 +991,26 @@ class SetupScreen(Screen[bool]):
 
         if not all_keys:
             status.update("No signing keys found on your machine.")
-            if KeyDiscovery.has_tool("gpg"):
+            if self.username and KeyDiscovery.gh_authenticated():
+                no_keys.update(
+                    "We can make a small signing key just for cc-sentiment and save its "
+                    "public half as a gist on your GitHub. Press Next."
+                )
+                self.query_one("#discovery-next", Button).disabled = False
+                self._generation_mode = "gist"
+            elif KeyDiscovery.has_tool("gpg"):
                 no_keys.update("No problem. We'll create one for you. Just press Next.")
                 self.query_one("#discovery-next", Button).disabled = False
-                self._generate_gpg = True
+                self._generation_mode = "gpg"
             elif not self.username:
-                no_keys.update("Go back and enter a GitHub username to use SSH keys instead, or install gpg (brew install gnupg) to use GPG.")
-                self._generate_gpg = False
+                no_keys.update("Go back and enter a GitHub username, or install gpg (brew install gnupg) to use GPG.")
+                self._generation_mode = None
             else:
-                no_keys.update("You can create an SSH key by running: ssh-keygen -t ed25519")
-                self._generate_gpg = False
+                no_keys.update("Install the GitHub CLI (brew install gh) to save a signing key as a gist, or run: ssh-keygen -t ed25519.")
+                self._generation_mode = None
             return
 
-        self._generate_gpg = False
+        self._generation_mode = None
         table.display = True
         status.update(f"Found {len(all_keys)} key{'s' if len(all_keys) != 1 else ''} on your machine:")
 
@@ -1001,9 +1042,13 @@ class SetupScreen(Screen[bool]):
 
     @on(Button.Pressed, "#discovery-next")
     def on_discovery_next(self) -> None:
-        if getattr(self, "_generate_gpg", False):
-            self.generate_gpg_key()
-            return
+        match getattr(self, "_generation_mode", None):
+            case "gist":
+                self.generate_gist_key()
+                return
+            case "gpg":
+                self.generate_gpg_key()
+                return
         radio = self.query_one("#key-select", RadioSet)
         idx = radio.pressed_index if radio.pressed_index >= 0 else 0
         self.selected_key = self._discovered_keys[idx]
@@ -1045,6 +1090,33 @@ Expire-Date: 0
         self.selected_key = new_key
         self.app.call_from_thread(status.update, f"[green]Generated key: {new_key.fpr[-8:]}[/]")
         self.app.call_from_thread(self._go_to_remote)
+
+    @work(thread=True)
+    def generate_gist_key(self) -> None:
+        status = self.query_one("#discovery-status", Label)
+        self.app.call_from_thread(status.update, "Creating a signing key and saving it as a gist...")
+        try:
+            key_path = KeyDiscovery.generate_gist_keypair()
+            gist_id = KeyDiscovery.create_gist(key_path)
+        except subprocess.CalledProcessError as e:
+            err = (e.stderr.decode() if isinstance(e.stderr, bytes) else e.stderr or str(e)).strip()
+            self.app.call_from_thread(status.update, f"[red]Couldn't create the gist: {err}[/]")
+            return
+        self.state.config = GistConfig(
+            contributor_id=ContributorId(self.username),
+            key_path=key_path,
+            gist_id=gist_id,
+        )
+        self.app.call_from_thread(status.update, f"[green]Saved key to gist {gist_id[:7]}[/]")
+        self.app.call_from_thread(self._finish_gist, gist_id)
+
+    def _finish_gist(self, gist_id: str) -> None:
+        self.query_one("#done-summary", Label).update(
+            f"Signed in as [b]{self.username}[/] using cc-sentiment gist [dim]{gist_id[:7]}[/]"
+        )
+        self._populate_done_info()
+        self.query_one(ContentSwitcher).current = "step-done"
+        self.verify_server_config()
 
     def _go_to_remote(self) -> None:
         self.query_one(ContentSwitcher).current = "step-remote"

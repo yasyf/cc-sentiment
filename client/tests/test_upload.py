@@ -10,6 +10,8 @@ import pytest
 from cc_sentiment.models import (
     AppState,
     ContributorId,
+    GistConfig,
+    GPGConfig,
     SessionId,
     SSHConfig,
 )
@@ -172,3 +174,28 @@ class TestProbeCredentials:
                 return await uploader.probe_credentials(config)
 
         assert isinstance(anyio.run(run), AuthUnreachable)
+
+
+class TestWireContributorId:
+    def test_gist_packs_username_and_gist_id(self) -> None:
+        config = GistConfig(
+            contributor_id=ContributorId("octocat"),
+            key_path=Path("/tmp/id_ed25519"),
+            gist_id="abcdef1234567890abcd",
+        )
+        assert Uploader.wire_contributor_id(config) == "octocat/abcdef1234567890abcd"
+
+    def test_ssh_returns_plain_contributor_id(self) -> None:
+        config = SSHConfig(
+            contributor_id=ContributorId("octocat"),
+            key_path=Path("/home/.ssh/id_ed25519"),
+        )
+        assert Uploader.wire_contributor_id(config) == "octocat"
+
+    def test_gpg_returns_plain_contributor_id(self) -> None:
+        config = GPGConfig(
+            contributor_type="github",
+            contributor_id=ContributorId("octocat"),
+            fpr="ABCDEF1234567890",
+        )
+        assert Uploader.wire_contributor_id(config) == "octocat"

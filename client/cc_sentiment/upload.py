@@ -9,6 +9,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from cc_sentiment.models import (
     AppState,
+    GistConfig,
     GPGConfig,
     MyStat,
     SentimentRecord,
@@ -67,15 +68,25 @@ class Uploader:
         self.server_url = server_url
 
     @staticmethod
-    def backend_from_config(config: SSHConfig | GPGConfig) -> SigningBackend:
+    def backend_from_config(config: SSHConfig | GPGConfig | GistConfig) -> SigningBackend:
         match config:
             case SSHConfig(key_path=p):
                 return SSHBackend(private_key_path=p)
             case GPGConfig(fpr=f):
                 return GPGBackend(fpr=f)
+            case GistConfig(key_path=p):
+                return SSHBackend(private_key_path=p)
+
+    @staticmethod
+    def wire_contributor_id(config: SSHConfig | GPGConfig | GistConfig) -> str:
+        match config:
+            case GistConfig(contributor_id=u, gist_id=g):
+                return f"{u}/{g}"
+            case _:
+                return config.contributor_id
 
     @_retry
-    async def _verify_credentials(self, config: SSHConfig | GPGConfig) -> None:
+    async def _verify_credentials(self, config: SSHConfig | GPGConfig | GistConfig) -> None:
         backend = self.backend_from_config(config)
         signature = await anyio.to_thread.run_sync(PayloadSigner.sign, TEST_PAYLOAD, backend)
         async with httpx.AsyncClient() as client:
@@ -83,14 +94,14 @@ class Uploader:
                 f"{self.server_url}/verify",
                 json={
                     "contributor_type": config.contributor_type,
-                    "contributor_id": config.contributor_id,
+                    "contributor_id": self.wire_contributor_id(config),
                     "signature": signature,
                     "test_payload": TEST_PAYLOAD,
                 },
                 timeout=15.0,
             )).raise_for_status()
 
-    async def probe_credentials(self, config: SSHConfig | GPGConfig) -> AuthResult:
+    async def probe_credentials(self, config: SSHConfig | GPGConfig | GistConfig) -> AuthResult:
         try:
             await self._verify_credentials(config)
         except httpx.HTTPStatusError as e:
@@ -115,7 +126,7 @@ class Uploader:
         signature = await anyio.to_thread.run_sync(PayloadSigner.sign_records, records, backend)
         payload = UploadPayload(
             contributor_type=state.config.contributor_type,
-            contributor_id=state.config.contributor_id,
+            contributor_id=self.wire_contributor_id(state.config),
             signature=signature,
             records=tuple(records),
         )
@@ -140,7 +151,7 @@ class Uploader:
             repo.mark_sessions_uploaded, {r.conversation_id for r in records}
         )
 
-    async def fetch_my_stat(self, config: SSHConfig | GPGConfig) -> MyStat | None:
+    async def fetch_my_stat(self, config: SSHConfig | GPGConfig | GistConfig) -> MyStat | None:
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{self.server_url}/my-stats",

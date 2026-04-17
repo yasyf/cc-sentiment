@@ -8,6 +8,7 @@ from cc_sentiment.models import (
     BucketIndex,
     CLIENT_VERSION,
     ContributorId,
+    GistConfig,
     GPGConfig,
     PROMPT_VERSION,
     SentimentRecord,
@@ -118,6 +119,36 @@ class TestClientConfig:
             loaded = AppState.load()
         assert isinstance(loaded.config, GPGConfig)
         assert loaded.config.fpr == "ABCDEF1234567890"
+
+    def test_gist_config_serialization(self) -> None:
+        config = GistConfig(
+            contributor_id=ContributorId("octocat"),
+            key_path=Path("/home/.cc-sentiment/keys/id_ed25519"),
+            gist_id="abcdef1234567890abcd",
+        )
+        data = config.model_dump(mode="json")
+        assert data["key_type"] == "gist"
+        assert data["contributor_type"] == "gist"
+        assert data["gist_id"] == "abcdef1234567890abcd"
+        restored = GistConfig.model_validate(data)
+        assert restored.gist_id == "abcdef1234567890abcd"
+        assert restored.key_path == Path("/home/.cc-sentiment/keys/id_ed25519")
+
+    def test_state_roundtrip_with_gist_config(self, tmp_path: Path) -> None:
+        state_file = tmp_path / "state.json"
+        state = AppState(
+            config=GistConfig(
+                contributor_id=ContributorId("octocat"),
+                key_path=Path("/home/.cc-sentiment/keys/id_ed25519"),
+                gist_id="abcdef1234567890abcd",
+            ),
+        )
+        with patch.object(AppState, "state_path", return_value=state_file):
+            state.save()
+            loaded = AppState.load()
+        assert isinstance(loaded.config, GistConfig)
+        assert loaded.config.gist_id == "abcdef1234567890abcd"
+        assert loaded.config.contributor_id == ContributorId("octocat")
 
 
 class TestNewTypes:

@@ -44,7 +44,7 @@ class SentimentRecord(BaseModel):
 class UploadPayload(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    contributor_type: Literal["github", "gpg"]
+    contributor_type: Literal["github", "gpg", "gist"]
     contributor_id: str = Field(min_length=1)
     signature: str = Field(min_length=1)
     records: list[SentimentRecord] = Field(min_length=1, max_length=10_000)
@@ -60,7 +60,7 @@ class UploadResponse(BaseModel):
 class VerifyRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    contributor_type: Literal["github", "gpg"]
+    contributor_type: Literal["github", "gpg", "gist"]
     contributor_id: str = Field(min_length=1)
     signature: str = Field(min_length=1)
     test_payload: str = Field(min_length=1)

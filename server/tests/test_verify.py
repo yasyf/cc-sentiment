@@ -101,7 +101,21 @@ class TestContributorTypeRouting:
     @pytest.mark.asyncio
     async def test_unknown_contributor_type_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown contributor type"):
-            await Verifier().verify_signature("unknown", "user", "{}", "sig")
+            await Verifier().verify_signature("twitter", "user", "{}", "sig")
+
+    @pytest.mark.asyncio
+    async def test_gist_dispatches_to_verify_gist(self) -> None:
+        verifier = Verifier()
+        verifier.verify_gist = AsyncMock(return_value=True)
+
+        result = await verifier.verify_signature(
+            "gist", "octocat/abcdef1234567890abcd", '{"test":1}', "sig"
+        )
+
+        assert result is True
+        verifier.verify_gist.assert_called_once_with(
+            "octocat/abcdef1234567890abcd", '{"test":1}', "sig"
+        )
 
     @pytest.mark.asyncio
     async def test_unknown_signature_format_raises(self) -> None:
@@ -268,3 +282,178 @@ class TestVerifyWithSSHKey:
 
         kwargs = mock_run.call_args.kwargs
         assert "shell" not in kwargs or not kwargs["shell"]
+
+
+def _mock_httpx_client(response: MagicMock) -> MagicMock:
+    client = AsyncMock()
+    client.get.return_value = response
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    return client
+
+
+class TestFetchGist:
+    @pytest.mark.asyncio
+    async def test_returns_parsed_dict(self) -> None:
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json = MagicMock(return_value={"owner": {"login": "octocat"}, "description": "cc-sentiment public key"})
+
+        with patch("cc_sentiment_server.verify.httpx.AsyncClient", return_value=_mock_httpx_client(mock_response)), \
+             patch.dict("os.environ", {}, clear=False):
+            result = await Verifier().fetch_gist("abcdef1234567890abcd")
+
+        assert result["owner"]["login"] == "octocat"
+
+    @pytest.mark.asyncio
+    async def test_404_raises_value_error(self) -> None:
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+
+        with patch("cc_sentiment_server.verify.httpx.AsyncClient", return_value=_mock_httpx_client(mock_response)):
+            with pytest.raises(ValueError, match="Gist not found"):
+                await Verifier().fetch_gist("abcdef1234567890abcd")
+
+    @pytest.mark.asyncio
+    async def test_includes_auth_header_when_token_set(self) -> None:
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json = MagicMock(return_value={})
+
+        client = _mock_httpx_client(mock_response)
+        with patch("cc_sentiment_server.verify.httpx.AsyncClient", return_value=client), \
+             patch.dict("os.environ", {"GITHUB_TOKEN": "ghp_testtoken"}):
+            await Verifier().fetch_gist("abcdef1234567890abcd")
+
+        call_kwargs = client.get.call_args.kwargs
+        assert call_kwargs["headers"] == {"Authorization": "Bearer ghp_testtoken"}
+
+    @pytest.mark.asyncio
+    async def test_no_auth_header_when_token_absent(self) -> None:
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json = MagicMock(return_value={})
+
+        client = _mock_httpx_client(mock_response)
+        env = {k: v for k, v in __import__("os").environ.items() if k != "GITHUB_TOKEN"}
+        with patch("cc_sentiment_server.verify.httpx.AsyncClient", return_value=client), \
+             patch.dict("os.environ", env, clear=True):
+            await Verifier().fetch_gist("abcdef1234567890abcd")
+
+        assert client.get.call_args.kwargs["headers"] == {}
+
+
+class TestFetchGistPubkey:
+    @pytest.mark.asyncio
+    async def test_owner_mismatch_raises(self) -> None:
+        verifier = Verifier()
+        verifier.fetch_gist = AsyncMock(return_value={
+            "owner": {"login": "someone-else"},
+            "description": "cc-sentiment public key",
+            "files": {"cc-sentiment.pub": {"content": "ssh-ed25519 AAAA cc-sentiment"}},
+        })
+        with pytest.raises(ValueError, match="not owned by"):
+            await verifier.fetch_gist_pubkey("abcdef1234567890abcd", "octocat")
+
+    @pytest.mark.asyncio
+    async def test_description_mismatch_raises(self) -> None:
+        verifier = Verifier()
+        verifier.fetch_gist = AsyncMock(return_value={
+            "owner": {"login": "octocat"},
+            "description": "My notes",
+            "files": {"cc-sentiment.pub": {"content": "ssh-ed25519 AAAA cc-sentiment"}},
+        })
+        with pytest.raises(ValueError, match="not a cc-sentiment gist"):
+            await verifier.fetch_gist_pubkey("abcdef1234567890abcd", "octocat")
+
+    @pytest.mark.asyncio
+    async def test_happy_path_returns_stripped_pubkey(self) -> None:
+        verifier = Verifier()
+        verifier.fetch_gist = AsyncMock(return_value={
+            "owner": {"login": "octocat"},
+            "description": "cc-sentiment public key",
+            "files": {"cc-sentiment.pub": {"content": "  ssh-ed25519 AAAAKEY cc-sentiment  \n"}},
+        })
+        pub = await verifier.fetch_gist_pubkey("abcdef1234567890abcd", "octocat")
+        assert pub == "ssh-ed25519 AAAAKEY cc-sentiment"
+
+
+class TestGistVerification:
+    @pytest.mark.asyncio
+    async def test_missing_slash_raises(self) -> None:
+        with pytest.raises(ValueError, match="Invalid gist contributor id"):
+            await Verifier().verify_gist("octocat", "{}", "sig")
+
+    @pytest.mark.asyncio
+    async def test_invalid_username_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Invalid GitHub username"):
+            await Verifier().verify_gist("bad user/abcdef1234567890abcd", "{}", "sig")
+
+    @pytest.mark.asyncio
+    async def test_invalid_gist_id_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Invalid gist id"):
+            await Verifier().verify_gist("octocat/not-hex-zzz", "{}", "sig")
+
+    @pytest.mark.asyncio
+    async def test_success_when_cached_key_verifies(self) -> None:
+        verifier = Verifier()
+        verifier.fetch_gist_pubkey = AsyncMock(return_value="ssh-ed25519 AAAA cc-sentiment")
+
+        with patch.object(verifier, "_verify_with_ssh_key", return_value=True):
+            result = await verifier.verify_gist("octocat/abcdef1234567890abcd", "{}", "sig")
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_failure_when_key_does_not_verify(self) -> None:
+        verifier = Verifier()
+        verifier.fetch_gist_pubkey = AsyncMock(return_value="ssh-ed25519 AAAA cc-sentiment")
+
+        with patch.object(verifier, "_verify_with_ssh_key", return_value=False):
+            result = await verifier.verify_gist("octocat/abcdef1234567890abcd", "{}", "sig")
+
+        assert result is False
+
+
+class TestGistKeyCache:
+    @pytest.mark.asyncio
+    async def test_populates_cache_on_miss(self) -> None:
+        cache = DictKeyCache()
+        verifier = Verifier(key_cache=cache)
+        verifier.fetch_gist_pubkey = AsyncMock(return_value="ssh-ed25519 KEY1 cc-sentiment")
+
+        with patch.object(verifier, "_verify_with_ssh_key", return_value=True):
+            await verifier.verify_gist("octocat/abcdef1234567890abcd", "{}", "sig")
+
+        assert cache.d["gist:abcdef1234567890abcd"] == "ssh-ed25519 KEY1 cc-sentiment"
+
+    @pytest.mark.asyncio
+    async def test_uses_cached_key(self) -> None:
+        cache = DictKeyCache()
+        cache.d["gist:abcdef1234567890abcd"] = "ssh-ed25519 CACHED cc-sentiment"
+        verifier = Verifier(key_cache=cache)
+        verifier.fetch_gist_pubkey = AsyncMock()
+
+        with patch.object(verifier, "_verify_with_ssh_key", return_value=True):
+            await verifier.verify_gist("octocat/abcdef1234567890abcd", "{}", "sig")
+
+        verifier.fetch_gist_pubkey.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_refetches_on_mismatch(self) -> None:
+        cache = DictKeyCache()
+        cache.d["gist:abcdef1234567890abcd"] = "ssh-ed25519 OLD cc-sentiment"
+        verifier = Verifier(key_cache=cache)
+        verifier.fetch_gist_pubkey = AsyncMock(return_value="ssh-ed25519 NEW cc-sentiment")
+
+        def verify_key(username, key, payload, sig):
+            return key == "ssh-ed25519 NEW cc-sentiment"
+
+        with patch.object(verifier, "_verify_with_ssh_key", side_effect=verify_key):
+            result = await verifier.verify_gist("octocat/abcdef1234567890abcd", "{}", "sig")
+
+        assert result is True
+        assert cache.d["gist:abcdef1234567890abcd"] == "ssh-ed25519 NEW cc-sentiment"

@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS sentiment (
     time TIMESTAMPTZ NOT NULL,
     conversation_id TEXT NOT NULL,
     bucket_index SMALLINT NOT NULL,
-    contributor_type TEXT NOT NULL CHECK(contributor_type IN ('github', 'gpg')),
+    contributor_type TEXT NOT NULL CHECK(contributor_type IN ('github', 'gpg', 'gist')),
     contributor_id TEXT NOT NULL,
     sentiment_score SMALLINT NOT NULL CHECK(sentiment_score BETWEEN 1 AND 5),
     prompt_version TEXT NOT NULL,
