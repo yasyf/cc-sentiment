@@ -20,14 +20,14 @@
 	});
 </script>
 
-<p class="mt-1 text-sm text-text-dim">
+<p class="mt-2 text-sm text-text-dim">
 	Add your data now:
 	<button
 		type="button"
 		onclick={copy}
 		title={copied ? 'Copied!' : 'Click to copy'}
 		aria-label={copied ? 'Copied' : `Copy command: ${COPY_CMD}`}
-		class="cursor-pointer select-none rounded font-mono text-text-secondary transition-colors hover:text-text focus-visible:outline focus-visible:outline-1 focus-visible:outline-border"
+		class="cursor-pointer select-none rounded font-mono text-[0.9em] text-text-muted align-baseline transition-colors hover:text-text focus-visible:outline focus-visible:outline-1 focus-visible:outline-border"
 	>$ {COPY_CMD}</button>
-	{#if copied}<span class="ml-1">copied</span>{/if}
+	{#if copied}<span class="ml-1 text-xs">copied</span>{/if}
 </p>
