@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import re
 import shutil
 import subprocess
 import tempfile
@@ -405,7 +406,13 @@ class SpinnerLine(Static):
 class EngineBootView:
     MAX_SNIPPET_CHARS: ClassVar[int] = 60
     SNIPPET_RATE_LIMIT: ClassVar[float] = 2.5
-    SNIPPET_WEIGHTS: ClassVar[dict[int, float]] = {1: 0.6, 2: 0.35, 3: 0.1, 4: 0.35, 5: 0.6}
+    SNIPPET_WEIGHTS: ClassVar[dict[int, float]] = {1: 0.7, 2: 0.5, 3: 0.02, 4: 0.5, 5: 0.7}
+    SNIPPET_PATTERNS: ClassVar[tuple[tuple[re.Pattern[str], str], ...]] = (
+        (re.compile(r"\b(not working|doesn't work|doesn't|didn't|don't|broken|still|again|wrong|fails?|failing|error|can't|cannot|stuck|confused|why|nope|no that's)\b", re.I), "red"),
+        (re.compile(r"\b(thanks?|perfect|great|works?|nice|awesome|exactly|yes|yep|got it|beautiful|love|finally)\b", re.I), "green"),
+        (re.compile(r"\b(fix|check|run|add|remove|update|show|find|make|replace|rename|move|delete|rewrite|refactor|test|debug|use|set|create)\b", re.I), "yellow"),
+        (re.compile(r"(\b[\w.-]+\.(py|ts|tsx|js|jsx|md|json|yml|yaml|toml|rs|go|sh|sql)\b|\b[a-z][a-z0-9]*_[a-z0-9_]+\b|\b[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*\b|\b\w+\(\)|(?:/|\./)[\w./-]+)"), "cyan"),
+    )
     WITTY_COMMENTS: ClassVar[dict[int, tuple[str, ...]]] = {
         1: ("oof", "yikes", "time to take a walk", "we've all been there", "send help", "cursed"),
         2: ("mood", "same energy", "try again later", "nope nope nope", "sigh", "bargaining stage"),
@@ -457,12 +464,26 @@ class EngineBootView:
         comment = random.choice(self.WITTY_COMMENTS[score])
         truncated = snippet if len(snippet) <= self.MAX_SNIPPET_CHARS else snippet[:self.MAX_SNIPPET_CHARS - 1] + "…"
         self.lines.append(Text.assemble(
-            f"{ScoreBar.ICONS[score]} {score}  ",
-            f'"{truncated}"',
-            "  ",
+            f"{ScoreBar.ICONS[score]} {score}  \"",
+            self.highlight_snippet(truncated),
+            "\"  ",
             (comment, "dim"),
         ))
         self.log.update(Text("\n").join(self.lines))
+
+    @classmethod
+    def highlight_snippet(cls, snippet: str) -> Text:
+        text = Text(snippet)
+        claimed = [False] * len(snippet)
+        for pattern, color in cls.SNIPPET_PATTERNS:
+            for m in pattern.finditer(snippet):
+                start, end = m.start(), m.end()
+                if any(claimed[start:end]):
+                    continue
+                text.stylize(color, start, end)
+                for i in range(start, end):
+                    claimed[i] = True
+        return text
 
 
 class ScoreBar(Static):
@@ -491,10 +512,11 @@ class ScoreBar(Static):
 
 class HourlyChart(Static):
     DEFAULT_CSS = """
-    HourlyChart { height: 2; }
+    HourlyChart { height: 7; }
     """
 
-    BLOCKS: ClassVar[str] = "▁▂▃▄▅▆▇█"
+    COLORS: ClassVar[dict[int, str]] = {1: "red", 2: "dark_orange", 3: "yellow", 4: "green", 5: "cyan"}
+    Y_TICKS: ClassVar[dict[int, str]] = {5: "😄", 4: "🙂", 3: "😐", 2: "😕", 1: "😡"}
     X_LABELS: ClassVar[dict[int, str]] = {0: "12a", 6: "6a", 12: "12p", 18: "6p", 23: "11p"}
 
     def update_chart(self, records: list[SentimentRecord]) -> None:
@@ -505,27 +527,52 @@ class HourlyChart(Static):
             counts[h] += 1
             if int(r.sentiment_score) <= 2:
                 frustrated[h] += 1
-        if not any(counts):
+
+        max_f = max(frustrated)
+        rows: list[int | None] = [
+            None if counts[h] == 0
+            else 5 if frustrated[h] == 0
+            else max(1, 5 - round(4 * frustrated[h] / max_f))
+            for h in range(24)
+        ]
+
+        if all(r is None for r in rows):
             self.update("[dim]no data yet[/]")
             return
 
-        max_f = max(frustrated) or 1
-        cells: list[str] = []
-        for h in range(24):
-            if counts[h] == 0:
-                cells.append(" ")
-            elif frustrated[h] == 0:
-                cells.append("[dim]·[/]")
-            else:
-                block = self.BLOCKS[min(7, int(frustrated[h] / max_f * 7.99))]
-                cells.append(f"[red]{block}[/]")
+        lines: list[str] = []
+        for row_score in range(5, 0, -1):
+            tick = self.Y_TICKS[row_score]
+            cells: list[str] = []
+            for h in range(24):
+                if rows[h] == row_score:
+                    cells.append(f"[{self.COLORS[row_score]}]●[/]")
+                elif self._on_line_segment(h, row_score, rows):
+                    cells.append("[dim]│[/]")
+                else:
+                    cells.append(" ")
+            lines.append(f"{tick} " + "".join(cells))
 
+        lines.append("   " + "─" * 24)
         axis_buf = list(" " * 24)
         for h, lbl in self.X_LABELS.items():
             for i, ch in enumerate(lbl):
                 if h + i < 24:
                     axis_buf[h + i] = ch
-        self.update("".join(cells) + "\n" + "".join(axis_buf).rstrip())
+        lines.append("   " + "".join(axis_buf).rstrip())
+        self.update("\n".join(lines))
+
+    @staticmethod
+    def _on_line_segment(h: int, row_score: int, rows: list[int | None]) -> bool:
+        if rows[h] is not None:
+            return False
+        prev_h = next((i for i in range(h - 1, -1, -1) if rows[i] is not None), None)
+        next_h = next((i for i in range(h + 1, 24) if rows[i] is not None), None)
+        if prev_h is None or next_h is None:
+            return False
+        prev_row, next_row = rows[prev_h], rows[next_h]
+        assert prev_row is not None and next_row is not None
+        return min(prev_row, next_row) < row_score < max(prev_row, next_row)
 
 
 class BootingScreen(Screen[None]):

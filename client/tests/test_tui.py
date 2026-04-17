@@ -1007,7 +1007,7 @@ class ChartHarness(App[None]):
         yield HourlyChart(id="chart")
 
 
-async def test_hourly_chart_renders_sparkline_and_axis():
+async def test_hourly_chart_renders_dot_and_line_grid():
     from datetime import datetime, timezone
 
     records = [
@@ -1021,11 +1021,15 @@ async def test_hourly_chart_renders_sparkline_and_axis():
         await pilot.pause()
         text = str(chart.content)
         lines = text.split("\n")
-        assert len(lines) == 2
-        assert any(block in lines[0] for block in HourlyChart.BLOCKS)
-        assert "12a" in lines[1]
-        assert "6a" in lines[1]
-        assert "12p" in lines[1]
+        assert len(lines) == 7
+        for tick in HourlyChart.Y_TICKS.values():
+            assert any(line.startswith(tick) for line in lines[:5])
+        assert "─" * 24 in lines[5]
+        assert "12a" in lines[6]
+        assert "6a" in lines[6]
+        assert "12p" in lines[6]
+        assert "[red]●[/]" in lines[4]
+        assert "[cyan]●[/]" in lines[0]
 
 
 async def test_hourly_chart_scales_frustration_relative_to_max():
@@ -1041,9 +1045,10 @@ async def test_hourly_chart_scales_frustration_relative_to_max():
         chart = pilot.app.query_one("#chart", HourlyChart)
         chart.update_chart(records)
         await pilot.pause()
-        bar = str(chart.content).split("\n")[0]
-        assert "[red]" in bar
-        assert "[dim]·[/]" in bar
+        lines = str(chart.content).split("\n")
+        assert "[red]●[/]" in lines[4]
+        assert "[yellow]●[/]" in lines[2]
+        assert "[cyan]●[/]" in lines[0]
 
 
 async def test_hourly_chart_empty_records():
