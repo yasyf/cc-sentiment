@@ -36,6 +36,9 @@ from cc_sentiment.upload import (
     AuthServerError,
     AuthUnauthorized,
     AuthUnreachable,
+    UploadPool,
+    UploadProgress,
+    Uploader,
 )
 from tests.helpers import make_record
 
@@ -728,7 +731,7 @@ async def test_set_total_renders_eta_when_hardware_estimates(tmp_path: Path, aut
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
-            app._set_total(1200, "omlx", 0)
+            app._begin_scoring(1200, "omlx", 0)
             label_text = str(app.query_one("#progress-label", Label).render())
             assert "00:02:00" in label_text
             assert "Scoring locally on your Mac" in app.status_text
@@ -745,7 +748,7 @@ async def test_set_total_omits_eta_when_hardware_unknown(tmp_path: Path, auth_ok
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
-            app._set_total(500, "omlx", 0)
+            app._begin_scoring(500, "omlx", 0)
             label_text = str(app.query_one("#progress-label", Label).render())
             assert "00:00:00" in label_text
             assert "Scoring locally on your Mac" in app.status_text
@@ -760,7 +763,7 @@ async def test_add_buckets_updates_progress(tmp_path: Path, auth_ok):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
-            app._set_total(100, "omlx", 0)
+            app._begin_scoring(100, "omlx", 0)
             app._add_buckets(5)
             app._add_buckets(3)
             assert app.scored == 8
@@ -906,117 +909,97 @@ async def test_rescan_confirm_restores_previous_stage_on_cancel(tmp_path: Path, 
             assert app.stage == prev
 
 
-async def test_upload_worker_retries_transient_network_errors(tmp_path: Path, auth_ok):
+def _make_pool(state: AppState, db_path: Path) -> UploadPool:
+    return UploadPool(
+        uploader=Uploader(),
+        state=state,
+        repo=Repository.open(db_path),
+        progress=UploadProgress(),
+        on_progress_change=lambda _: None,
+    )
+
+
+async def test_upload_worker_retries_transient_network_errors(tmp_path: Path):
     import anyio
 
     state = AppState(config=SSHConfig(contributor_id=ContributorId("u"), key_path=Path("/k")))
-    db_path = tmp_path / "records.db"
+    pool = _make_pool(state, tmp_path / "records.db")
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
-        app = CCSentimentApp(state=state, db_path=db_path)
-        async with app.run_test() as pilot:
-            await pilot.pause(delay=0.3)
+    send, recv = anyio.create_memory_object_stream[list](float("inf"))
+    send.send_nowait([make_record()])
+    send.close()
 
-            send, recv = anyio.create_memory_object_stream[list](float("inf"))
-            send.send_nowait([make_record()])
-            send.close()
+    calls = 0
 
-            calls = 0
+    async def fake_upload(self, batch, state, repo, on_progress=None):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.ConnectError("boom")
 
-            async def fake_upload(self, batch, state, repo, on_progress=None):
-                nonlocal calls
-                calls += 1
-                if calls == 1:
-                    raise httpx.ConnectError("boom")
+    with patch("cc_sentiment.upload.Uploader.upload", fake_upload), \
+         patch("cc_sentiment.upload.anyio.sleep", new_callable=AsyncMock):
+        await pool._worker_loop(recv, worker_id=0)
 
-            app.uploaded_count = 0
-            app._upload_fatal = None
-            app._upload_failed_batches = 0
-
-            with patch("cc_sentiment.upload.Uploader.upload", fake_upload), \
-                 patch("cc_sentiment.tui.anyio.sleep", new_callable=AsyncMock):
-                await app._upload_worker(recv, worker_id=0)
-
-            assert calls == 2
-            assert app.uploaded_count == 1
-            assert app._upload_failed_batches == 0
-            assert app._upload_fatal is None
+    assert calls == 2
+    assert pool.progress.uploaded_records == 1
+    assert pool.progress.failed_batches == 0
+    assert pool.progress.fatal is None
 
 
-async def test_upload_worker_records_partial_failure_after_retries_exhaust(tmp_path: Path, auth_ok):
+async def test_upload_worker_records_partial_failure_after_retries_exhaust(tmp_path: Path):
     import anyio
 
     state = AppState(config=SSHConfig(contributor_id=ContributorId("u"), key_path=Path("/k")))
-    db_path = tmp_path / "records.db"
+    pool = _make_pool(state, tmp_path / "records.db")
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
-        app = CCSentimentApp(state=state, db_path=db_path)
-        async with app.run_test() as pilot:
-            await pilot.pause(delay=0.3)
+    send, recv = anyio.create_memory_object_stream[list](float("inf"))
+    send.send_nowait([make_record(session_id="s1")])
+    send.send_nowait([make_record(session_id="s2")])
+    send.close()
 
-            send, recv = anyio.create_memory_object_stream[list](float("inf"))
-            send.send_nowait([make_record(session_id="s1")])
-            send.send_nowait([make_record(session_id="s2")])
-            send.close()
+    async def always_fail(self, batch, state, repo, on_progress=None):
+        raise httpx.ConnectError("down")
 
-            async def always_fail(self, batch, state, repo, on_progress=None):
-                raise httpx.ConnectError("down")
+    with patch("cc_sentiment.upload.Uploader.upload", always_fail), \
+         patch("cc_sentiment.upload.anyio.sleep", new_callable=AsyncMock):
+        await pool._worker_loop(recv, worker_id=0)
 
-            app.uploaded_count = 0
-            app._upload_fatal = None
-            app._upload_failed_batches = 0
-
-            with patch("cc_sentiment.upload.Uploader.upload", always_fail), \
-                 patch("cc_sentiment.tui.anyio.sleep", new_callable=AsyncMock):
-                await app._upload_worker(recv, worker_id=0)
-
-            assert app._upload_failed_batches == 2
-            assert app.uploaded_count == 0
-            assert app._upload_fatal is None
+    assert pool.progress.failed_batches == 2
+    assert pool.progress.uploaded_records == 0
+    assert pool.progress.fatal is None
 
 
-async def test_upload_worker_fatal_on_401_drops_subsequent_batches(tmp_path: Path, auth_ok):
+async def test_upload_worker_fatal_on_401_drops_subsequent_batches(tmp_path: Path):
     import anyio
 
     state = AppState(config=SSHConfig(contributor_id=ContributorId("u"), key_path=Path("/k")))
-    db_path = tmp_path / "records.db"
+    pool = _make_pool(state, tmp_path / "records.db")
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
-        app = CCSentimentApp(state=state, db_path=db_path)
-        async with app.run_test() as pilot:
-            await pilot.pause(delay=0.3)
+    send, recv = anyio.create_memory_object_stream[list](float("inf"))
+    send.send_nowait([make_record(session_id="s1")])
+    send.send_nowait([make_record(session_id="s2")])
+    send.close()
 
-            send, recv = anyio.create_memory_object_stream[list](float("inf"))
-            send.send_nowait([make_record(session_id="s1")])
-            send.send_nowait([make_record(session_id="s2")])
-            send.close()
+    calls = 0
 
-            calls = 0
+    async def reject_first(self, batch, state, repo, on_progress=None):
+        nonlocal calls
+        calls += 1
+        raise httpx.HTTPStatusError(
+            "nope",
+            request=httpx.Request("POST", "http://x"),
+            response=httpx.Response(401),
+        )
 
-            async def reject_first(self, batch, state, repo, on_progress=None):
-                nonlocal calls
-                calls += 1
-                raise httpx.HTTPStatusError(
-                    "nope",
-                    request=httpx.Request("POST", "http://x"),
-                    response=httpx.Response(401),
-                )
+    with patch("cc_sentiment.upload.Uploader.upload", reject_first):
+        await pool._worker_loop(recv, worker_id=0)
 
-            app.uploaded_count = 0
-            app._upload_fatal = None
-            app._upload_failed_batches = 0
-
-            with patch("cc_sentiment.upload.Uploader.upload", reject_first):
-                await app._upload_worker(recv, worker_id=0)
-
-            assert calls == 1
-            assert isinstance(app._upload_fatal, httpx.HTTPStatusError)
-            assert app._upload_fatal.response.status_code == 401
-            assert app.uploaded_count == 0
-            assert app._upload_failed_batches == 0
+    assert calls == 1
+    assert isinstance(pool.progress.fatal, httpx.HTTPStatusError)
+    assert pool.progress.fatal.response.status_code == 401
+    assert pool.progress.uploaded_records == 0
+    assert pool.progress.failed_batches == 0
 
 
 class ChartHarness(App[None]):

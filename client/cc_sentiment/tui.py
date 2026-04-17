@@ -14,7 +14,6 @@ from statistics import mean
 from typing import ClassVar
 
 import anyio
-import anyio.streams.memory
 import anyio.to_thread
 import httpx
 from urllib.parse import urlencode
@@ -61,6 +60,16 @@ from cc_sentiment.models import (
 )
 from cc_sentiment.repo import Repository
 from cc_sentiment.transcripts import TranscriptDiscovery
+from cc_sentiment.upload import (
+    UPLOAD_POOL_TIMEOUT_SECONDS,
+    AuthOk,
+    AuthServerError,
+    AuthUnauthorized,
+    AuthUnreachable,
+    UploadPool,
+    UploadProgress,
+    Uploader,
+)
 from cc_sentiment.signing import (
     GPGBackend,
     GPGKeyInfo,
@@ -127,6 +136,35 @@ class Error(Stage):
 @dataclass(frozen=True)
 class RescanConfirm(Stage):
     prev: Stage
+
+
+@dataclass
+class ScoringProgress:
+    start_time: float = 0.0
+    initial_estimate_seconds: float | None = None
+
+    def elapsed(self) -> float:
+        return time.monotonic() - self.start_time if self.start_time else 0.0
+
+    def begin(self, rate: float | None, total: int) -> None:
+        self.start_time = time.monotonic()
+        self.initial_estimate_seconds = total / rate if rate and rate > 0 and total > 0 else None
+
+    def projected_total(self, scored: int, total: int) -> float:
+        elapsed = self.elapsed()
+        if scored > 0 and total > 0:
+            return elapsed * total / scored
+        if self.initial_estimate_seconds is not None:
+            return self.initial_estimate_seconds
+        return elapsed
+
+    def rate(self, scored: int) -> float:
+        elapsed = self.elapsed()
+        return scored / elapsed if elapsed > 0 else 0.0
+
+    def reset(self) -> None:
+        self.start_time = 0.0
+        self.initial_estimate_seconds = None
 
 
 @dataclass(frozen=True)
@@ -1377,12 +1415,144 @@ Expire-Date: 0
         self.dismiss(False)
 
 
+class ProcessingView:
+    WEEKDAY_LABELS: ClassVar[tuple[str, ...]] = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    INSIGHTS_MIN_RECORDS: ClassVar[int] = 20
+    INSIGHTS_MIN_SAMPLES: ClassVar[int] = 3
+
+    def __init__(self, app: App[None]) -> None:
+        self.app = app
+        self.score_bars: dict[int, ScoreBar] = {}
+
+    def register_score_bar(self, s: int, bar: ScoreBar) -> None:
+        self.score_bars[s] = bar
+
+    def reset(self) -> None:
+        self.app.query_one("#scan-progress", ProgressBar).update(total=100, progress=0)
+        self.app.query_one("#progress-label", Label).update("Preparing...")
+        self.app.query_one("#score-digits", Digits).update("-.--")
+        self.app.query_one("#hourly-chart", HourlyChart).update_chart([])
+        for s in range(1, 6):
+            self.score_bars[s].update("")
+        for stat_id in ("#stat-buckets", "#stat-sessions", "#stat-files", "#stat-rate"):
+            self.app.query_one(stat_id, Static).update("--")
+        self.app.query_one("#chart-section").add_class("inactive")
+        self.app.query_one("#stats-section").add_class("inactive")
+        self.app.query_one("#score-digits").add_class("inactive")
+        self.app.query_one("#score-label").add_class("inactive")
+        self.app.query_one("#upload-section").add_class("inactive")
+        self.app.query_one("#upload-progress", ProgressBar).update(total=100, progress=0)
+        self.app.query_one("#upload-label", Label).update("")
+        self.app.query_one("#insights-section").add_class("inactive")
+
+    def begin_scoring(self, total: int, total_files: int) -> None:
+        self.app.query_one("#scan-progress", ProgressBar).update(total=total, progress=0)
+        self.show_total_files(total_files)
+
+    def show_total_files(self, total_files: int) -> None:
+        self.app.query_one("#stat-files", Static).update(f"[b]{total_files:,}[/]")
+        self.app.query_one("#stats-section").remove_class("inactive")
+
+    def update_progress_label(self, scoring: ScoringProgress, scored: int, total: int) -> None:
+        elapsed = scoring.elapsed()
+        projected = scoring.projected_total(scored, total)
+        self.app.query_one("#progress-label", Label).update(
+            f"[b]{format_hms(elapsed)}[/] / ~{format_hms(projected)}"
+        )
+
+    def bump_scored(self, scored: int, scoring: ScoringProgress, total: int) -> None:
+        self.app.query_one("#scan-progress", ProgressBar).update(progress=scored)
+        self.update_progress_label(scoring, scored, total)
+        self.app.query_one("#stat-rate", Static).update(f"{scoring.rate(scored):.1f}")
+
+    def update_upload(self, progress: UploadProgress) -> None:
+        section = self.app.query_one("#upload-section")
+        bar = self.app.query_one("#upload-progress", ProgressBar)
+        label = self.app.query_one("#upload-label", Label)
+        if progress.queued_records == 0:
+            section.add_class("inactive")
+            return
+        section.remove_class("inactive")
+        total = max(progress.queued_records, 1)
+        bar.update(total=total, progress=min(progress.uploaded_records, total))
+        label.update(
+            f"[dim]Uploading to sentiments.cc · [b]{progress.uploaded_records:,}[/]"
+            f"/[b]{progress.queued_records:,}[/] moments[/]"
+        )
+
+    def show_stats(self, buckets: int, sessions: int, files: int) -> None:
+        self.app.query_one("#stat-buckets", Static).update(f"[b]{buckets:,}[/]")
+        self.app.query_one("#stat-sessions", Static).update(f"[b]{sessions:,}[/]")
+        self.app.query_one("#stat-files", Static).update(f"[b]{files:,}[/]")
+        self.app.query_one("#stats-section").remove_class("inactive")
+
+    def hide_engine_boot(self) -> None:
+        self.app.query_one("#engine-boot-section").remove_class("active")
+
+    def render_scores(self, records: list[SentimentRecord]) -> None:
+        if not records:
+            return
+        self.app.query_one("#chart-section").remove_class("inactive")
+        self.app.query_one("#score-digits").remove_class("inactive")
+        self.app.query_one("#score-label").remove_class("inactive")
+        scores = [int(r.sentiment_score) for r in records]
+        counts = Counter(scores)
+        total = len(scores)
+        max_count = max(counts.values()) if counts else 1
+        for s in range(1, 6):
+            n = counts.get(s, 0)
+            self.score_bars[s].update(self.score_bars[s].render_bar(n, total, max_count))
+        avg = mean(scores)
+        self.app.query_one("#score-digits", Digits).update(f"{avg:.2f}")
+        self.app.query_one("#hourly-chart", HourlyChart).update_chart(records)
+        sessions = len({r.conversation_id for r in records})
+        self.app.query_one("#stat-buckets", Static).update(f"[b]{total:,}[/]")
+        self.app.query_one("#stat-sessions", Static).update(f"[b]{sessions:,}[/]")
+        self.render_insights(records)
+
+    @staticmethod
+    def pick_toughest[K](groups: dict[K, list[int]], min_samples: int) -> K | None:
+        qualifying = {k: mean(v) for k, v in groups.items() if len(v) >= min_samples}
+        return min(qualifying, key=qualifying.__getitem__) if qualifying else None
+
+    @staticmethod
+    def short_model(model: str) -> str:
+        return next(
+            (t for t in model.split("-") if t not in ("claude", "anthropic") and not t.isdigit()),
+            model,
+        )
+
+    def render_insights(self, records: list[SentimentRecord]) -> None:
+        insights = self.app.query_one("#insights-section", Static)
+        if len(records) < self.INSIGHTS_MIN_RECORDS:
+            insights.add_class("inactive")
+            return
+        hours: dict[int, list[int]] = defaultdict(list)
+        days: dict[int, list[int]] = defaultdict(list)
+        models: dict[str, list[int]] = defaultdict(list)
+        for r in records:
+            local = r.time.astimezone()
+            score = int(r.sentiment_score)
+            hours[local.hour].append(score)
+            days[local.weekday()].append(score)
+            models[r.claude_model].append(score)
+        parts: list[str] = []
+        if (h := self.pick_toughest(hours, self.INSIGHTS_MIN_SAMPLES)) is not None:
+            parts.append(f"[dim]toughest hour:[/] [b]{format_hour(h)}[/]")
+        if (d := self.pick_toughest(days, self.INSIGHTS_MIN_SAMPLES)) is not None:
+            parts.append(f"[dim]toughest day:[/] [b]{self.WEEKDAY_LABELS[d]}[/]")
+        if (m := self.pick_toughest(models, self.INSIGHTS_MIN_SAMPLES)) is not None:
+            parts.append(f"[dim]toughest model:[/] [b]{self.short_model(m)}[/]")
+        if not parts:
+            insights.add_class("inactive")
+            return
+        insights.update(" · ".join(parts))
+        insights.remove_class("inactive")
+
+
 class CCSentimentApp(App[None]):
     DASHBOARD_URL: ClassVar[str] = "https://sentiments.cc"
     RESCAN_CONFIRM_SECONDS: ClassVar[float] = 5.0
-    INSIGHTS_MIN_RECORDS: ClassVar[int] = 20
-    INSIGHTS_MIN_SAMPLES: ClassVar[int] = 3
-    WEEKDAY_LABELS: ClassVar[tuple[str, ...]] = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
     CSS = """
     Screen { layout: vertical; background: $surface; }
@@ -1415,6 +1585,10 @@ class CCSentimentApp(App[None]):
     .stat-card .stat-label { color: $text-muted; text-style: bold; }
     #insights-section { height: 1; margin: 1 0 0 0; }
     #insights-section.inactive { display: none; }
+    #upload-section { height: auto; margin: 1 0 0 0; padding: 0 1; border: round $primary-background; }
+    #upload-section.inactive { display: none; }
+    #upload-label { height: 1; }
+    #upload-progress { width: 1fr; }
     #status-line { height: auto; margin: 1 0 0 0; }
     """
 
@@ -1448,16 +1622,10 @@ class CCSentimentApp(App[None]):
         self.debug_mode = debug
         self.repo: Repository | None = None
         self.records: list[SentimentRecord] = []
-        self._score_bars: dict[int, ScoreBar] = {}
-        self._start_time = 0.0
+        self.view = ProcessingView(self)
+        self._scoring = ScoringProgress()
+        self._upload = UploadProgress()
         self._boot_screen: BootingScreen | None = None
-        self._upload_fatal: BaseException | None = None
-        self._upload_failed_batches: int = 0
-        self._preseed_count: int = 0
-        self._batches_queued: int = 0
-        self._batches_in_flight: int = 0
-        self._batches_done: int = 0
-        self._upload_pool_started_at: float = 0.0
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -1476,13 +1644,13 @@ class CCSentimentApp(App[None]):
             with Vertical(id="chart-section", classes="inactive"):
                 with Horizontal(id="charts-row"):
                     with Vertical(id="hourly-column"):
-                        yield Static("[dim]Frustrated buckets by hour of day[/]", id="hourly-chart-label")
+                        yield Static("[dim]Tough moments through the day[/]", id="hourly-chart-label")
                         yield HourlyChart(id="hourly-chart")
                     with Vertical(id="distribution"):
                         for s in range(1, 6):
                             bar = ScoreBar(s)
                             bar.id = f"bar-{s}"
-                            self._score_bars[s] = bar
+                            self.view.register_score_bar(s, bar)
                             yield bar
 
             with Vertical(id="engine-boot-section"):
@@ -1506,12 +1674,15 @@ class CCSentimentApp(App[None]):
 
             yield Static("", id="insights-section", classes="inactive")
 
+            with Vertical(id="upload-section", classes="inactive"):
+                yield Label("", id="upload-label")
+                yield ProgressBar(id="upload-progress", total=100, show_eta=False, show_percentage=True)
+
             yield Label("", id="status-line")
         yield Footer()
 
     async def on_mount(self) -> None:
         self.title = "cc-sentiment"
-        self._start_time = time.monotonic()
         self._boot_screen = BootingScreen()
         await self.push_screen(self._boot_screen)
         self._boot_screen.status = "Loading local cache..."
@@ -1553,13 +1724,12 @@ class CCSentimentApp(App[None]):
             return
         self.records = list(existing)
         _, _, total_files = await anyio.to_thread.run_sync(self.repo.stats)
-        self.query_one("#stat-files", Static).update(f"[b]{total_files:,}[/]")
-        self._render_scores()
-        self.query_one("#stats-section").remove_class("inactive")
+        self.view.show_total_files(total_files)
+        self.view.render_scores(self.records)
 
     def watch_stage(self, stage: Stage) -> None:
         if isinstance(stage, (Uploading, IdleEmpty, IdleCaughtUp, IdleAfterUpload)):
-            self.query_one("#engine-boot-section").remove_class("active")
+            self.view.hide_engine_boot()
         match stage:
             case Booting():
                 self._update_status("[dim]Initializing...[/]")
@@ -1570,15 +1740,16 @@ class CCSentimentApp(App[None]):
             case Scoring():
                 self._update_status(self._scoring_status_text())
             case Uploading():
-                self._render_upload_status()
+                self.view.update_upload(self._upload)
+                self._update_status("[dim]Scoring done. Sending the rest up to sentiments.cc...[/]")
             case IdleEmpty():
-                self._render_stats(0, 0, 0)
+                self.view.show_stats(0, 0, 0)
                 self._update_status(
                     "[green]All set. No conversations yet. Come back after using Claude Code.[/] "
                     "[dim]Press O to browse the dashboard.[/]"
                 )
             case IdleCaughtUp(total_buckets=b, total_sessions=s, total_files=f):
-                self._render_stats(b, s, f)
+                self.view.show_stats(b, s, f)
                 self._update_status(
                     f"[green]All caught up.[/] "
                     f"{s} chat{'s' if s != 1 else ''}, "
@@ -1586,7 +1757,7 @@ class CCSentimentApp(App[None]):
                     f"[dim]Press R to rescan, O to open dashboard.[/]"
                 )
             case IdleAfterUpload(total_buckets=b, total_sessions=s, total_files=f):
-                self._render_stats(b, s, f)
+                self.view.show_stats(b, s, f)
                 self._update_status(
                     "[green]Uploaded.[/] See your data at "
                     "[link='https://sentiments.cc'][b]sentiments.cc[/b][/link]. "
@@ -1602,7 +1773,7 @@ class CCSentimentApp(App[None]):
     def _scoring_status_text(self) -> str:
         if self.uploaded_count == 0:
             return "[dim]Scoring locally on your Mac. We'll upload each batch as it's ready.[/]"
-        denom = self._preseed_count + len(self.records)
+        denom = self._upload.preseed_count + len(self.records)
         return (
             f"[dim]Scoring locally. Uploaded [b]{self.uploaded_count}[/] "
             f"of [b]{denom}[/] so far.[/]"
@@ -1612,20 +1783,7 @@ class CCSentimentApp(App[None]):
         if isinstance(self.stage, Scoring):
             self._update_status(self._scoring_status_text())
 
-    def _render_stats(self, buckets: int, sessions: int, files: int) -> None:
-        self.query_one("#stat-buckets", Static).update(f"[b]{buckets:,}[/]")
-        self.query_one("#stat-sessions", Static).update(f"[b]{sessions:,}[/]")
-        self.query_one("#stat-files", Static).update(f"[b]{files:,}[/]")
-        self.query_one("#stats-section").remove_class("inactive")
-
     async def _authenticate(self) -> bool:
-        from cc_sentiment.upload import (
-            AuthOk,
-            AuthServerError,
-            AuthUnauthorized,
-            AuthUnreachable,
-            Uploader,
-        )
         while True:
             if self.state.config is None:
                 ok = await self.push_screen_wait(SetupScreen(self.state))
@@ -1707,70 +1865,54 @@ class CCSentimentApp(App[None]):
 
         pre_seed = await anyio.to_thread.run_sync(self.repo.pending_records)
         has_work = (transcripts and bucket_count > 0) or bool(pre_seed)
-        self._upload_fatal = None
-        self._upload_failed_batches = 0
-        self._preseed_count = len(pre_seed)
-        self._batches_queued = 0
-        self._batches_in_flight = 0
-        self._batches_done = 0
+        self._upload.reset()
+        self._upload.preseed_count = len(pre_seed)
 
         if has_work:
-            from cc_sentiment.upload import (
-                UPLOAD_POOL_TIMEOUT_SECONDS,
-                UPLOAD_WORKER_COUNT,
+            pool = UploadPool(
+                uploader=Uploader(),
+                state=self.state,
+                repo=self.repo,
+                progress=self._upload,
+                on_progress_change=self._on_upload_progress_change,
+                debug=self._debug,
             )
 
-            send_stream, recv_stream = anyio.create_memory_object_stream[
-                list[SentimentRecord]
-            ](float("inf"))
-            if pre_seed:
-                self._queue_batch(send_stream, pre_seed)
+            async def producer() -> None:
+                if pre_seed:
+                    pool.queue_batch(pre_seed)
+                if transcripts and bucket_count > 0:
+                    _, _, existing_files = await anyio.to_thread.run_sync(self.repo.stats)
+                    self._begin_scoring(bucket_count, engine, existing_files + len(transcripts))
+                    boot = EngineBootView(
+                        app=self,
+                        section=self.query_one("#engine-boot-section"),
+                        status=self.query_one("#engine-boot-status", SpinnerLine),
+                        log=self.query_one("#engine-boot-log", Static),
+                    )
+                    boot.show(engine)
+                    try:
+                        await Pipeline.run(
+                            self.repo, engine, self.model_repo, transcripts,
+                            on_records=self._add_records, on_bucket=self._add_buckets,
+                            on_engine_log=boot.write_from_thread,
+                            on_snippet=boot.add_snippet,
+                            on_transcript_complete=pool.queue_batch,
+                        )
+                    finally:
+                        self.stage = Uploading()
 
-            self._upload_pool_started_at = time.monotonic()
             try:
-                with anyio.fail_after(UPLOAD_POOL_TIMEOUT_SECONDS):
-                    async with anyio.create_task_group() as tg:
-                        for worker_id in range(UPLOAD_WORKER_COUNT):
-                            tg.start_soon(
-                                self._upload_worker, recv_stream.clone(), worker_id
-                            )
-                        recv_stream.close()
-                        try:
-                            if transcripts and bucket_count > 0:
-                                _, _, existing_files = await anyio.to_thread.run_sync(self.repo.stats)
-                                self._set_total(bucket_count, engine, existing_files + len(transcripts))
-                                boot = EngineBootView(
-                                    app=self,
-                                    section=self.query_one("#engine-boot-section"),
-                                    status=self.query_one("#engine-boot-status", SpinnerLine),
-                                    log=self.query_one("#engine-boot-log", Static),
-                                )
-                                boot.show(engine)
-                                await Pipeline.run(
-                                    self.repo, engine, self.model_repo, transcripts,
-                                    on_records=self._add_records, on_bucket=self._add_buckets,
-                                    on_engine_log=boot.write_from_thread,
-                                    on_snippet=boot.add_snippet,
-                                    on_transcript_complete=lambda batch: self._queue_batch(send_stream, batch),
-                                )
-                        finally:
-                            self.stage = Uploading()
-                            send_stream.close()
+                await pool.run(producer)
             except TimeoutError:
-                self._debug(
-                    f"upload: pool timed out after {UPLOAD_POOL_TIMEOUT_SECONDS}s"
-                )
+                self._debug(f"upload: pool timed out after {UPLOAD_POOL_TIMEOUT_SECONDS}s")
                 self.stage = Error(
                     f"[red bold]Uploads timed out after {UPLOAD_POOL_TIMEOUT_SECONDS // 60} min.[/] "
                     "Records kept locally — press R to retry once you're back online."
                 )
                 return
-            self._debug(
-                f"upload: done — {self._batches_done} ok, {self._upload_failed_batches} failed, "
-                f"elapsed {time.monotonic() - self._upload_pool_started_at:.1f}s"
-            )
 
-        match self._upload_fatal:
+        match self._upload.fatal:
             case httpx.HTTPStatusError() as e if e.response.status_code in (401, 403):
                 self.stage = Error(
                     f"[red bold]Server rejected upload ({e.response.status_code}).[/] "
@@ -1791,10 +1933,10 @@ class CCSentimentApp(App[None]):
                 )
                 return
 
-        if self._upload_failed_batches > 0:
+        if self._upload.failed_batches > 0:
             self.stage = Error(
-                f"[red bold]Couldn't upload {self._upload_failed_batches} "
-                f"batch{'es' if self._upload_failed_batches != 1 else ''}.[/] "
+                f"[red bold]Couldn't upload {self._upload.failed_batches} "
+                f"batch{'es' if self._upload.failed_batches != 1 else ''}.[/] "
                 "Records kept locally — press R to retry once you're back online."
             )
             return
@@ -1806,9 +1948,11 @@ class CCSentimentApp(App[None]):
             await self._offer_stat_share()
             await self._offer_daemon_install()
 
-    async def _fetch_my_stat_with_retry(self) -> StatFetchResult:
-        from cc_sentiment.upload import Uploader
+    def _on_upload_progress_change(self, progress: UploadProgress) -> None:
+        self.uploaded_count = progress.uploaded_records
+        self.view.update_upload(progress)
 
+    async def _fetch_my_stat_with_retry(self) -> StatFetchResult:
         assert self.state.config is not None
         uploader = Uploader()
         for attempt in range(3):
@@ -1906,166 +2050,27 @@ class CCSentimentApp(App[None]):
         self.scored = 0
         self.total = 0
         self.uploaded_count = 0
-        self._upload_fatal = None
-        self._upload_failed_batches = 0
-        self._preseed_count = 0
-        self._batches_queued = 0
-        self._batches_in_flight = 0
-        self._batches_done = 0
-        self._start_time = time.monotonic()
-        self.query_one("#scan-progress", ProgressBar).update(total=100, progress=0)
-        self.query_one("#progress-label", Label).update("Preparing...")
-        self.query_one("#score-digits", Digits).update("-.--")
-        self.query_one("#hourly-chart", HourlyChart).update_chart([])
-        for s in range(1, 6):
-            self._score_bars[s].update("")
-        for stat_id in ("#stat-buckets", "#stat-sessions", "#stat-files", "#stat-rate"):
-            self.query_one(stat_id, Static).update("--")
-        self.query_one("#chart-section").add_class("inactive")
-        self.query_one("#stats-section").add_class("inactive")
-        self.query_one("#score-digits").add_class("inactive")
-        self.query_one("#score-label").add_class("inactive")
+        self._scoring.reset()
+        self._upload.reset()
+        self.view.reset()
 
-    def _set_total(self, total: int, engine: str, total_files: int) -> None:
+    def _begin_scoring(self, total: int, engine: str, total_files: int) -> None:
         self.total = total
         self.scored = 0
-        self._start_time = time.monotonic()
-        rate = Hardware.estimate_buckets_per_sec(engine)
-        self._initial_estimate_seconds = total / rate if rate and rate > 0 else None
-        self.query_one("#scan-progress", ProgressBar).update(total=total, progress=0)
-        self._update_progress_label()
-        self.query_one("#stat-files", Static).update(f"[b]{total_files:,}[/]")
-        self.query_one("#stats-section").remove_class("inactive")
+        self._scoring.begin(Hardware.estimate_buckets_per_sec(engine), total)
+        self.view.begin_scoring(total, total_files)
+        self.view.update_progress_label(self._scoring, self.scored, self.total)
         self.stage = Scoring(total=total, engine=engine)
-
-    def _update_progress_label(self) -> None:
-        elapsed = time.monotonic() - self._start_time
-        projected = (
-            elapsed * self.total / self.scored if self.scored > 0 and self.total > 0
-            else self._initial_estimate_seconds if self._initial_estimate_seconds is not None
-            else elapsed
-        )
-        self.query_one("#progress-label", Label).update(
-            f"[b]{format_hms(elapsed)}[/] / ~{format_hms(projected)}"
-        )
 
     def _add_buckets(self, n: int) -> None:
         asyncio.get_running_loop()
         self.scored += n
-        self.query_one("#scan-progress", ProgressBar).update(progress=self.scored)
-        self._update_progress_label()
-
-        elapsed = time.monotonic() - self._start_time
-        rate = self.scored / elapsed if elapsed > 0 else 0
-        self.query_one("#stat-rate", Static).update(f"{rate:.1f}")
-
-    def _queue_batch(
-        self,
-        send_stream: anyio.streams.memory.MemoryObjectSendStream[list[SentimentRecord]],
-        batch: list[SentimentRecord],
-    ) -> None:
-        self._batches_queued += 1
-        send_stream.send_nowait(batch)
-        if isinstance(self.stage, Uploading):
-            self._render_upload_status()
-
-    def _render_upload_status(self) -> None:
-        if not isinstance(self.stage, Uploading):
-            return
-        self._update_status(
-            f"[dim]Finishing uploads · [b]{self._batches_done}[/]/[b]{self._batches_queued}[/] "
-            f"batches · [b]{self._batches_in_flight}[/] in flight[/]"
-        )
-
-    async def _upload_worker(
-        self,
-        recv_stream: anyio.streams.memory.MemoryObjectReceiveStream[list[SentimentRecord]],
-        worker_id: int,
-    ) -> None:
-        from cc_sentiment.upload import Uploader
-
-        assert self.repo is not None
-        uploader = Uploader()
-        started_at = time.monotonic()
-        done_here = 0
-        self._debug(f"upload: worker {worker_id} started")
-        async with recv_stream:
-            async for batch in recv_stream:
-                if self._upload_fatal is not None:
-                    continue
-                await self._upload_one_batch(uploader, batch, worker_id)
-                done_here += 1
-        self._debug(
-            f"upload: worker {worker_id} exiting (stream closed); "
-            f"uploaded {done_here} batches in {time.monotonic() - started_at:.1f}s"
-        )
-
-    async def _upload_one_batch(
-        self, uploader, batch: list[SentimentRecord], worker_id: int
-    ) -> None:
-        from cc_sentiment.upload import WORKER_BACKOFF_BASE_SECONDS, WORKER_BATCH_RETRIES
-
-        assert self.repo is not None
-
-        self._batches_in_flight += 1
-        self._render_upload_status()
-        waiting = max(0, self._batches_queued - self._batches_done - self._batches_in_flight)
-        self._debug(
-            f"upload: worker {worker_id} → batch of {len(batch)} records; "
-            f"queue={self._batches_in_flight} in flight, {waiting} waiting"
-        )
-        try:
-            for attempt in range(WORKER_BATCH_RETRIES):
-                post_start = time.monotonic()
-                try:
-                    await uploader.upload(batch, self.state, self.repo)
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code in (401, 403):
-                        self._debug(
-                            f"upload: worker {worker_id} fatal: "
-                            f"HTTPStatusError {e.response.status_code}"
-                        )
-                        self._upload_fatal = e
-                        return
-                    last_exc: BaseException = e
-                except subprocess.CalledProcessError as e:
-                    self._debug(
-                        f"upload: worker {worker_id} fatal: {type(e).__name__}: {e}"
-                    )
-                    self._upload_fatal = e
-                    return
-                except (httpx.NetworkError, httpx.TimeoutException) as e:
-                    last_exc = e
-                else:
-                    post_ms = (time.monotonic() - post_start) * 1000
-                    self._debug(
-                        f"upload: worker {worker_id} posted in {post_ms:.0f}ms (HTTP 200)"
-                    )
-                    self._batches_done += 1
-                    self.uploaded_count += len(batch)
-                    return
-                if attempt == WORKER_BATCH_RETRIES - 1:
-                    self._debug(
-                        f"upload: worker {worker_id} abandoned batch after "
-                        f"{WORKER_BATCH_RETRIES} attempts "
-                        f"({type(last_exc).__name__}: {last_exc})"
-                    )
-                    self._upload_failed_batches += 1
-                    return
-                delay = WORKER_BACKOFF_BASE_SECONDS * 3 ** attempt
-                self._debug(
-                    f"upload: worker {worker_id} retry {attempt + 1}/{WORKER_BATCH_RETRIES} "
-                    f"({type(last_exc).__name__}: {last_exc}); sleeping {delay:.1f}s"
-                )
-                await anyio.sleep(delay)
-        finally:
-            self._batches_in_flight -= 1
-            self._render_upload_status()
+        self.view.bump_scored(self.scored, self._scoring, self.total)
 
     def _add_records(self, new_records: list[SentimentRecord]) -> None:
         asyncio.get_running_loop()
         self.records.extend(new_records)
-        self._render_scores()
+        self.view.render_scores(self.records)
 
     def _update_status(self, text: str) -> None:
         self.status_text = text
@@ -2073,70 +2078,3 @@ class CCSentimentApp(App[None]):
 
     def _append_status(self, addition: str) -> None:
         self._update_status(f"{self.status_text}\n{addition}".strip())
-
-    def _render_scores(self) -> None:
-        if not self.records:
-            return
-
-        self.query_one("#chart-section").remove_class("inactive")
-        self.query_one("#score-digits").remove_class("inactive")
-        self.query_one("#score-label").remove_class("inactive")
-        scores = [int(r.sentiment_score) for r in self.records]
-        counts = Counter(scores)
-        total = len(scores)
-        max_count = max(counts.values()) if counts else 1
-
-        for s in range(1, 6):
-            n = counts.get(s, 0)
-            self._score_bars[s].update(self._score_bars[s].render_bar(n, total, max_count))
-
-        avg = mean(scores)
-        self.query_one("#score-digits", Digits).update(f"{avg:.2f}")
-        self.query_one("#hourly-chart", HourlyChart).update_chart(self.records)
-
-        sessions = len({r.conversation_id for r in self.records})
-        self.query_one("#stat-buckets", Static).update(f"[b]{total:,}[/]")
-        self.query_one("#stat-sessions", Static).update(f"[b]{sessions:,}[/]")
-        self._render_insights()
-
-    @staticmethod
-    def pick_toughest[K](groups: dict[K, list[int]], min_samples: int) -> K | None:
-        qualifying = {k: mean(v) for k, v in groups.items() if len(v) >= min_samples}
-        return min(qualifying, key=qualifying.__getitem__) if qualifying else None
-
-    @staticmethod
-    def short_model(model: str) -> str:
-        return next(
-            (t for t in model.split("-") if t not in ("claude", "anthropic") and not t.isdigit()),
-            model,
-        )
-
-    def _render_insights(self) -> None:
-        insights = self.query_one("#insights-section", Static)
-        if len(self.records) < self.INSIGHTS_MIN_RECORDS:
-            insights.add_class("inactive")
-            return
-
-        hours: dict[int, list[int]] = defaultdict(list)
-        days: dict[int, list[int]] = defaultdict(list)
-        models: dict[str, list[int]] = defaultdict(list)
-        for r in self.records:
-            local = r.time.astimezone()
-            score = int(r.sentiment_score)
-            hours[local.hour].append(score)
-            days[local.weekday()].append(score)
-            models[r.claude_model].append(score)
-
-        parts: list[str] = []
-        if (h := self.pick_toughest(hours, self.INSIGHTS_MIN_SAMPLES)) is not None:
-            parts.append(f"[dim]toughest hour:[/] [b]{format_hour(h)}[/]")
-        if (d := self.pick_toughest(days, self.INSIGHTS_MIN_SAMPLES)) is not None:
-            parts.append(f"[dim]toughest day:[/] [b]{self.WEEKDAY_LABELS[d]}[/]")
-        if (m := self.pick_toughest(models, self.INSIGHTS_MIN_SAMPLES)) is not None:
-            parts.append(f"[dim]toughest model:[/] [b]{self.short_model(m)}[/]")
-
-        if not parts:
-            insights.add_class("inactive")
-            return
-        insights.update(" · ".join(parts))
-        insights.remove_class("inactive")
