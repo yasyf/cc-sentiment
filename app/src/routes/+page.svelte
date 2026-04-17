@@ -164,9 +164,7 @@
 				An open experiment: does developer sentiment with Claude Code vary by time of day, day of week, or model?
 				Anyone can contribute. Scoring runs on your machine, only the numbers leave.
 			</p>
-			<div class="mt-4">
-				<ContributeCommandInline />
-			</div>
+			<ContributeCommandInline />
 		</div>
 
 		{#if data.total_records === 0}
