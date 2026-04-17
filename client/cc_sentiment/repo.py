@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -73,6 +74,7 @@ RECORD_COLUMNS = (
 class Repository:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
+        self.lock = threading.Lock()
 
     @classmethod
     def default_path(cls) -> Path:
@@ -90,43 +92,47 @@ class Repository:
         return cls(conn)
 
     def close(self) -> None:
-        self.conn.close()
+        with self.lock:
+            self.conn.close()
 
     def file_mtimes(self) -> dict[str, float]:
-        return {
-            row["path"]: row["mtime"]
-            for row in self.conn.execute("SELECT path, mtime FROM files")
-        }
+        with self.lock:
+            return {
+                row["path"]: row["mtime"]
+                for row in self.conn.execute("SELECT path, mtime FROM files")
+            }
 
     def scored_buckets_for(self, path: str) -> frozenset[BucketKey]:
-        return frozenset(
-            BucketKey(
-                session_id=SessionId(row["session_id"]),
-                bucket_index=BucketIndex(row["bucket_index"]),
+        with self.lock:
+            return frozenset(
+                BucketKey(
+                    session_id=SessionId(row["session_id"]),
+                    bucket_index=BucketIndex(row["bucket_index"]),
+                )
+                for row in self.conn.execute(
+                    "SELECT session_id, bucket_index FROM scored_buckets WHERE path = ?",
+                    (path,),
+                )
             )
-            for row in self.conn.execute(
-                "SELECT session_id, bucket_index FROM scored_buckets WHERE path = ?",
-                (path,),
-            )
-        )
 
     def scored_buckets_for_all(self) -> dict[str, frozenset[BucketKey]]:
-        out: dict[str, set[BucketKey]] = defaultdict(set)
-        for row in self.conn.execute(
-            "SELECT path, session_id, bucket_index FROM scored_buckets"
-        ):
-            out[row["path"]].add(BucketKey(
-                session_id=SessionId(row["session_id"]),
-                bucket_index=BucketIndex(row["bucket_index"]),
-            ))
-        return {p: frozenset(s) for p, s in out.items()}
+        with self.lock:
+            out: dict[str, set[BucketKey]] = defaultdict(set)
+            for row in self.conn.execute(
+                "SELECT path, session_id, bucket_index FROM scored_buckets"
+            ):
+                out[row["path"]].add(BucketKey(
+                    session_id=SessionId(row["session_id"]),
+                    bucket_index=BucketIndex(row["bucket_index"]),
+                ))
+            return {p: frozenset(s) for p, s in out.items()}
 
     def save_records(
         self, path: str, mtime: float, records: list[SentimentRecord]
     ) -> None:
         placeholders = ", ".join("?" * len(RECORD_COLUMNS))
         columns = ", ".join(RECORD_COLUMNS)
-        with self.conn:
+        with self.lock, self.conn:
             self.conn.execute(
                 "INSERT INTO files(path, mtime) VALUES(?, ?) "
                 "ON CONFLICT(path) DO UPDATE SET mtime = excluded.mtime",
@@ -168,37 +174,40 @@ class Repository:
             )
 
     def pending_records(self) -> list[SentimentRecord]:
-        return [
-            self.row_to_record(row)
-            for row in self.conn.execute(
-                "SELECT r.* FROM records r "
-                "JOIN sessions s ON r.session_id = s.session_id "
-                "WHERE s.uploaded = 0"
-            )
-        ]
+        with self.lock:
+            return [
+                self.row_to_record(row)
+                for row in self.conn.execute(
+                    "SELECT r.* FROM records r "
+                    "JOIN sessions s ON r.session_id = s.session_id "
+                    "WHERE s.uploaded = 0"
+                )
+            ]
 
     def all_records(self) -> list[SentimentRecord]:
-        return [
-            self.row_to_record(row)
-            for row in self.conn.execute("SELECT * FROM records")
-        ]
+        with self.lock:
+            return [
+                self.row_to_record(row)
+                for row in self.conn.execute("SELECT * FROM records")
+            ]
 
     def mark_sessions_uploaded(self, session_ids: set[SessionId]) -> None:
-        with self.conn:
+        with self.lock, self.conn:
             self.conn.executemany(
                 "UPDATE sessions SET uploaded = 1 WHERE session_id = ?",
                 [(sid,) for sid in session_ids],
             )
 
     def stats(self) -> tuple[int, int, int]:
-        return (
-            self.conn.execute("SELECT COUNT(*) FROM records").fetchone()[0],
-            self.conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0],
-            self.conn.execute("SELECT COUNT(*) FROM files").fetchone()[0],
-        )
+        with self.lock:
+            return (
+                self.conn.execute("SELECT COUNT(*) FROM records").fetchone()[0],
+                self.conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0],
+                self.conn.execute("SELECT COUNT(*) FROM files").fetchone()[0],
+            )
 
     def clear_all(self) -> None:
-        with self.conn:
+        with self.lock, self.conn:
             self.conn.execute("DELETE FROM records")
             self.conn.execute("DELETE FROM scored_buckets")
             self.conn.execute("DELETE FROM sessions")
