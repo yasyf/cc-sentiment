@@ -11,6 +11,7 @@ from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import mean
+from typing import ClassVar
 
 import anyio
 import anyio.to_thread
@@ -61,28 +62,6 @@ from cc_sentiment.signing import (
     SSHBackend,
     SSHKeyInfo,
 )
-
-SCORE_COLORS = {1: "red", 2: "red", 3: "yellow", 4: "green", 5: "green"}
-SCORE_LABELS = {1: "frustrated", 2: "annoyed", 3: "neutral", 4: "satisfied", 5: "delighted"}
-SCORE_ICONS = {1: "😤", 2: "😒", 3: "😐", 4: "😊", 5: "🤩"}
-WEEKDAY_LABELS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-INSIGHTS_MIN_RECORDS = 20
-INSIGHTS_MIN_SAMPLES = 3
-SNIPPET_MAX_CHARS = 60
-SNIPPET_RATE_LIMIT_SECONDS = 0.5
-
-WITTY_COMMENTS: dict[int, tuple[str, ...]] = {
-    1: ("oof", "yikes", "time to take a walk", "we've all been there", "send help", "cursed"),
-    2: ("mood", "same energy", "try again later", "nope nope nope", "sigh", "bargaining stage"),
-    3: ("just business", "getting it done", "ok then", "fine", "the work continues", "transactional"),
-    4: ("nice", "smooth", "working as intended", "as you were", "on track", "we're cooking"),
-    5: ("vibes", "flow state", "chef's kiss", "absolute unit", "sparkles", "heck yeah"),
-}
-
-RESCAN_CONFIRM_SECONDS = 5.0
-
-DASHBOARD_URL = "https://sentiments.cc"
-
 
 @dataclass(frozen=True)
 class Stage:
@@ -154,70 +133,17 @@ def format_duration(seconds: float) -> str:
 
 
 def format_hour(hour: int) -> str:
-    if hour == 0:
-        return "12am"
-    if hour < 12:
-        return f"{hour}am"
-    if hour == 12:
-        return "12pm"
-    return f"{hour - 12}pm"
+    match hour:
+        case 0:
+            return "12am"
+        case h if h < 12:
+            return f"{h}am"
+        case 12:
+            return "12pm"
+        case h:
+            return f"{h - 12}pm"
 
 
-def short_model(model: str) -> str:
-    for token in model.split("-"):
-        if token not in ("claude", "anthropic") and not token.isdigit():
-            return token
-    return model
-
-
-def pick_toughest[K](groups: dict[K, list[int]]) -> K | None:
-    qualifying = {k: mean(v) for k, v in groups.items() if len(v) >= INSIGHTS_MIN_SAMPLES}
-    if not qualifying:
-        return None
-    return min(qualifying, key=qualifying.__getitem__)
-
-
-SAMPLE_PAYLOAD_LINES = (
-    ("time", '"2026-04-15T14:23:05Z"'),
-    ("conversation_id", '"7f3a9b2c-0e4d-4a91-b6f8-e2c8d9a1f4b2"'),
-    ("sentiment_score", "4"),
-    ("claude_model", '"claude-haiku-4-5"'),
-    ("turn_count", "14"),
-    ("thinking_chars", "2847"),
-    ("read_edit_ratio", "0.71"),
-)
-
-
-def render_sample_payload() -> str:
-    width = max(len(k) for k, _ in SAMPLE_PAYLOAD_LINES)
-    rows = []
-    for k, v in SAMPLE_PAYLOAD_LINES:
-        colour = "green" if v.startswith('"') else "yellow"
-        padding = " " * (width - len(k) + 2)
-        rows.append(f'  [cyan]"{k}"[/]:{padding}[{colour}]{v}[/],')
-    return (
-        "[b]What actually gets sent:[/] one row per conversation, "
-        "[dim]signed by your key. No text, no prompts, no code.[/]\n\n"
-        "[dim]{[/]\n"
-        + "\n".join(rows)
-        + "\n  [dim]...[/]\n[dim]}[/]"
-    )
-
-
-def detect_git_username() -> str | None:
-    for cmd in (
-        ["gh", "api", "user", "--jq", ".login"],
-        ["git", "config", "github.user"],
-    ):
-        if not shutil.which(cmd[0]):
-            continue
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            continue
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    return None
 
 
 @dataclass(frozen=True)
@@ -267,9 +193,25 @@ class AutoSetup:
                 return True, username
         return False, username
 
+    @staticmethod
+    def find_git_username() -> str | None:
+        for cmd in (
+            ["gh", "api", "user", "--jq", ".login"],
+            ["git", "config", "github.user"],
+        ):
+            if not shutil.which(cmd[0]):
+                continue
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                continue
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        return None
+
     async def detect_username(self) -> str | None:
         phase = self.emit.begin("Looking for your GitHub username")
-        username = await anyio.to_thread.run_sync(detect_git_username)
+        username = await anyio.to_thread.run_sync(self.find_git_username)
         if not username:
             phase.skip("No GitHub username on this machine")
             return None
@@ -369,6 +311,16 @@ class SpinnerLine(Static):
 
 @dataclass
 class EngineBootView:
+    MAX_SNIPPET_CHARS: ClassVar[int] = 60
+    SNIPPET_RATE_LIMIT: ClassVar[float] = 0.5
+    WITTY_COMMENTS: ClassVar[dict[int, tuple[str, ...]]] = {
+        1: ("oof", "yikes", "time to take a walk", "we've all been there", "send help", "cursed"),
+        2: ("mood", "same energy", "try again later", "nope nope nope", "sigh", "bargaining stage"),
+        3: ("just business", "getting it done", "ok then", "fine", "the work continues", "transactional"),
+        4: ("nice", "smooth", "working as intended", "as you were", "on track", "we're cooking"),
+        5: ("vibes", "flow state", "chef's kiss", "absolute unit", "sparkles", "heck yeah"),
+    }
+
     app: App
     section: Widget
     status: SpinnerLine
@@ -395,16 +347,16 @@ class EngineBootView:
 
     def add_snippet(self, snippet: str, score: int) -> None:
         now = time.monotonic()
-        if now - self.last_snippet_at < SNIPPET_RATE_LIMIT_SECONDS:
+        if now - self.last_snippet_at < self.SNIPPET_RATE_LIMIT:
             return
         self.last_snippet_at = now
         if not self.snippet_started:
             self.snippet_started = True
             self.lines.clear()
             self.status.display = False
-        comment = random.choice(WITTY_COMMENTS[score])
-        truncated = snippet if len(snippet) <= SNIPPET_MAX_CHARS else snippet[:SNIPPET_MAX_CHARS - 1] + "…"
-        self.lines.append(f'{SCORE_ICONS[score]} {score}  "{truncated}"  [dim]{comment}[/]')
+        comment = random.choice(self.WITTY_COMMENTS[score])
+        truncated = snippet if len(snippet) <= self.MAX_SNIPPET_CHARS else snippet[:self.MAX_SNIPPET_CHARS - 1] + "…"
+        self.lines.append(f'{ScoreBar.ICONS[score]} {score}  "{truncated}"  [dim]{comment}[/]')
         self.log.update("\n".join(self.lines))
 
 
@@ -412,6 +364,10 @@ class ScoreBar(Static):
     DEFAULT_CSS = """
     ScoreBar { height: 1; }
     """
+
+    COLORS: ClassVar[dict[int, str]] = {1: "red", 2: "red", 3: "yellow", 4: "green", 5: "green"}
+    LABELS: ClassVar[dict[int, str]] = {1: "frustrated", 2: "annoyed", 3: "neutral", 4: "satisfied", 5: "delighted"}
+    ICONS: ClassVar[dict[int, str]] = {1: "😤", 2: "😒", 3: "😐", 4: "😊", 5: "🤩"}
 
     def __init__(self, score: int) -> None:
         super().__init__()
@@ -421,22 +377,21 @@ class ScoreBar(Static):
         pct = 100 * count / total if total else 0
         bar_width = 40
         bar_len = int(bar_width * count / max_count) if max_count else 0
-        color = SCORE_COLORS[self.score]
-        icon = SCORE_ICONS[self.score]
-        label = SCORE_LABELS[self.score]
+        color = self.COLORS[self.score]
+        icon = self.ICONS[self.score]
+        label = self.LABELS[self.score]
         bar = "━" * bar_len + "╺" + "─" * (bar_width - bar_len)
         return f" {icon} {self.score} [{color}]{label:>11}[/]  [{color}]{bar}[/]  {pct:4.1f}%  ({count})"
-
-
-CHART_COLORS = {1: "red", 2: "dark_orange", 3: "yellow", 4: "green", 5: "cyan"}
-CHART_Y_TICKS = {5: "😄", 4: "🙂", 3: "😐", 2: "😕", 1: "😡"}
-CHART_X_LABELS = {0: "12a", 6: "6a", 12: "12p", 18: "6p", 23: "11p"}
 
 
 class HourlyChart(Static):
     DEFAULT_CSS = """
     HourlyChart { height: 7; }
     """
+
+    COLORS: ClassVar[dict[int, str]] = {1: "red", 2: "dark_orange", 3: "yellow", 4: "green", 5: "cyan"}
+    Y_TICKS: ClassVar[dict[int, str]] = {5: "😄", 4: "🙂", 3: "😐", 2: "😕", 1: "😡"}
+    X_LABELS: ClassVar[dict[int, str]] = {0: "12a", 6: "6a", 12: "12p", 18: "6p", 23: "11p"}
 
     def update_chart(self, records: list[SentimentRecord]) -> None:
         sums = [0.0] * 24
@@ -455,13 +410,12 @@ class HourlyChart(Static):
 
         rows: list[str] = []
         for row_score in range(5, 0, -1):
-            tick = CHART_Y_TICKS[row_score]
+            tick = self.Y_TICKS[row_score]
             cells: list[str] = []
             for h in range(24):
                 avg = avgs[h]
                 if avg is not None and round(avg) == row_score:
-                    color = CHART_COLORS[row_score]
-                    cells.append(f"[{color}]●[/]")
+                    cells.append(f"[{self.COLORS[row_score]}]●[/]")
                 elif self._on_line_segment(h, row_score, avgs):
                     cells.append("[dim]│[/]")
                 else:
@@ -470,7 +424,7 @@ class HourlyChart(Static):
 
         rows.append("   " + "─" * 24)
         buf = list(" " * 27)
-        for h, lbl in CHART_X_LABELS.items():
+        for h, lbl in self.X_LABELS.items():
             for i, ch in enumerate(lbl):
                 buf[h + i] = ch
         rows.append("   " + "".join(buf).rstrip())
@@ -485,10 +439,10 @@ class HourlyChart(Static):
         next_h = next((i for i in range(h + 1, 24) if avgs[i] is not None), None)
         if prev_h is None or next_h is None:
             return False
-        prev_row = round(avgs[prev_h])  # type: ignore[arg-type]
-        next_row = round(avgs[next_h])  # type: ignore[arg-type]
-        lo = min(prev_row, next_row)
-        hi = max(prev_row, next_row)
+        prev_avg = avgs[prev_h]
+        next_avg = avgs[next_h]
+        assert prev_avg is not None and next_avg is not None
+        lo, hi = sorted((round(prev_avg), round(next_avg)))
         return lo < row_score < hi
 
 
@@ -750,7 +704,31 @@ class SetupScreen(Screen[bool]):
                     "`claude` CLI (no Apple Silicon here for local inference). "
                     "Transcripts go to the Claude API, never to our dashboard."
                 )
-        self.query_one("#done-payload", Static).update(render_sample_payload())
+        self.query_one("#done-payload", Static).update(self.render_sample_payload())
+
+    @staticmethod
+    def render_sample_payload() -> str:
+        fields = (
+            ("time", '"2026-04-15T14:23:05Z"'),
+            ("conversation_id", '"7f3a9b2c-0e4d-4a91-b6f8-e2c8d9a1f4b2"'),
+            ("sentiment_score", "4"),
+            ("claude_model", '"claude-haiku-4-5"'),
+            ("turn_count", "14"),
+            ("thinking_chars", "2847"),
+            ("read_edit_ratio", "0.71"),
+        )
+        width = max(len(k) for k, _ in fields)
+        rows = [
+            f'  [cyan]"{k}"[/]:{" " * (width - len(k) + 2)}[{"green" if v.startswith(chr(34)) else "yellow"}]{v}[/],'
+            for k, v in fields
+        ]
+        return (
+            "[b]What actually gets sent:[/] one row per conversation, "
+            "[dim]signed by your key. No text, no prompts, no code.[/]\n\n"
+            "[dim]{[/]\n"
+            + "\n".join(rows)
+            + "\n  [dim]...[/]\n[dim]}[/]"
+        )
 
     def on_mount(self) -> None:
         table = self.query_one("#key-table", DataTable)
@@ -1202,6 +1180,12 @@ Expire-Date: 0
 
 
 class CCSentimentApp(App[None]):
+    DASHBOARD_URL: ClassVar[str] = "https://sentiments.cc"
+    RESCAN_CONFIRM_SECONDS: ClassVar[float] = 5.0
+    INSIGHTS_MIN_RECORDS: ClassVar[int] = 20
+    INSIGHTS_MIN_SAMPLES: ClassVar[int] = 3
+    WEEKDAY_LABELS: ClassVar[tuple[str, ...]] = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
     CSS = """
     Screen { layout: vertical; background: $surface; }
     #main { height: 1fr; padding: 1 2; align-vertical: middle; }
@@ -1575,8 +1559,8 @@ class CCSentimentApp(App[None]):
             )
 
     async def action_open_dashboard(self) -> None:
-        await anyio.to_thread.run_sync(webbrowser.open, DASHBOARD_URL)
-        self._update_status(f"[dim]Opened {DASHBOARD_URL}.[/]")
+        await anyio.to_thread.run_sync(webbrowser.open, self.DASHBOARD_URL)
+        self._update_status(f"[dim]Opened {self.DASHBOARD_URL}.[/]")
         self.set_timer(3.0, lambda: self.watch_stage(self.stage))
 
     async def action_rescan(self) -> None:
@@ -1586,7 +1570,7 @@ class CCSentimentApp(App[None]):
                 self.run_flow()
             case IdleEmpty() | IdleCaughtUp() | IdleAfterUpload() | Error() as prev:
                 self.stage = RescanConfirm(prev=prev)
-                self.set_timer(RESCAN_CONFIRM_SECONDS, self._cancel_rescan)
+                self.set_timer(self.RESCAN_CONFIRM_SECONDS, self._cancel_rescan)
 
     async def _cancel_rescan(self) -> None:
         match self.stage:
@@ -1667,9 +1651,21 @@ class CCSentimentApp(App[None]):
         self.query_one("#stat-sessions", Static).update(f"[b]{sessions}[/]")
         self._render_insights()
 
+    @staticmethod
+    def pick_toughest[K](groups: dict[K, list[int]], min_samples: int) -> K | None:
+        qualifying = {k: mean(v) for k, v in groups.items() if len(v) >= min_samples}
+        return min(qualifying, key=qualifying.__getitem__) if qualifying else None
+
+    @staticmethod
+    def short_model(model: str) -> str:
+        return next(
+            (t for t in model.split("-") if t not in ("claude", "anthropic") and not t.isdigit()),
+            model,
+        )
+
     def _render_insights(self) -> None:
         insights = self.query_one("#insights-section", Static)
-        if len(self.records) < INSIGHTS_MIN_RECORDS:
+        if len(self.records) < self.INSIGHTS_MIN_RECORDS:
             insights.add_class("inactive")
             return
 
@@ -1684,12 +1680,12 @@ class CCSentimentApp(App[None]):
             models[r.claude_model].append(score)
 
         parts: list[str] = []
-        if (h := pick_toughest(hours)) is not None:
+        if (h := self.pick_toughest(hours, self.INSIGHTS_MIN_SAMPLES)) is not None:
             parts.append(f"[dim]toughest hour:[/] [b]{format_hour(h)}[/]")
-        if (d := pick_toughest(days)) is not None:
-            parts.append(f"[dim]toughest day:[/] [b]{WEEKDAY_LABELS[d]}[/]")
-        if (m := pick_toughest(models)) is not None:
-            parts.append(f"[dim]toughest model:[/] [b]{short_model(m)}[/]")
+        if (d := self.pick_toughest(days, self.INSIGHTS_MIN_SAMPLES)) is not None:
+            parts.append(f"[dim]toughest day:[/] [b]{self.WEEKDAY_LABELS[d]}[/]")
+        if (m := self.pick_toughest(models, self.INSIGHTS_MIN_SAMPLES)) is not None:
+            parts.append(f"[dim]toughest model:[/] [b]{self.short_model(m)}[/]")
 
         if not parts:
             insights.add_class("inactive")

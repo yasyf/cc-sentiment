@@ -11,7 +11,6 @@ from cc_sentiment.models import AppState, ContributorId, GPGConfig, SSHConfig
 from cc_sentiment.repo import Repository
 from cc_sentiment.signing import GPGKeyInfo, SSHKeyInfo
 from cc_sentiment.tui import (
-    DASHBOARD_URL,
     CCSentimentApp,
     CostReviewScreen,
     Discovering,
@@ -52,7 +51,7 @@ class SetupHarness(App[None]):
 @pytest.fixture
 def no_auto_setup():
     with patch("cc_sentiment.tui.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch("cc_sentiment.tui.detect_git_username", return_value=None), \
+         patch("cc_sentiment.tui.AutoSetup.find_git_username", return_value=None), \
          patch("cc_sentiment.upload.Uploader.probe_credentials", new_callable=AsyncMock, return_value=AuthOk()):
         yield
 
@@ -91,7 +90,7 @@ async def test_setup_empty_username_blocked(no_auto_setup):
 
 async def test_setup_auto_detect_prepopulates_username():
     with patch("cc_sentiment.tui.AutoSetup.run", new_callable=AsyncMock, return_value=(False, "testuser")), \
-         patch("cc_sentiment.tui.detect_git_username", return_value="testuser"):
+         patch("cc_sentiment.tui.AutoSetup.find_git_username", return_value="testuser"):
         async with SetupHarness(AppState()).run_test() as pilot:
             await pilot.pause(delay=0.3)
             assert pilot.app.screen.query_one("#username-input", Input).value == "testuser"
@@ -380,7 +379,7 @@ async def test_ccsentiment_app_pushes_setup_when_no_config(tmp_path: Path):
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 0.0)]), \
          patch("cc_sentiment.tui.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch("cc_sentiment.tui.detect_git_username", return_value=None):
+         patch("cc_sentiment.tui.AutoSetup.find_git_username", return_value=None):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.5)
@@ -591,10 +590,14 @@ def test_format_duration_hours():
 
 def test_sample_payload_fields_match_real_record_schema():
     from cc_sentiment.models import SentimentRecord
-    from cc_sentiment.tui import SAMPLE_PAYLOAD_LINES
 
+    payload = SetupScreen.render_sample_payload()
     real_fields = set(SentimentRecord.model_fields)
-    sample_fields = [k for k, _ in SAMPLE_PAYLOAD_LINES]
+    sample_fields = [
+        line.split('"')[1]
+        for line in payload.split("\n")
+        if line.strip().startswith("[cyan]")
+    ]
 
     for k in sample_fields:
         assert k in real_fields, f"{k!r} is not a real SentimentRecord field"
@@ -661,8 +664,8 @@ async def test_action_open_dashboard_opens_browser(tmp_path: Path, auth_ok):
             await pilot.pause(delay=0.3)
             await pilot.press("o")
             await pilot.pause(delay=0.2)
-            mock_open.assert_called_once_with(DASHBOARD_URL)
-            assert DASHBOARD_URL in app.status_text
+            mock_open.assert_called_once_with(CCSentimentApp.DASHBOARD_URL)
+            assert CCSentimentApp.DASHBOARD_URL in app.status_text
 
 
 async def test_enter_idle_after_upload_mentions_dashboard(tmp_path: Path, auth_ok):
