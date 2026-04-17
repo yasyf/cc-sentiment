@@ -2,10 +2,9 @@
 
 [![PyPI](https://img.shields.io/pypi/v/cc-sentiment.svg)](https://pypi.org/project/cc-sentiment/)
 [![Python](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
-[![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-black.svg)](https://www.apple.com/mac/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](client/LICENSE)
 
-An open experiment in Claude Code behavior. Contributors run a CLI on their Mac that scores their own Claude Code transcripts locally, and uploads the numbers to a shared dashboard at [sentiments.cc](https://sentiments.cc).
+An open experiment in Claude Code behavior. Contributors run a CLI that scores their own Claude Code transcripts locally, and uploads the numbers to a shared dashboard at [sentiments.cc](https://sentiments.cc).
 
 ![Dashboard](docs/dashboard.png)
 
@@ -40,7 +39,7 @@ Per 5-minute slice of each conversation:
 
 Plus your GitHub handle, so uploads are attributable.
 
-## What stays on your Mac
+## What stays on your machine
 
 Conversation text, file contents, file paths, tool inputs, and tool outputs never leave the device. Scoring is local. Only the numbers above are uploaded.
 
@@ -49,7 +48,7 @@ Conversation text, file contents, file paths, tool inputs, and tool outputs neve
 ```
 ┌─────────────┐         ┌─────────────┐         ┌─────────────┐
 │   client/   │  POST   │   server/   │  fetch  │    app/     │
-│  macOS CLI  │────────▶│  Modal API  │◀────────│  SvelteKit  │
+│  local CLI  │────────▶│  Modal API  │◀────────│  SvelteKit  │
 │  MLX+Gemma4 │ signed  │ TimescaleDB │  SSR    │  dashboard  │
 └─────────────┘ upload  └─────────────┘         └─────────────┘
 ```

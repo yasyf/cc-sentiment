@@ -22,7 +22,7 @@
 	<div class="mx-auto max-w-2xl px-6 py-10">
 		<h2 class="text-3xl font-semibold tracking-tight text-text">Contribute your data</h2>
 		<p class="mt-2 text-text-muted">
-			One command. Everything runs locally on your Mac -- your conversation transcripts
+			One command. Everything runs locally on your machine -- your conversation transcripts
 			never leave your machine. Only numeric scores (1-5) and timestamps are uploaded.
 		</p>
 
@@ -30,7 +30,7 @@
 			<section>
 				<h3 class="text-base font-medium text-text">Run it</h3>
 				<p class="mt-2 text-sm text-text-muted">
-					Requires macOS with Apple Silicon and <a href="https://docs.astral.sh/uv/" class="text-accent hover:text-accent-hover transition-colors" target="_blank" rel="noopener">uv</a>.
+					Requires Python 3.13+ and <a href="https://docs.astral.sh/uv/" class="text-accent hover:text-accent-hover transition-colors" target="_blank" rel="noopener">uv</a>.
 				</p>
 				<pre class="mt-3 overflow-x-auto rounded border border-border bg-bg-code px-4 py-3 font-mono text-sm text-text-secondary"><code>uvx cc-sentiment</code></pre>
 				<p class="mt-2 text-sm text-text-dim">
@@ -42,7 +42,7 @@ cc-sentiment install</code></pre>
 					Runs once a day in the background. Undo any time with <code class="rounded bg-bg-code px-1 py-0.5 font-mono text-xs">cc-sentiment uninstall</code>.
 				</p>
 				<p class="mt-3 text-sm text-text-muted">
-					The wizard confirms your GitHub identity, scores your sessions on your Mac,
+					The wizard confirms your GitHub identity, scores your sessions on your machine,
 					and uploads the numeric scores. If anything's missing, it'll set it up for you.
 				</p>
 			</section>

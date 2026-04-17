@@ -9,6 +9,7 @@
 	import ToolCallsPerTurnTimeline from '$lib/charts/ToolCallsPerTurnTimeline.svelte';
 	import ModelBreakdown from '$lib/charts/ModelBreakdown.svelte';
 	import ContributeCTA from '$lib/ContributeCTA.svelte';
+	import ContributeCommand from '$lib/ContributeCommand.svelte';
 	import { sentimentEmoji } from '$lib/chart-theme.js';
 	import { verdictFor } from '$lib/verdict.js';
 	import type { PageProps } from './$types.js';
@@ -161,8 +162,11 @@
 			</p>
 			<p class="mt-1 max-w-2xl text-sm text-text-dim">
 				An open experiment: does developer sentiment with Claude Code vary by time of day, day of week, or model?
-				Anyone can contribute. Scoring runs on your Mac, only the numbers leave.
+				Anyone can contribute. Scoring runs on your machine, only the numbers leave.
 			</p>
+			<div class="mt-4 max-w-md">
+				<ContributeCommand />
+			</div>
 		</div>
 
 		{#if data.total_records === 0}
