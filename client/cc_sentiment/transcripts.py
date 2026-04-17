@@ -24,9 +24,9 @@ EPHEMERAL_ENTRYPOINTS: frozenset[str] = frozenset({"sdk-cli"})
 MIN_USER_TURNS_PER_SESSION = 2
 
 WRAPPER_TAG_RE = re.compile(
-    r"<(?:system[_-]instruction|local-command-stdout|command-(?:name|message|args))>"
+    r"<(?:system[_-]instruction|local-command-stdout|command-(?:name|message|args)|task-notification)>"
     r".*?"
-    r"</(?:system[_-]instruction|local-command-stdout|command-(?:name|message|args))>",
+    r"</(?:system[_-]instruction|local-command-stdout|command-(?:name|message|args)|task-notification)>",
     re.DOTALL | re.IGNORECASE,
 )
 
