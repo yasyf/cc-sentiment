@@ -20,7 +20,7 @@ from cc_sentiment.models import (
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 BUCKET_MINUTES = 5
 ASSISTANT_TRUNCATION = 1024
-EPHEMERAL_ENTRYPOINTS: frozenset[str] = frozenset({"sdk-cli", "sdk-ts"})
+EPHEMERAL_ENTRYPOINTS: frozenset[str] = frozenset({"sdk-cli"})
 MIN_USER_TURNS_PER_SESSION = 2
 
 WRAPPER_TAG_RE = re.compile(

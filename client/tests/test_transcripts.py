@@ -84,16 +84,29 @@ class TestTranscriptParser:
         )
         assert TranscriptParser.parse_line(line) is None
 
-    def test_skips_ephemeral_sdk_entrypoints(self) -> None:
-        for entrypoint in ("sdk-cli", "sdk-ts"):
-            line = (
-                '{"parentUuid":null,"isSidechain":false,"type":"user",'
-                '"message":{"role":"user","content":"one-shot"},'
-                f'"entrypoint":"{entrypoint}",'
-                '"uuid":"u","timestamp":"2026-04-10T07:36:00.000Z",'
-                '"sessionId":"s","version":"2.1.92"}'
-            )
-            assert TranscriptParser.parse_line(line) is None
+    def test_skips_ephemeral_sdk_cli_entrypoint(self) -> None:
+        line = (
+            '{"parentUuid":null,"isSidechain":false,"type":"user",'
+            '"message":{"role":"user","content":"one-shot"},'
+            '"entrypoint":"sdk-cli",'
+            '"uuid":"u","timestamp":"2026-04-10T07:36:00.000Z",'
+            '"sessionId":"s","version":"2.1.92"}'
+        )
+        assert TranscriptParser.parse_line(line) is None
+
+    def test_allows_conductor_sdk_ts_entrypoint(self) -> None:
+        line = (
+            '{"parentUuid":null,"isSidechain":false,"type":"user",'
+            '"message":{"role":"user","content":"fix the failing test"},'
+            '"entrypoint":"sdk-ts","promptId":"prompt-123",'
+            '"uuid":"u","timestamp":"2026-04-10T07:36:00.000Z",'
+            '"sessionId":"s","version":"2.1.7",'
+            '"cwd":"/Users/me/conductor/workspaces/project/branch"}'
+        )
+        msg = TranscriptParser.parse_line(line)
+        assert isinstance(msg, UserMessage)
+        assert msg.content == "fix the failing test"
+        assert msg.cc_version == "2.1.7"
 
     def test_allows_cli_entrypoint(self) -> None:
         line = (
