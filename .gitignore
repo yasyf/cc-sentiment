@@ -57,3 +57,4 @@ mlx_models/
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 .vercel
+app/.playwright-cli
