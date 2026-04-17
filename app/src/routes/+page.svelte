@@ -162,6 +162,7 @@
 			</p>
 			<p class="mt-1 max-w-2xl text-sm text-text-dim">
 				An open experiment: does developer sentiment with Claude Code vary by time of day?
+				<br />
 				Anyone can contribute. Scoring runs on your machine, only the numbers leave.
 				<br />
 				<ContributeCommandInline />
