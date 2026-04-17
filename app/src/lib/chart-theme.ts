@@ -41,3 +41,38 @@ export const TOOLTIP = {
 	titleFont: { weight: 500 as const },
 	bodyFont: { size: 12 }
 };
+
+export interface PaddedRangeOpts {
+	floor?: number;
+	ceil?: number;
+	padRatio?: number;
+	snapInt?: boolean;
+	minSpan?: number;
+}
+
+export function paddedRange(values: (number | null | undefined)[], opts: PaddedRangeOpts = {}): { min: number; max: number } {
+	const nums = values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+	if (nums.length === 0) return { min: opts.floor ?? 0, max: opts.ceil ?? 1 };
+	const lo = Math.min(...nums);
+	const hi = Math.max(...nums);
+	let min: number;
+	let max: number;
+	if (opts.snapInt) {
+		min = Math.floor(lo);
+		max = Math.ceil(hi);
+		if (max - min < (opts.minSpan ?? 0)) {
+			const need = opts.minSpan! - (max - min);
+			min -= Math.floor(need / 2);
+			max += Math.ceil(need / 2);
+		}
+	} else {
+		const span = Math.max(hi - lo, opts.minSpan ?? 1e-6);
+		const pad = span * (opts.padRatio ?? 0.15);
+		min = lo - pad;
+		max = hi + pad;
+	}
+	if (opts.floor != null) min = Math.max(min, opts.floor);
+	if (opts.ceil != null) max = Math.min(max, opts.ceil);
+	if (max - min < 1e-6) max = min + 1;
+	return { min, max };
+}

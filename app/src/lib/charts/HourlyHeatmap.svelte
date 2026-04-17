@@ -4,7 +4,7 @@
 	import annotationPlugin from 'chartjs-plugin-annotation';
 	import type { ChartOptions } from 'chart.js';
 	import type { HourlyPoint } from '$lib/types.js';
-	import { ACCENT_BAR, ACCENT_BAR_HOVER, GRID, TICK, TOOLTIP, SENTIMENT_EMOJI, sentimentColor } from '$lib/chart-theme.js';
+	import { ACCENT_BAR, ACCENT_BAR_HOVER, GRID, TICK, TOOLTIP, SENTIMENT_EMOJI, sentimentColor, paddedRange } from '$lib/chart-theme.js';
 
 	Chart.register(BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend, BarController, LineController, annotationPlugin);
 
@@ -42,7 +42,7 @@
 			borderWidth: 1,
 			label: {
 				display: true,
-				content: 'peak usage (5–7 PM PT)',
+				content: 'peak usage',
 				position: { x: 'center' as const, y: 'start' as const },
 				font: { size: 9 },
 				color: '#dc2626',
@@ -60,7 +60,8 @@
 			label: {
 				display: true,
 				content: 'now',
-				position: 'end' as const,
+				position: 'start' as const,
+				yAdjust: -6,
 				font: { size: 9, weight: 'bold' as const },
 				color: '#6366f1',
 				backgroundColor: 'rgba(255,255,255,0.9)',
@@ -101,7 +102,11 @@
 		]
 	});
 
-	const chartOptions: ChartOptions = {
+	const scoreRange = $derived(
+		paddedRange(allHours.filter((d) => d.count > 0).map((d) => d.avg_score), { floor: 1, ceil: 5, snapInt: true, minSpan: 2 })
+	);
+
+	const chartOptions: ChartOptions = $derived({
 		responsive: true,
 		maintainAspectRatio: false,
 		interaction: { mode: 'index' as const, intersect: false },
@@ -121,13 +126,17 @@
 			},
 			score: {
 				position: 'right' as const,
-				min: 1, max: 5,
+				min: scoreRange.min,
+				max: scoreRange.max,
 				grid: { drawOnChartArea: false },
 				ticks: {
 					color: TICK,
 					font: { size: 14 },
 					stepSize: 1,
-					callback: (v: number | string) => SENTIMENT_EMOJI[Number(v)] ?? String(v)
+					callback: (v: number | string) => {
+						const n = Number(v);
+						return Number.isInteger(n) ? SENTIMENT_EMOJI[n] ?? '' : '';
+					}
 				},
 				border: { display: false },
 				title: { display: true, text: 'sentiment', color: TICK, font: { size: 10 } }
@@ -142,7 +151,7 @@
 			tooltip: TOOLTIP,
 			annotation: { annotations: peakAnnotations }
 		}
-	};
+	});
 </script>
 
 <div class="h-52 w-full">

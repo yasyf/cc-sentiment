@@ -1,24 +1,26 @@
 <script lang="ts">
 	import { Line } from 'svelte5-chartjs';
 	import { Chart, LineElement, PointElement, LinearScale, TimeScale, Filler, Tooltip } from 'chart.js';
+	import annotationPlugin from 'chartjs-plugin-annotation';
 	import 'chartjs-adapter-luxon';
 	import type { TimelinePoint } from '$lib/types.js';
 	import { GRID, TICK, TOOLTIP, ACCENT, ACCENT_LIGHT } from '$lib/chart-theme.js';
+	import { bucketByDayPart, dayBoundaryAnnotations } from '$lib/bucket.js';
 
-	Chart.register(LineElement, PointElement, LinearScale, TimeScale, Filler, Tooltip);
+	Chart.register(LineElement, PointElement, LinearScale, TimeScale, Filler, Tooltip, annotationPlugin);
 
 	const { data: raw }: { data: TimelinePoint[] } = $props();
 
-	const sorted = $derived(
-		raw
-			.filter((d) => d.avg_tool_calls_per_turn != null)
-			.toSorted((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
+	const DISPLAY_TZ = 'America/Los_Angeles';
+
+	const buckets = $derived(
+		bucketByDayPart(raw, DISPLAY_TZ).filter((b) => b.avg_tool_calls_per_turn != null)
 	);
 
 	const chartData = $derived({
-		labels: sorted.map((d) => d.time),
+		labels: buckets.map((d) => d.time),
 		datasets: [{
-			data: sorted.map((d) => d.avg_tool_calls_per_turn),
+			data: buckets.map((d) => d.avg_tool_calls_per_turn),
 			borderColor: ACCENT,
 			backgroundColor: ACCENT_LIGHT,
 			fill: true,
@@ -32,15 +34,15 @@
 		}]
 	});
 
-	const chartOptions = {
+	const chartOptions = $derived({
 		responsive: true,
 		maintainAspectRatio: false,
 		interaction: { mode: 'index' as const, intersect: false },
 		scales: {
 			x: {
 				type: 'time' as const,
-				time: { unit: 'day' as const, tooltipFormat: 'LLL d, yyyy HH:mm ZZZZ' },
-				adapters: { date: { zone: 'America/Los_Angeles' } },
+				time: { unit: 'day' as const, tooltipFormat: 'LLL d, yyyy' },
+				adapters: { date: { zone: DISPLAY_TZ } },
 				grid: { color: GRID },
 				ticks: { color: TICK, font: { size: 11 }, maxTicksLimit: 8 },
 				border: { display: false }
@@ -58,12 +60,21 @@
 			tooltip: {
 				...TOOLTIP,
 				callbacks: {
+					title: (items: { dataIndex: number }[]) => {
+						const b = buckets[items[0]?.dataIndex];
+						if (!b) return '';
+						const dt = new Date(b.time).toLocaleDateString('en-US', {
+							timeZone: DISPLAY_TZ, month: 'short', day: 'numeric'
+						});
+						return `${dt} · ${b.label}`;
+					},
 					label: (ctx: { parsed: { y: number | null } }) =>
 						`${(ctx.parsed.y ?? 0).toFixed(2)} tool calls per turn`
 				}
-			}
+			},
+			annotation: { annotations: dayBoundaryAnnotations(buckets, DISPLAY_TZ) }
 		}
-	};
+	});
 </script>
 
 <div class="h-48 w-full">

@@ -5,28 +5,31 @@
 	import 'chartjs-adapter-luxon';
 	import type { TimelinePoint } from '$lib/types.js';
 	import { EVENTS } from '$lib/events.js';
-	import { ACCENT, GRID, TICK, TOOLTIP } from '$lib/chart-theme.js';
+	import { ACCENT, GRID, TICK, TOOLTIP, SENTIMENT_EMOJI, paddedRange } from '$lib/chart-theme.js';
+	import { bucketByDayPart, dayBoundaryAnnotations } from '$lib/bucket.js';
 
 	Chart.register(LineElement, PointElement, BarElement, LinearScale, TimeScale, Filler, Tooltip, Legend, BarController, LineController, annotationPlugin);
 
 	const { data: raw }: { data: TimelinePoint[] } = $props();
 
-	const sorted = $derived(raw.toSorted((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()));
+	const DISPLAY_TZ = 'America/Los_Angeles';
+
+	const buckets = $derived(bucketByDayPart(raw, DISPLAY_TZ));
 
 	const timeRange = $derived.by(() => {
-		if (sorted.length === 0) return { min: 0, max: 0 };
+		if (buckets.length === 0) return { min: 0, max: 0 };
 		return {
-			min: new Date(sorted[0].time).getTime(),
-			max: new Date(sorted[sorted.length - 1].time).getTime()
+			min: new Date(buckets[0].time).getTime(),
+			max: new Date(buckets[buckets.length - 1].time).getTime()
 		};
 	});
 
-	const eventAnnotations = $derived.by(() => {
-		const annotations: Record<string, object> = {};
+	const annotations = $derived.by(() => {
+		const out: Record<string, object> = { ...dayBoundaryAnnotations(buckets, DISPLAY_TZ) };
 		for (const evt of EVENTS) {
 			const t = new Date(evt.date).getTime();
 			if (t >= timeRange.min && t <= timeRange.max) {
-				annotations[`event-${evt.date}`] = {
+				out[`event-${evt.date}`] = {
 					type: 'line',
 					xMin: evt.date,
 					xMax: evt.date,
@@ -45,18 +48,22 @@
 				};
 			}
 		}
-		return annotations;
+		return out;
 	});
 
+	const scoreRange = $derived(
+		paddedRange(buckets.filter((d) => d.count > 0).map((d) => d.avg_score), { floor: 1, ceil: 5, snapInt: true, minSpan: 2 })
+	);
+
 	const chartData = $derived({
-		labels: sorted.map((d) => d.time),
+		labels: buckets.map((d) => d.time),
 		datasets: [
 			{
 				type: 'bar' as const,
 				label: 'Sessions',
-				data: sorted.map((d) => d.count),
-				backgroundColor: 'rgba(99, 102, 241, 0.06)',
-				hoverBackgroundColor: 'rgba(99, 102, 241, 0.12)',
+				data: buckets.map((d) => d.count),
+				backgroundColor: 'rgba(99, 102, 241, 0.08)',
+				hoverBackgroundColor: 'rgba(99, 102, 241, 0.18)',
 				borderRadius: 2,
 				yAxisID: 'volume',
 				order: 2
@@ -64,16 +71,17 @@
 			{
 				type: 'line' as const,
 				label: 'Sentiment',
-				data: sorted.map((d) => d.avg_score),
+				data: buckets.map((d) => (d.count > 0 ? d.avg_score : null)),
 				borderColor: ACCENT,
 				fill: false,
-				tension: 0.2,
-				pointRadius: 1.5,
+				tension: 0.35,
+				pointRadius: 2,
 				pointHoverRadius: 5,
 				pointBackgroundColor: ACCENT,
 				pointBorderColor: 'transparent',
-				borderWidth: 1.5,
+				borderWidth: 1.75,
 				cubicInterpolationMode: 'monotone' as const,
+				spanGaps: true,
 				yAxisID: 'score',
 				order: 1
 			}
@@ -87,17 +95,26 @@
 		scales: {
 			x: {
 				type: 'time' as const,
-				time: { unit: 'day' as const, tooltipFormat: 'LLL d, yyyy HH:mm ZZZZ' },
-				adapters: { date: { zone: 'America/Los_Angeles' } },
+				time: { unit: 'day' as const, tooltipFormat: 'LLL d, yyyy' },
+				adapters: { date: { zone: DISPLAY_TZ } },
 				grid: { color: GRID },
 				ticks: { color: TICK, font: { size: 11 }, maxTicksLimit: 8 },
 				border: { display: false }
 			},
 			score: {
 				position: 'left' as const,
-				min: 1, max: 5,
+				min: scoreRange.min,
+				max: scoreRange.max,
 				grid: { color: GRID },
-				ticks: { color: TICK, font: { size: 11 }, stepSize: 1 },
+				ticks: {
+					color: TICK,
+					font: { size: 14 },
+					stepSize: 1,
+					callback: (v: number | string) => {
+						const n = Number(v);
+						return Number.isInteger(n) ? SENTIMENT_EMOJI[n] ?? '' : '';
+					}
+				},
 				border: { display: false },
 				title: { display: true, text: 'sentiment', color: TICK, font: { size: 10 } }
 			},
@@ -119,13 +136,21 @@
 			tooltip: {
 				...TOOLTIP,
 				callbacks: {
-					label: (ctx: { parsed: { y: number | null }; dataIndex: number; dataset: { label?: string } }) => {
+					title: (items: { dataIndex: number }[]) => {
+						const b = buckets[items[0]?.dataIndex];
+						if (!b) return '';
+						const dt = new Date(b.time).toLocaleDateString('en-US', {
+							timeZone: DISPLAY_TZ, month: 'short', day: 'numeric'
+						});
+						return `${dt} · ${b.label}`;
+					},
+					label: (ctx: { parsed: { y: number | null }; dataset: { label?: string } }) => {
 						if (ctx.dataset.label === 'Sessions') return `${ctx.parsed.y ?? 0} sessions`;
 						return `${(ctx.parsed.y ?? 0).toFixed(2)} avg sentiment`;
 					}
 				}
 			},
-			annotation: { annotations: eventAnnotations }
+			annotation: { annotations }
 		}
 	});
 </script>

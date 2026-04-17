@@ -99,9 +99,13 @@
 	);
 
 	const worstSentimentHour = $derived.by(() => {
-		const significant = hourlyData.filter((h) => h.count >= 5);
-		if (significant.length === 0) return null;
-		const worst = significant.toSorted((a, b) => a.avg_score - b.avg_score)[0];
+		const eligible = hourlyData.filter((h) => h.count >= 3);
+		if (eligible.length === 0) return null;
+		const SIGMA = 1.0;
+		const Z = 1.0;
+		const worst = eligible
+			.map((h) => ({ ...h, ucb: h.avg_score + (Z * SIGMA) / Math.sqrt(h.count) }))
+			.toSorted((a, b) => a.ucb - b.ucb)[0];
 		return { ptLabel: fmtHour(worst.hour), score: worst.avg_score, count: worst.count };
 	});
 
