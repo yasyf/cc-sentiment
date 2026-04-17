@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib.util
 import json
 import platform
 import re
@@ -511,6 +512,12 @@ async def build_engine(
 ) -> InferenceEngine:
     match kind:
         case "mlx":
+            if importlib.util.find_spec("mlx_lm") is None:
+                raise RuntimeError(
+                    "The local mlx engine needs the `mlx` extra. "
+                    "Install with `uvx 'cc-sentiment[mlx]'` (Apple Silicon only), "
+                    "or use the default engine instead."
+                )
             from cc_sentiment.sentiment import SentimentClassifier
             inner: InferenceEngine = await anyio.to_thread.run_sync(
                 SentimentClassifier, model_repo or DEFAULT_MODEL

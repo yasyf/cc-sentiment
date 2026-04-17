@@ -4,8 +4,8 @@ macOS Apple Silicon CLI tool. Discovers Claude Code conversation transcripts, ru
 
 ## Tech Stack
 
-- **Runtime**: Python 3.12+, macOS Apple Silicon only
-- **ML inference**: MLX (`mlx-lm`) for local Gemma 4 inference on Apple Silicon GPU
+- **Runtime**: Python 3.12+. Cross-platform — local MLX inference is Apple Silicon only, other platforms fall back to the `claude` CLI engine.
+- **ML inference**: MLX (`mlx-lm`, optional `[mlx]` extra) for local Gemma 4 on Apple Silicon GPU; cloud `omlx` subprocess on Apple Silicon by default; `claude` CLI elsewhere.
 - **Model**: `unsloth/gemma-4-E2B-it-UD-MLX-4bit` (4-bit quantized, ~2.5GB)
 - **CLI**: `click` or `typer`
 - **HTTP**: `httpx` for async uploads
@@ -140,4 +140,4 @@ All rules from root `AGENTS.md` apply, plus:
 - **Local state is split between JSON and SQLite.** `~/.cc-sentiment/state.json` holds only the signing config. Derived state (records, sessions, scored buckets, file mtimes) lives in `~/.cc-sentiment/records.db` via stdlib `sqlite3` wrapped in `anyio.to_thread.run_sync`.
 - **CLI commands are thin.** Parse args, call library modules, format output. No business logic in CLI handlers.
 - **All network calls through `upload.py`.** Single module owns the HTTP client, base URL, retry logic.
-- **Fail loudly on wrong platform.** If MLX unavailable (not Apple Silicon), crash at import time with a clear message.
+- **MLX is an optional `[mlx]` extra.** `cc_sentiment.sentiment` is only imported from the `mlx` engine branch in `engines.py`, after a `find_spec("mlx_lm")` check raises an install hint when the extra is missing. The platform guard at the top of `sentiment.py` fails fast if the module is somehow loaded on the wrong arch.

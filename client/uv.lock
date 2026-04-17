@@ -48,13 +48,17 @@ dependencies = [
     { name = "anyio" },
     { name = "click" },
     { name = "httpx" },
-    { name = "mlx-lm" },
     { name = "orjson" },
     { name = "pydantic" },
     { name = "python-gnupg" },
     { name = "rich" },
     { name = "tenacity" },
     { name = "textual" },
+]
+
+[package.optional-dependencies]
+mlx = [
+    { name = "mlx-lm" },
 ]
 
 [package.dev-dependencies]
@@ -69,7 +73,7 @@ requires-dist = [
     { name = "anyio", specifier = ">=4.4" },
     { name = "click", specifier = ">=8.1" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "mlx-lm", specifier = ">=0.20" },
+    { name = "mlx-lm", marker = "extra == 'mlx'", specifier = ">=0.20" },
     { name = "orjson", specifier = ">=3.10" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "python-gnupg", specifier = ">=0.5.4" },
@@ -77,6 +81,7 @@ requires-dist = [
     { name = "tenacity", specifier = ">=8.0" },
     { name = "textual", specifier = ">=3.0" },
 ]
+provides-extras = ["mlx"]
 
 [package.metadata.requires-dev]
 dev = [

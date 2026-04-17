@@ -22,7 +22,8 @@ from cc_sentiment.patches import apply_kv_cache_patch
 
 if sys.platform != "darwin" or platform.machine() != "arm64":
     raise RuntimeError(
-        "cc-sentiment requires macOS on Apple Silicon (MLX is not available on this platform)"
+        "The local mlx engine requires macOS on Apple Silicon. "
+        "Use the default engine on this platform."
     )
 
 __all__ = ["SentimentClassifier"]
