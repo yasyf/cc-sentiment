@@ -6,16 +6,37 @@
 	import { DateTime } from 'luxon';
 	import type { TimelinePoint } from '$lib/types.js';
 	import { EVENTS } from '$lib/events.js';
-	import { ACCENT, GRID, TICK, TOOLTIP, SENTIMENT_EMOJI, paddedRange } from '$lib/chart-theme.js';
-	import { bucketByDayPart, dayBoundaryAnnotations, dayPartBandAnnotations, dayPartFor, DAY_PART_EMOJI } from '$lib/bucket.js';
+	import { ACCENT, TICK, TOOLTIP, SENTIMENT_EMOJI, paddedRange } from '$lib/chart-theme.js';
+	import {
+		bucketByDayPart,
+		bucketByDay,
+		smoothSeries,
+		filterWindow,
+		dayBoundaryAnnotations,
+		dayPartBandAnnotations,
+		dayPartFor,
+		DAY_PART_EMOJI
+	} from '$lib/bucket.js';
 
 	Chart.register(LineElement, PointElement, BarElement, LinearScale, TimeScale, Filler, Tooltip, Legend, BarController, LineController, annotationPlugin);
 
-	const { data: raw }: { data: TimelinePoint[] } = $props();
+	type Range = 'week' | 'month';
+	const { data: raw, range = 'week' }: { data: TimelinePoint[]; range?: Range } = $props();
 
 	const DISPLAY_TZ = 'America/Los_Angeles';
 
-	const buckets = $derived(bucketByDayPart(raw, DISPLAY_TZ));
+	const buckets = $derived.by(() => {
+		if (range === 'week') {
+			const all = bucketByDayPart(raw, DISPLAY_TZ);
+			const smoothed = smoothSeries(all, (b) => b.avg_score, { halfWindow: 1, priorWeight: 1.0, priorValue: 3 });
+			const merged = all.map((b, i) => ({ ...b, smoothed_score: smoothed[i] }));
+			return filterWindow(merged, 7, DISPLAY_TZ);
+		}
+		const all = bucketByDay(raw, DISPLAY_TZ);
+		const smoothed = smoothSeries(all, (b) => b.avg_score, { halfWindow: 2, priorWeight: 1.0, priorValue: 3 });
+		const merged = all.map((b, i) => ({ ...b, smoothed_score: smoothed[i], label: '' }));
+		return filterWindow(merged, 30, DISPLAY_TZ);
+	});
 
 	const timeRange = $derived.by(() => {
 		if (buckets.length === 0) return { min: 0, max: 0 };
@@ -26,10 +47,11 @@
 	});
 
 	const annotations = $derived.by(() => {
-		const out: Record<string, object> = {
-			...dayPartBandAnnotations(buckets, DISPLAY_TZ),
-			...dayBoundaryAnnotations(buckets, DISPLAY_TZ)
-		};
+		const out: Record<string, object> = {};
+		if (range === 'week') {
+			Object.assign(out, dayPartBandAnnotations(buckets, DISPLAY_TZ));
+			Object.assign(out, dayBoundaryAnnotations(buckets, DISPLAY_TZ));
+		}
 		for (const evt of EVENTS) {
 			const t = new Date(evt.date).getTime();
 			if (t >= timeRange.min && t <= timeRange.max) {
@@ -56,7 +78,7 @@
 	});
 
 	const scoreRange = $derived(
-		paddedRange(buckets.filter((d) => d.count > 0).map((d) => d.avg_score), { floor: 1, ceil: 5, snapInt: true, minSpan: 2 })
+		paddedRange(buckets.map((d) => d.smoothed_score), { floor: 1, ceil: 5, snapInt: true, minSpan: 2 })
 	);
 
 	const chartData = $derived({
@@ -75,16 +97,15 @@
 			{
 				type: 'line' as const,
 				label: 'Sentiment',
-				data: buckets.map((d) => (d.count > 0 ? d.avg_score : null)),
+				data: buckets.map((d) => d.smoothed_score),
 				borderColor: ACCENT,
 				fill: false,
-				tension: 0.35,
+				tension: 0,
 				pointRadius: 2,
 				pointHoverRadius: 5,
 				pointBackgroundColor: ACCENT,
 				pointBorderColor: 'transparent',
 				borderWidth: 1.75,
-				cubicInterpolationMode: 'monotone' as const,
 				spanGaps: true,
 				yAxisID: 'score',
 				order: 1
@@ -95,11 +116,15 @@
 	const chartOptions = $derived({
 		responsive: true,
 		maintainAspectRatio: false,
+		animation: false as const,
 		interaction: { mode: 'index' as const, intersect: false },
 		scales: {
 			x: {
 				type: 'time' as const,
-				time: { unit: 'hour' as const, tooltipFormat: 'LLL d, yyyy · h a' },
+				time: {
+					unit: (range === 'week' ? 'hour' : 'day') as 'hour' | 'day',
+					tooltipFormat: range === 'week' ? 'LLL d, yyyy · h a' : 'LLL d, yyyy'
+				},
 				adapters: { date: { zone: DISPLAY_TZ } },
 				grid: { display: false },
 				ticks: {
@@ -110,6 +135,7 @@
 					font: { size: 12 },
 					callback: (value: number | string) => {
 						const dt = DateTime.fromMillis(Number(value), { zone: DISPLAY_TZ });
+						if (range === 'month') return dt.toFormat('LLL d');
 						const part = dayPartFor(dt.hour);
 						const emoji = DAY_PART_EMOJI[part.key];
 						return part.key === 'late' ? [emoji, dt.toFormat('LLL d')] : emoji;
@@ -121,7 +147,7 @@
 				position: 'left' as const,
 				min: scoreRange.min,
 				max: scoreRange.max,
-				grid: { color: GRID },
+				grid: { display: false },
 				ticks: {
 					color: TICK,
 					font: { size: 14 },
@@ -158,11 +184,14 @@
 						const dt = new Date(b.time).toLocaleDateString('en-US', {
 							timeZone: DISPLAY_TZ, month: 'short', day: 'numeric'
 						});
-						return `${dt} · ${b.label}`;
+						return range === 'week' && b.label ? `${dt} · ${b.label}` : dt;
 					},
-					label: (ctx: { parsed: { y: number | null }; dataset: { label?: string } }) => {
+					label: (ctx: { parsed: { y: number | null }; dataset: { label?: string }; dataIndex: number }) => {
 						if (ctx.dataset.label === 'Sessions') return `${ctx.parsed.y ?? 0} sessions`;
-						return `${(ctx.parsed.y ?? 0).toFixed(2)} avg sentiment`;
+						const b = buckets[ctx.dataIndex];
+						const score = ctx.parsed.y;
+						if (score == null) return 'no data';
+						return `${score.toFixed(2)} sentiment · ${b?.count ?? 0} sessions`;
 					}
 				}
 			},

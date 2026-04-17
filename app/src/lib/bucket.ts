@@ -78,6 +78,104 @@ function fresh(): Accumulator {
 	};
 }
 
+export interface DayBucket {
+	time: string;
+	date: string;
+	avg_score: number;
+	count: number;
+	avg_read_edit_ratio: number | null;
+	avg_edits_without_prior_read_ratio: number | null;
+	avg_tool_calls_per_turn: number | null;
+}
+
+export function bucketByDay(points: TimelinePoint[], zone: string): DayBucket[] {
+	const acc = new Map<string, Accumulator & { date: string }>();
+	for (const point of points) {
+		const dt = DateTime.fromISO(point.time, { zone });
+		if (!dt.isValid) continue;
+		const date = dt.toISODate();
+		if (!date) continue;
+		const entry = acc.get(date) ?? { date, ...fresh() };
+		entry.score += point.avg_score * point.count;
+		entry.count += point.count;
+		if (point.avg_read_edit_ratio != null) {
+			entry.readEditSum += point.avg_read_edit_ratio * point.count;
+			entry.readEditCount += point.count;
+		}
+		if (point.avg_edits_without_prior_read_ratio != null) {
+			entry.editsWithoutReadSum += point.avg_edits_without_prior_read_ratio * point.count;
+			entry.editsWithoutReadCount += point.count;
+		}
+		if (point.avg_tool_calls_per_turn != null) {
+			entry.toolCallsSum += point.avg_tool_calls_per_turn * point.count;
+			entry.toolCallsCount += point.count;
+		}
+		acc.set(date, entry);
+	}
+	return Array.from(acc.values())
+		.map((entry) => {
+			const ts = DateTime.fromISO(entry.date, { zone }).set({ hour: 12, minute: 0, second: 0, millisecond: 0 });
+			return {
+				time: ts.toISO() ?? '',
+				date: entry.date,
+				avg_score: entry.count > 0 ? entry.score / entry.count : 0,
+				count: entry.count,
+				avg_read_edit_ratio: entry.readEditCount > 0 ? entry.readEditSum / entry.readEditCount : null,
+				avg_edits_without_prior_read_ratio:
+					entry.editsWithoutReadCount > 0 ? entry.editsWithoutReadSum / entry.editsWithoutReadCount : null,
+				avg_tool_calls_per_turn:
+					entry.toolCallsCount > 0 ? entry.toolCallsSum / entry.toolCallsCount : null
+			};
+		})
+		.toSorted((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+}
+
+export interface SmoothOpts {
+	halfWindow: number;
+	priorWeight?: number;
+	priorValue?: number;
+}
+
+export function smoothSeries<T extends { count: number }>(
+	buckets: readonly T[],
+	valueOf: (b: T) => number | null,
+	opts: SmoothOpts
+): (number | null)[] {
+	const { halfWindow, priorWeight = 0, priorValue = 0 } = opts;
+	if (buckets.length === 0) return [];
+	const denom = halfWindow + 1;
+	return buckets.map((_, i) => {
+		let neighborCountWeight = 0;
+		let weightSum = priorWeight;
+		let valueSum = priorWeight * priorValue;
+		const lo = Math.max(0, i - halfWindow);
+		const hi = Math.min(buckets.length - 1, i + halfWindow);
+		for (let j = lo; j <= hi; j++) {
+			const v = valueOf(buckets[j]);
+			if (v == null) continue;
+			const kernel = 1 - Math.abs(i - j) / denom;
+			const w = kernel * buckets[j].count;
+			neighborCountWeight += w;
+			valueSum += v * w;
+			weightSum += w;
+		}
+		if (neighborCountWeight === 0) return null;
+		return valueSum / weightSum;
+	});
+}
+
+export function filterWindow<T extends { time: string }>(
+	buckets: readonly T[],
+	days: number,
+	zone: string
+): T[] {
+	if (buckets.length === 0) return [];
+	const last = DateTime.fromISO(buckets[buckets.length - 1].time, { zone });
+	if (!last.isValid) return [...buckets];
+	const cutoff = last.startOf('day').minus({ days: days - 1 }).toMillis();
+	return buckets.filter((b) => new Date(b.time).getTime() >= cutoff);
+}
+
 export function bucketByDayPart(points: TimelinePoint[], zone: string): DayPartBucket[] {
 	const acc = new Map<string, { date: string; part: DayPart; data: Accumulator }>();
 	for (const point of points) {

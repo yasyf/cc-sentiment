@@ -117,6 +117,8 @@
 	});
 
 	let showAdvanced = $state(false);
+	let timelineRange = $state<'week' | 'month'>('week');
+	const rangeDays = $derived(timelineRange === 'week' ? 7 : 30);
 
 	const ogImage = $derived(
 		data.share
@@ -237,12 +239,32 @@
 				</section>
 
 				<section>
-					<h3 class="mb-0.5 text-sm font-medium text-text-secondary">The trend</h3>
+					<div class="mb-0.5 flex items-baseline justify-between gap-3">
+						<h3 class="text-sm font-medium text-text-secondary">The trend</h3>
+						<div class="inline-flex overflow-hidden rounded-md border border-border text-[11px] font-medium">
+							<button
+								type="button"
+								onclick={() => (timelineRange = 'week')}
+								class="px-2.5 py-0.5 transition-colors {timelineRange === 'week' ? 'bg-accent/10 text-accent' : 'text-text-muted hover:text-text'}"
+								aria-pressed={timelineRange === 'week'}
+							>
+								Week
+							</button>
+							<button
+								type="button"
+								onclick={() => (timelineRange = 'month')}
+								class="border-l border-border px-2.5 py-0.5 transition-colors {timelineRange === 'month' ? 'bg-accent/10 text-accent' : 'text-text-muted hover:text-text'}"
+								aria-pressed={timelineRange === 'month'}
+							>
+								Month
+							</button>
+						</div>
+					</div>
 					<p class="mb-2 text-xs text-text-dim">
-						Daily sentiment and session volume (last 30 days).
+						Sentiment and session volume (last {rangeDays} days).
 					</p>
 					<div class="rounded-lg border border-border bg-bg-card p-5">
-						<SentimentTimeline data={data.timeline} />
+						<SentimentTimeline data={data.timeline} range={timelineRange} />
 					</div>
 				</section>
 
@@ -283,10 +305,10 @@
 								<section>
 									<h3 class="mb-0.5 text-sm font-medium text-text-secondary">Read:Edit ratio over time</h3>
 									<p class="mb-2 text-xs text-text-dim">
-										How many files Claude reads before making an edit (last 30 days). Higher is better. Green (&gt;4) means thorough research, red (&lt;2) means lazy editing.
+										How many files Claude reads before making an edit (last {rangeDays} days). Higher is better. Green (&gt;4) means thorough research, red (&lt;2) means lazy editing.
 									</p>
 									<div class="rounded-lg border border-border bg-bg-card p-5">
-										<ReadEditTimeline data={data.timeline} />
+										<ReadEditTimeline data={data.timeline} range={timelineRange} />
 									</div>
 								</section>
 							{/if}
@@ -295,10 +317,10 @@
 								<section>
 									<h3 class="mb-0.5 text-sm font-medium text-text-secondary">Edits without prior read</h3>
 									<p class="mb-2 text-xs text-text-dim">
-										Share of edits where Claude hadn't yet read the file in this session (last 30 days). Lower means more research before changes.
+										Share of edits where Claude hadn't yet read the file in this session (last {rangeDays} days). Lower means more research before changes.
 									</p>
 									<div class="rounded-lg border border-border bg-bg-card p-5">
-										<EditsWithoutReadTimeline data={data.timeline} />
+										<EditsWithoutReadTimeline data={data.timeline} range={timelineRange} />
 									</div>
 								</section>
 							{/if}
@@ -307,10 +329,10 @@
 								<section>
 									<h3 class="mb-0.5 text-sm font-medium text-text-secondary">Tool calls per turn</h3>
 									<p class="mb-2 text-xs text-text-dim">
-										Average number of tools Claude invokes between user messages (last 30 days).
+										Average number of tools Claude invokes between user messages (last {rangeDays} days).
 									</p>
 									<div class="rounded-lg border border-border bg-bg-card p-5">
-										<ToolCallsPerTurnTimeline data={data.timeline} />
+										<ToolCallsPerTurnTimeline data={data.timeline} range={timelineRange} />
 									</div>
 								</section>
 							{/if}

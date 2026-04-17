@@ -1,59 +1,99 @@
 <script lang="ts">
-	import { Line } from 'svelte5-chartjs';
-	import { Chart, LineElement, PointElement, LinearScale, TimeScale, Tooltip } from 'chart.js';
+	import { Bar } from 'svelte5-chartjs';
+	import { Chart, BarElement, BarController, LinearScale, TimeScale, Tooltip } from 'chart.js';
 	import annotationPlugin from 'chartjs-plugin-annotation';
 	import 'chartjs-adapter-luxon';
+	import { DateTime } from 'luxon';
 	import type { TimelinePoint } from '$lib/types.js';
-	import { GRID, TICK, TOOLTIP } from '$lib/chart-theme.js';
-	import { bucketByDayPart, dayBoundaryAnnotations } from '$lib/bucket.js';
+	import { TICK, TOOLTIP } from '$lib/chart-theme.js';
+	import {
+		bucketByDayPart,
+		bucketByDay,
+		smoothSeries,
+		filterWindow,
+		dayPartFor,
+		DAY_PART_EMOJI
+	} from '$lib/bucket.js';
 
-	Chart.register(LineElement, PointElement, LinearScale, TimeScale, Tooltip, annotationPlugin);
+	Chart.register(BarElement, BarController, LinearScale, TimeScale, Tooltip, annotationPlugin);
 
-	const { data: raw }: { data: TimelinePoint[] } = $props();
+	type Range = 'week' | 'month';
+	const { data: raw, range = 'week' }: { data: TimelinePoint[]; range?: Range } = $props();
 
 	const DISPLAY_TZ = 'America/Los_Angeles';
 
-	const buckets = $derived(
-		bucketByDayPart(raw, DISPLAY_TZ).filter((b) => b.avg_read_edit_ratio != null)
-	);
+	const buckets = $derived.by(() => {
+		if (range === 'week') {
+			const all = bucketByDayPart(raw, DISPLAY_TZ);
+			const smoothed = smoothSeries(all, (b) => b.avg_read_edit_ratio, { halfWindow: 1 });
+			const merged = all.map((b, i) => ({ ...b, smoothed: smoothed[i] }));
+			return filterWindow(merged, 7, DISPLAY_TZ);
+		}
+		const all = bucketByDay(raw, DISPLAY_TZ);
+		const smoothed = smoothSeries(all, (b) => b.avg_read_edit_ratio, { halfWindow: 2 });
+		const merged = all.map((b, i) => ({ ...b, smoothed: smoothed[i], label: '' }));
+		return filterWindow(merged, 30, DISPLAY_TZ);
+	});
+
+	function colorFor(v: number | null): string {
+		if (v == null) return 'rgba(161, 161, 170, 0.3)';
+		if (v >= 4) return '#16a34a';
+		if (v >= 2) return '#ca8a04';
+		return '#dc2626';
+	}
+
+	const yMax = $derived.by(() => {
+		const vals = buckets.map((b) => b.smoothed).filter((v): v is number => v != null);
+		if (vals.length === 0) return 8;
+		return Math.min(20, Math.max(8, Math.ceil(Math.max(...vals) * 1.2)));
+	});
 
 	const chartData = $derived({
 		labels: buckets.map((d) => d.time),
 		datasets: [{
-			data: buckets.map((d) => d.avg_read_edit_ratio),
-			borderColor: '#6366f1',
-			fill: false,
-			tension: 0.3,
-			cubicInterpolationMode: 'monotone' as const,
-			pointRadius: 2,
-			pointHoverRadius: 5,
-			pointBackgroundColor: buckets.map((d) => {
-				const v = d.avg_read_edit_ratio ?? 0;
-				if (v >= 4) return '#16a34a';
-				if (v >= 2) return '#ca8a04';
-				return '#dc2626';
-			}),
-			pointBorderColor: 'transparent',
-			borderWidth: 1.5
+			data: buckets.map((d) => d.smoothed),
+			backgroundColor: buckets.map((d) => colorFor(d.smoothed)),
+			borderRadius: 2,
+			borderSkipped: false as const,
+			categoryPercentage: 0.9,
+			barPercentage: 0.85
 		}]
 	});
 
 	const chartOptions = $derived({
 		responsive: true,
 		maintainAspectRatio: false,
+		animation: false as const,
 		interaction: { mode: 'index' as const, intersect: false },
 		scales: {
 			x: {
 				type: 'time' as const,
-				time: { unit: 'day' as const, tooltipFormat: 'LLL d, yyyy' },
+				time: {
+					unit: (range === 'week' ? 'hour' : 'day') as 'hour' | 'day',
+					tooltipFormat: range === 'week' ? 'LLL d, yyyy · h a' : 'LLL d, yyyy'
+				},
 				adapters: { date: { zone: DISPLAY_TZ } },
-				grid: { color: GRID },
-				ticks: { color: TICK, font: { size: 11 }, maxTicksLimit: 8 },
+				grid: { display: false },
+				ticks: {
+					source: 'data' as const,
+					autoSkip: true,
+					maxRotation: 0,
+					color: TICK,
+					font: { size: range === 'week' ? 12 : 11 },
+					callback: (value: number | string) => {
+						const dt = DateTime.fromMillis(Number(value), { zone: DISPLAY_TZ });
+						if (range === 'month') return dt.toFormat('LLL d');
+						const part = dayPartFor(dt.hour);
+						const emoji = DAY_PART_EMOJI[part.key];
+						return part.key === 'late' ? [emoji, dt.toFormat('LLL d')] : emoji;
+					}
+				},
 				border: { display: false }
 			},
 			y: {
 				min: 0,
-				grid: { color: GRID },
+				max: yMax,
+				grid: { display: false },
 				ticks: { color: TICK, font: { size: 11 } },
 				border: { display: false },
 				title: { display: true, text: 'read:edit ratio', color: TICK, font: { size: 10 } }
@@ -70,35 +110,41 @@
 						const dt = new Date(b.time).toLocaleDateString('en-US', {
 							timeZone: DISPLAY_TZ, month: 'short', day: 'numeric'
 						});
-						return `${dt} · ${b.label}`;
+						return range === 'week' && b.label ? `${dt} · ${b.label}` : dt;
 					},
-					label: (ctx: { parsed: { y: number | null } }) =>
-						`${(ctx.parsed.y ?? 0).toFixed(1)} reads per edit`
+					label: (ctx: { parsed: { y: number | null }; dataIndex: number }) => {
+						const v = ctx.parsed.y;
+						if (v == null) return 'no data';
+						const b = buckets[ctx.dataIndex];
+						return `${v.toFixed(1)} reads per edit · ${b?.count ?? 0} sessions`;
+					}
 				}
 			},
 			annotation: {
 				annotations: {
-					...dayBoundaryAnnotations(buckets, DISPLAY_TZ),
 					healthy: {
 						type: 'box' as const,
 						yMin: 4,
-						yMax: 1000,
+						yMax: yMax,
 						backgroundColor: 'rgba(22, 163, 74, 0.04)',
-						borderWidth: 0
+						borderWidth: 0,
+						drawTime: 'beforeDatasetsDraw' as const
 					},
 					warning: {
 						type: 'box' as const,
 						yMin: 2,
 						yMax: 4,
 						backgroundColor: 'rgba(202, 138, 4, 0.04)',
-						borderWidth: 0
+						borderWidth: 0,
+						drawTime: 'beforeDatasetsDraw' as const
 					},
 					danger: {
 						type: 'box' as const,
 						yMin: 0,
 						yMax: 2,
 						backgroundColor: 'rgba(220, 38, 38, 0.04)',
-						borderWidth: 0
+						borderWidth: 0,
+						drawTime: 'beforeDatasetsDraw' as const
 					}
 				}
 			}
@@ -107,5 +153,5 @@
 </script>
 
 <div class="h-48 w-full">
-	<Line data={chartData} options={chartOptions} />
+	<Bar data={chartData} options={chartOptions} />
 </div>
