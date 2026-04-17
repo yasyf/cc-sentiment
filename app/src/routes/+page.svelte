@@ -9,7 +9,7 @@
 	import ToolCallsPerTurnTimeline from '$lib/charts/ToolCallsPerTurnTimeline.svelte';
 	import ModelBreakdown from '$lib/charts/ModelBreakdown.svelte';
 	import ContributeCTA from '$lib/ContributeCTA.svelte';
-	import ContributeCommand from '$lib/ContributeCommand.svelte';
+	import ContributeCommandInline from '$lib/ContributeCommandInline.svelte';
 	import { sentimentEmoji } from '$lib/chart-theme.js';
 	import { verdictFor } from '$lib/verdict.js';
 	import type { PageProps } from './$types.js';
@@ -165,7 +165,7 @@
 				Anyone can contribute. Scoring runs on your machine, only the numbers leave.
 			</p>
 			<div class="mt-4 max-w-md">
-				<ContributeCommand />
+				<ContributeCommandInline />
 			</div>
 		</div>
 
