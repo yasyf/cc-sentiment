@@ -31,6 +31,10 @@ WORKER_BATCH_RETRIES = 3
 
 WORKER_BACKOFF_BASE_SECONDS = 5
 
+UPLOAD_WORKER_COUNT = 3
+
+UPLOAD_POOL_TIMEOUT_SECONDS = 600
+
 NOOP_UPLOAD_PROGRESS: Callable[[float], None] = lambda _: None
 
 _retry = retry(
@@ -116,7 +120,6 @@ class Uploader:
             return AuthUnreachable(detail=str(e))
         return AuthOk()
 
-    @_retry
     async def upload(
         self,
         records: list[SentimentRecord],

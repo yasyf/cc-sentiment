@@ -366,8 +366,8 @@ class SpinnerLine(Static):
 @dataclass
 class EngineBootView:
     MAX_SNIPPET_CHARS: ClassVar[int] = 60
-    SNIPPET_RATE_LIMIT: ClassVar[float] = 0.9
-    SNIPPET_WEIGHTS: ClassVar[dict[int, float]] = {1: 1.0, 2: 0.5, 3: 0.15, 4: 0.5, 5: 1.0}
+    SNIPPET_RATE_LIMIT: ClassVar[float] = 2.5
+    SNIPPET_WEIGHTS: ClassVar[dict[int, float]] = {1: 0.6, 2: 0.35, 3: 0.1, 4: 0.35, 5: 0.6}
     WITTY_COMMENTS: ClassVar[dict[int, tuple[str, ...]]] = {
         1: ("oof", "yikes", "time to take a walk", "we've all been there", "send help", "cursed"),
         2: ("mood", "same energy", "try again later", "nope nope nope", "sigh", "bargaining stage"),
@@ -382,6 +382,7 @@ class EngineBootView:
     log: Static
     lines: deque[Text] = field(default_factory=lambda: deque(maxlen=8))
     last_snippet_at: float = 0.0
+    last_snippet_score: int | None = None
     snippet_started: bool = False
 
     def show(self, engine: str) -> None:
@@ -390,6 +391,7 @@ class EngineBootView:
         self.lines.clear()
         self.log.update("")
         self.last_snippet_at = 0.0
+        self.last_snippet_score = None
         self.snippet_started = False
         self.section.add_class("active")
 
@@ -404,9 +406,12 @@ class EngineBootView:
         now = time.monotonic()
         if now - self.last_snippet_at < self.SNIPPET_RATE_LIMIT:
             return
+        if score == self.last_snippet_score:
+            return
         if random.random() > self.SNIPPET_WEIGHTS[score]:
             return
         self.last_snippet_at = now
+        self.last_snippet_score = score
         if not self.snippet_started:
             self.snippet_started = True
             self.lines.clear()
@@ -455,31 +460,27 @@ class HourlyChart(Static):
     X_LABELS: ClassVar[dict[int, str]] = {0: "12a", 6: "6a", 12: "12p", 18: "6p", 23: "11p"}
 
     def update_chart(self, records: list[SentimentRecord]) -> None:
-        sums = [0.0] * 24
         counts = [0] * 24
+        frustrated = [0] * 24
         for r in records:
             h = r.time.astimezone().hour
-            sums[h] += int(r.sentiment_score)
             counts[h] += 1
+            if int(r.sentiment_score) <= 2:
+                frustrated[h] += 1
         if not any(counts):
             self.update("[dim]no data yet[/]")
             return
 
+        max_f = max(frustrated) or 1
         cells: list[str] = []
         for h in range(24):
             if counts[h] == 0:
                 cells.append(" ")
+            elif frustrated[h] == 0:
+                cells.append("[dim]·[/]")
             else:
-                avg = sums[h] / counts[h]
-                block = self.BLOCKS[min(7, int((avg - 1) / 4 * 8))]
-                color = (
-                    "red" if avg < 1.8
-                    else "dark_orange" if avg < 2.7
-                    else "yellow" if avg < 3.3
-                    else "green" if avg < 4.2
-                    else "cyan"
-                )
-                cells.append(f"[{color}]{block}[/]")
+                block = self.BLOCKS[min(7, int(frustrated[h] / max_f * 7.99))]
+                cells.append(f"[red]{block}[/]")
 
         axis_buf = list(" " * 24)
         for h, lbl in self.X_LABELS.items():
@@ -1453,6 +1454,10 @@ class CCSentimentApp(App[None]):
         self._upload_fatal: BaseException | None = None
         self._upload_failed_batches: int = 0
         self._preseed_count: int = 0
+        self._batches_queued: int = 0
+        self._batches_in_flight: int = 0
+        self._batches_done: int = 0
+        self._upload_pool_started_at: float = 0.0
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -1471,7 +1476,7 @@ class CCSentimentApp(App[None]):
             with Vertical(id="chart-section", classes="inactive"):
                 with Horizontal(id="charts-row"):
                     with Vertical(id="hourly-column"):
-                        yield Static("[dim]Sentiment by hour of day[/]", id="hourly-chart-label")
+                        yield Static("[dim]Frustrated buckets by hour of day[/]", id="hourly-chart-label")
                         yield HourlyChart(id="hourly-chart")
                     with Vertical(id="distribution"):
                         for s in range(1, 6):
@@ -1565,7 +1570,7 @@ class CCSentimentApp(App[None]):
             case Scoring():
                 self._update_status(self._scoring_status_text())
             case Uploading():
-                self._update_status("[dim]Finishing the last upload...[/]")
+                self._render_upload_status()
             case IdleEmpty():
                 self._render_stats(0, 0, 0)
                 self._update_status(
@@ -1705,37 +1710,65 @@ class CCSentimentApp(App[None]):
         self._upload_fatal = None
         self._upload_failed_batches = 0
         self._preseed_count = len(pre_seed)
+        self._batches_queued = 0
+        self._batches_in_flight = 0
+        self._batches_done = 0
 
         if has_work:
+            from cc_sentiment.upload import (
+                UPLOAD_POOL_TIMEOUT_SECONDS,
+                UPLOAD_WORKER_COUNT,
+            )
+
             send_stream, recv_stream = anyio.create_memory_object_stream[
                 list[SentimentRecord]
             ](float("inf"))
             if pre_seed:
-                send_stream.send_nowait(pre_seed)
+                self._queue_batch(send_stream, pre_seed)
 
-            async with anyio.create_task_group() as tg:
-                tg.start_soon(self._upload_worker, recv_stream)
-                try:
-                    if transcripts and bucket_count > 0:
-                        _, _, existing_files = await anyio.to_thread.run_sync(self.repo.stats)
-                        self._set_total(bucket_count, engine, existing_files + len(transcripts))
-                        boot = EngineBootView(
-                            app=self,
-                            section=self.query_one("#engine-boot-section"),
-                            status=self.query_one("#engine-boot-status", SpinnerLine),
-                            log=self.query_one("#engine-boot-log", Static),
-                        )
-                        boot.show(engine)
-                        await Pipeline.run(
-                            self.repo, engine, self.model_repo, transcripts,
-                            on_records=self._add_records, on_bucket=self._add_buckets,
-                            on_engine_log=boot.write_from_thread,
-                            on_snippet=boot.add_snippet,
-                            on_transcript_complete=send_stream.send_nowait,
-                        )
-                finally:
-                    self.stage = Uploading()
-                    send_stream.close()
+            self._upload_pool_started_at = time.monotonic()
+            try:
+                with anyio.fail_after(UPLOAD_POOL_TIMEOUT_SECONDS):
+                    async with anyio.create_task_group() as tg:
+                        for worker_id in range(UPLOAD_WORKER_COUNT):
+                            tg.start_soon(
+                                self._upload_worker, recv_stream.clone(), worker_id
+                            )
+                        recv_stream.close()
+                        try:
+                            if transcripts and bucket_count > 0:
+                                _, _, existing_files = await anyio.to_thread.run_sync(self.repo.stats)
+                                self._set_total(bucket_count, engine, existing_files + len(transcripts))
+                                boot = EngineBootView(
+                                    app=self,
+                                    section=self.query_one("#engine-boot-section"),
+                                    status=self.query_one("#engine-boot-status", SpinnerLine),
+                                    log=self.query_one("#engine-boot-log", Static),
+                                )
+                                boot.show(engine)
+                                await Pipeline.run(
+                                    self.repo, engine, self.model_repo, transcripts,
+                                    on_records=self._add_records, on_bucket=self._add_buckets,
+                                    on_engine_log=boot.write_from_thread,
+                                    on_snippet=boot.add_snippet,
+                                    on_transcript_complete=lambda batch: self._queue_batch(send_stream, batch),
+                                )
+                        finally:
+                            self.stage = Uploading()
+                            send_stream.close()
+            except TimeoutError:
+                self._debug(
+                    f"upload: pool timed out after {UPLOAD_POOL_TIMEOUT_SECONDS}s"
+                )
+                self.stage = Error(
+                    f"[red bold]Uploads timed out after {UPLOAD_POOL_TIMEOUT_SECONDS // 60} min.[/] "
+                    "Records kept locally — press R to retry once you're back online."
+                )
+                return
+            self._debug(
+                f"upload: done — {self._batches_done} ok, {self._upload_failed_batches} failed, "
+                f"elapsed {time.monotonic() - self._upload_pool_started_at:.1f}s"
+            )
 
         match self._upload_fatal:
             case httpx.HTTPStatusError() as e if e.response.status_code in (401, 403):
@@ -1876,6 +1909,9 @@ class CCSentimentApp(App[None]):
         self._upload_fatal = None
         self._upload_failed_batches = 0
         self._preseed_count = 0
+        self._batches_queued = 0
+        self._batches_in_flight = 0
+        self._batches_done = 0
         self._start_time = time.monotonic()
         self.query_one("#scan-progress", ProgressBar).update(total=100, progress=0)
         self.query_one("#progress-label", Label).update("Preparing...")
@@ -1923,42 +1959,108 @@ class CCSentimentApp(App[None]):
         rate = self.scored / elapsed if elapsed > 0 else 0
         self.query_one("#stat-rate", Static).update(f"{rate:.1f}")
 
+    def _queue_batch(
+        self,
+        send_stream: anyio.streams.memory.MemoryObjectSendStream[list[SentimentRecord]],
+        batch: list[SentimentRecord],
+    ) -> None:
+        self._batches_queued += 1
+        send_stream.send_nowait(batch)
+        if isinstance(self.stage, Uploading):
+            self._render_upload_status()
+
+    def _render_upload_status(self) -> None:
+        if not isinstance(self.stage, Uploading):
+            return
+        self._update_status(
+            f"[dim]Finishing uploads · [b]{self._batches_done}[/]/[b]{self._batches_queued}[/] "
+            f"batches · [b]{self._batches_in_flight}[/] in flight[/]"
+        )
+
     async def _upload_worker(
-        self, recv_stream: anyio.streams.memory.MemoryObjectReceiveStream[list[SentimentRecord]]
+        self,
+        recv_stream: anyio.streams.memory.MemoryObjectReceiveStream[list[SentimentRecord]],
+        worker_id: int,
     ) -> None:
         from cc_sentiment.upload import Uploader
 
         assert self.repo is not None
         uploader = Uploader()
+        started_at = time.monotonic()
+        done_here = 0
+        self._debug(f"upload: worker {worker_id} started")
         async with recv_stream:
             async for batch in recv_stream:
-                if self._upload_fatal is None:
-                    await self._upload_one_batch(uploader, batch)
+                if self._upload_fatal is not None:
+                    continue
+                await self._upload_one_batch(uploader, batch, worker_id)
+                done_here += 1
+        self._debug(
+            f"upload: worker {worker_id} exiting (stream closed); "
+            f"uploaded {done_here} batches in {time.monotonic() - started_at:.1f}s"
+        )
 
     async def _upload_one_batch(
-        self, uploader, batch: list[SentimentRecord]
+        self, uploader, batch: list[SentimentRecord], worker_id: int
     ) -> None:
         from cc_sentiment.upload import WORKER_BACKOFF_BASE_SECONDS, WORKER_BATCH_RETRIES
 
         assert self.repo is not None
-        for attempt in range(WORKER_BATCH_RETRIES):
-            try:
-                await uploader.upload(batch, self.state, self.repo)
-                self.uploaded_count += len(batch)
-                return
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code in (401, 403):
+
+        self._batches_in_flight += 1
+        self._render_upload_status()
+        waiting = max(0, self._batches_queued - self._batches_done - self._batches_in_flight)
+        self._debug(
+            f"upload: worker {worker_id} → batch of {len(batch)} records; "
+            f"queue={self._batches_in_flight} in flight, {waiting} waiting"
+        )
+        try:
+            for attempt in range(WORKER_BATCH_RETRIES):
+                post_start = time.monotonic()
+                try:
+                    await uploader.upload(batch, self.state, self.repo)
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code in (401, 403):
+                        self._debug(
+                            f"upload: worker {worker_id} fatal: "
+                            f"HTTPStatusError {e.response.status_code}"
+                        )
+                        self._upload_fatal = e
+                        return
+                    last_exc: BaseException = e
+                except subprocess.CalledProcessError as e:
+                    self._debug(
+                        f"upload: worker {worker_id} fatal: {type(e).__name__}: {e}"
+                    )
                     self._upload_fatal = e
                     return
-            except subprocess.CalledProcessError as e:
-                self._upload_fatal = e
-                return
-            except httpx.NetworkError:
-                pass
-            if attempt == WORKER_BATCH_RETRIES - 1:
-                self._upload_failed_batches += 1
-                return
-            await anyio.sleep(WORKER_BACKOFF_BASE_SECONDS * 3 ** attempt)
+                except (httpx.NetworkError, httpx.TimeoutException) as e:
+                    last_exc = e
+                else:
+                    post_ms = (time.monotonic() - post_start) * 1000
+                    self._debug(
+                        f"upload: worker {worker_id} posted in {post_ms:.0f}ms (HTTP 200)"
+                    )
+                    self._batches_done += 1
+                    self.uploaded_count += len(batch)
+                    return
+                if attempt == WORKER_BATCH_RETRIES - 1:
+                    self._debug(
+                        f"upload: worker {worker_id} abandoned batch after "
+                        f"{WORKER_BATCH_RETRIES} attempts "
+                        f"({type(last_exc).__name__}: {last_exc})"
+                    )
+                    self._upload_failed_batches += 1
+                    return
+                delay = WORKER_BACKOFF_BASE_SECONDS * 3 ** attempt
+                self._debug(
+                    f"upload: worker {worker_id} retry {attempt + 1}/{WORKER_BATCH_RETRIES} "
+                    f"({type(last_exc).__name__}: {last_exc}); sleeping {delay:.1f}s"
+                )
+                await anyio.sleep(delay)
+        finally:
+            self._batches_in_flight -= 1
+            self._render_upload_status()
 
     def _add_records(self, new_records: list[SentimentRecord]) -> None:
         asyncio.get_running_loop()

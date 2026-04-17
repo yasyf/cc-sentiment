@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -50,20 +51,15 @@ class Pipeline:
     @staticmethod
     async def count_new_buckets(repo: Repository, transcripts: list[tuple[Path, float]]) -> int:
         scored_by_path = await anyio.to_thread.run_sync(repo.scored_buckets_for_all)
-
-        def count_one(path: Path) -> int:
-            if not (messages := TranscriptParser.parse_file(path)):
-                return 0
-            scored = scored_by_path.get(str(path), frozenset())
-            return sum(
-                BucketKey(session_id=b.session_id, bucket_index=b.bucket_index) not in scored
-                for b in ConversationBucketer.bucket_messages(messages)
-            )
-
+        limiter = anyio.CapacityLimiter(max(os.cpu_count() or 4, 4))
         results: list[int] = []
 
+        def count_one(path: Path) -> int:
+            scored = scored_by_path.get(str(path), frozenset())
+            return sum(1 for key in TranscriptParser.bucket_keys_for(path) if key not in scored)
+
         async def run_one(path: Path) -> None:
-            results.append(await anyio.to_thread.run_sync(count_one, path))
+            results.append(await anyio.to_thread.run_sync(count_one, path, limiter=limiter))
 
         async with anyio.create_task_group() as tg:
             for path, _ in transcripts:

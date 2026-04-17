@@ -936,7 +936,7 @@ async def test_upload_worker_retries_transient_network_errors(tmp_path: Path, au
 
             with patch("cc_sentiment.upload.Uploader.upload", fake_upload), \
                  patch("cc_sentiment.tui.anyio.sleep", new_callable=AsyncMock):
-                await app._upload_worker(recv)
+                await app._upload_worker(recv, worker_id=0)
 
             assert calls == 2
             assert app.uploaded_count == 1
@@ -970,7 +970,7 @@ async def test_upload_worker_records_partial_failure_after_retries_exhaust(tmp_p
 
             with patch("cc_sentiment.upload.Uploader.upload", always_fail), \
                  patch("cc_sentiment.tui.anyio.sleep", new_callable=AsyncMock):
-                await app._upload_worker(recv)
+                await app._upload_worker(recv, worker_id=0)
 
             assert app._upload_failed_batches == 2
             assert app.uploaded_count == 0
@@ -1010,7 +1010,7 @@ async def test_upload_worker_fatal_on_401_drops_subsequent_batches(tmp_path: Pat
             app._upload_failed_batches = 0
 
             with patch("cc_sentiment.upload.Uploader.upload", reject_first):
-                await app._upload_worker(recv)
+                await app._upload_worker(recv, worker_id=0)
 
             assert calls == 1
             assert isinstance(app._upload_fatal, httpx.HTTPStatusError)
@@ -1045,21 +1045,22 @@ async def test_hourly_chart_renders_sparkline_and_axis():
         assert "12p" in lines[1]
 
 
-async def test_hourly_chart_preserves_fractional_differences():
+async def test_hourly_chart_scales_frustration_relative_to_max():
     from datetime import datetime, timezone
 
     records = [
-        make_record(score=3, time=datetime(2026, 4, 10, 8, 0, tzinfo=timezone.utc)),
-        make_record(score=4, time=datetime(2026, 4, 10, 8, 1, tzinfo=timezone.utc)),
-        make_record(score=3, time=datetime(2026, 4, 10, 9, 0, tzinfo=timezone.utc)),
+        make_record(score=1, time=datetime(2026, 4, 10, 8, 0, tzinfo=timezone.utc)),
+        make_record(score=2, time=datetime(2026, 4, 10, 8, 1, tzinfo=timezone.utc)),
+        make_record(score=1, time=datetime(2026, 4, 10, 9, 0, tzinfo=timezone.utc)),
+        make_record(score=4, time=datetime(2026, 4, 10, 10, 0, tzinfo=timezone.utc)),
     ]
     async with ChartHarness().run_test() as pilot:
         chart = pilot.app.query_one("#chart", HourlyChart)
         chart.update_chart(records)
         await pilot.pause()
         bar = str(chart.content).split("\n")[0]
-        assert "▅" in bar
-        assert "▆" in bar
+        assert "[red]" in bar
+        assert "[dim]·[/]" in bar
 
 
 async def test_hourly_chart_empty_records():
