@@ -195,6 +195,7 @@ class Pipeline:
         on_bucket: Callable[[int], None] = NOOP_PROGRESS,
         on_engine_log: Callable[[str], None] | None = None,
         on_snippet: Callable[[str, int], None] = NOOP_SNIPPET,
+        on_transcript_complete: Callable[[list[SentimentRecord]], None] = lambda _: None,
     ) -> list[SentimentRecord]:
         classifier = await build_engine(engine, model_repo, on_engine_log)
 
@@ -218,6 +219,8 @@ class Pipeline:
                 )
                 all_records.extend(records)
                 await anyio.to_thread.run_sync(repo.save_records, str(path), mtime, records)
+                if records:
+                    on_transcript_complete(records)
 
             return all_records
         finally:

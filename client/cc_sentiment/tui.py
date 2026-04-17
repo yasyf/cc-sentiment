@@ -14,6 +14,7 @@ from statistics import mean
 from typing import ClassVar
 
 import anyio
+import anyio.streams.memory
 import anyio.to_thread
 import httpx
 from urllib.parse import urlencode
@@ -1414,6 +1415,7 @@ class CCSentimentApp(App[None]):
 
     scored: reactive[int] = reactive(0)
     total: reactive[int] = reactive(0)
+    uploaded_count: reactive[int] = reactive(0)
     status_text: reactive[str] = reactive("Initializing...")
     stage: reactive[Stage] = reactive(Booting())
 
@@ -1437,6 +1439,9 @@ class CCSentimentApp(App[None]):
         self._score_bars: dict[int, ScoreBar] = {}
         self._start_time = 0.0
         self._boot_screen: BootingScreen | None = None
+        self._upload_fatal: BaseException | None = None
+        self._upload_failed_batches: int = 0
+        self._preseed_count: int = 0
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -1547,13 +1552,9 @@ class CCSentimentApp(App[None]):
             case Discovering():
                 self._update_status("[dim]Discovering transcripts...[/]")
             case Scoring():
-                self._update_status(
-                    "[dim]Scoring locally on your Mac. Nothing has been uploaded yet.[/]"
-                )
+                self._update_status(self._scoring_status_text())
             case Uploading():
-                self.query_one("#scan-progress", ProgressBar).update(total=100, progress=0)
-                self.query_one("#progress-label", Label).update("Uploading...")
-                self._update_status("[dim]Uploading records...[/]")
+                self._update_status("[dim]Finishing the last upload...[/]")
             case IdleEmpty():
                 self._render_stats(0, 0, 0)
                 self._update_status(
@@ -1581,6 +1582,19 @@ class CCSentimentApp(App[None]):
                 self._update_status(
                     "[yellow]Press R again within 5s to clear all state and rescan from scratch.[/]"
                 )
+
+    def _scoring_status_text(self) -> str:
+        if self.uploaded_count == 0:
+            return "[dim]Scoring locally on your Mac. We'll upload each batch as it's ready.[/]"
+        denom = self._preseed_count + len(self.records)
+        return (
+            f"[dim]Scoring locally. Uploaded [b]{self.uploaded_count}[/] "
+            f"of [b]{denom}[/] so far.[/]"
+        )
+
+    def watch_uploaded_count(self, uploaded_count: int) -> None:
+        if isinstance(self.stage, Scoring):
+            self._update_status(self._scoring_status_text())
 
     def _render_stats(self, buckets: int, sessions: int, files: int) -> None:
         self.query_one("#stat-buckets", Static).update(f"[b]{buckets}[/]")
@@ -1626,7 +1640,6 @@ class CCSentimentApp(App[None]):
     @work()
     async def run_flow(self) -> None:
         from cc_sentiment.pipeline import Pipeline
-        from cc_sentiment.upload import Uploader
 
         assert self.repo is not None
 
@@ -1676,52 +1689,57 @@ class CCSentimentApp(App[None]):
 
         await self._dismiss_boot_screen()
 
-        if transcripts and bucket_count > 0:
-            _, _, existing_files = await anyio.to_thread.run_sync(self.repo.stats)
-            self._set_total(bucket_count, engine, existing_files + len(transcripts))
-            boot = EngineBootView(
-                app=self,
-                section=self.query_one("#engine-boot-section"),
-                status=self.query_one("#engine-boot-status", SpinnerLine),
-                log=self.query_one("#engine-boot-log", Static),
-            )
-            boot.show(engine)
-            await Pipeline.run(
-                self.repo, engine, self.model_repo, transcripts,
-                on_records=self._add_records, on_bucket=self._add_buckets,
-                on_engine_log=boot.write_from_thread,
-                on_snippet=boot.add_snippet,
-            )
+        pre_seed = await anyio.to_thread.run_sync(self.repo.pending_records)
+        has_work = (transcripts and bucket_count > 0) or bool(pre_seed)
+        self._upload_fatal = None
+        self._upload_failed_batches = 0
+        self._preseed_count = len(pre_seed)
 
-        pending = await anyio.to_thread.run_sync(self.repo.pending_records)
-        uploaded = False
-        if pending:
-            self.stage = Uploading()
-            try:
-                await Uploader().upload(
-                    pending, self.state, self.repo,
-                    on_progress=self._on_upload_progress,
-                )
-                uploaded = True
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code in (401, 403):
-                    self.stage = Error(
-                        f"[red bold]Server rejected upload ({e.response.status_code}).[/] "
-                        "Run [b]cc-sentiment setup[/] again, or upload your key to GitHub/keys.openpgp.org."
-                    )
-                else:
-                    self.stage = Error(
-                        f"[red bold]Server rejected upload ({e.response.status_code}).[/] "
-                        f"Records kept locally — press R to retry."
-                    )
-                return
-            except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError):
+        if has_work:
+            send_stream, recv_stream = anyio.create_memory_object_stream[
+                list[SentimentRecord]
+            ](float("inf"))
+            if pre_seed:
+                send_stream.send_nowait(pre_seed)
+
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(self._upload_worker, recv_stream)
+                try:
+                    if transcripts and bucket_count > 0:
+                        _, _, existing_files = await anyio.to_thread.run_sync(self.repo.stats)
+                        self._set_total(bucket_count, engine, existing_files + len(transcripts))
+                        boot = EngineBootView(
+                            app=self,
+                            section=self.query_one("#engine-boot-section"),
+                            status=self.query_one("#engine-boot-status", SpinnerLine),
+                            log=self.query_one("#engine-boot-log", Static),
+                        )
+                        boot.show(engine)
+                        await Pipeline.run(
+                            self.repo, engine, self.model_repo, transcripts,
+                            on_records=self._add_records, on_bucket=self._add_buckets,
+                            on_engine_log=boot.write_from_thread,
+                            on_snippet=boot.add_snippet,
+                            on_transcript_complete=send_stream.send_nowait,
+                        )
+                finally:
+                    self.stage = Uploading()
+                    send_stream.close()
+
+        match self._upload_fatal:
+            case httpx.HTTPStatusError() as e if e.response.status_code in (401, 403):
                 self.stage = Error(
-                    "[red bold]Couldn't reach the server.[/] "
-                    "Records kept locally — press R to retry once you're back online."
+                    f"[red bold]Server rejected upload ({e.response.status_code}).[/] "
+                    "Run [b]cc-sentiment setup[/] again, or upload your key to GitHub/keys.openpgp.org."
                 )
                 return
-            except subprocess.CalledProcessError as e:
+            case httpx.HTTPStatusError() as e:
+                self.stage = Error(
+                    f"[red bold]Server rejected upload ({e.response.status_code}).[/] "
+                    f"Records kept locally — press R to retry."
+                )
+                return
+            case subprocess.CalledProcessError() as e:
                 self.stage = Error(
                     f"[red bold]Signing failed ({e.returncode}).[/] "
                     "Check that your signing key is still accessible, or run "
@@ -1729,6 +1747,15 @@ class CCSentimentApp(App[None]):
                 )
                 return
 
+        if self._upload_failed_batches > 0:
+            self.stage = Error(
+                f"[red bold]Couldn't upload {self._upload_failed_batches} "
+                f"batch{'es' if self._upload_failed_batches != 1 else ''}.[/] "
+                "Records kept locally — press R to retry once you're back online."
+            )
+            return
+
+        uploaded = self.uploaded_count > 0
         await self._enter_idle(uploaded=uploaded)
 
         if uploaded:
@@ -1834,6 +1861,10 @@ class CCSentimentApp(App[None]):
         self.records = []
         self.scored = 0
         self.total = 0
+        self.uploaded_count = 0
+        self._upload_fatal = None
+        self._upload_failed_batches = 0
+        self._preseed_count = 0
         self._start_time = time.monotonic()
         self.query_one("#scan-progress", ProgressBar).update(total=100, progress=0)
         self.query_one("#progress-label", Label).update("Preparing...")
@@ -1879,8 +1910,42 @@ class CCSentimentApp(App[None]):
         rate = self.scored / elapsed if elapsed > 0 else 0
         self.query_one("#stat-rate", Static).update(f"{rate:.1f}")
 
-    def _on_upload_progress(self, fraction: float) -> None:
-        self.query_one("#scan-progress", ProgressBar).update(progress=int(fraction * 100))
+    async def _upload_worker(
+        self, recv_stream: anyio.streams.memory.MemoryObjectReceiveStream[list[SentimentRecord]]
+    ) -> None:
+        from cc_sentiment.upload import Uploader
+
+        assert self.repo is not None
+        uploader = Uploader()
+        async with recv_stream:
+            async for batch in recv_stream:
+                if self._upload_fatal is None:
+                    await self._upload_one_batch(uploader, batch)
+
+    async def _upload_one_batch(
+        self, uploader, batch: list[SentimentRecord]
+    ) -> None:
+        from cc_sentiment.upload import WORKER_BACKOFF_BASE_SECONDS, WORKER_BATCH_RETRIES
+
+        assert self.repo is not None
+        for attempt in range(WORKER_BATCH_RETRIES):
+            try:
+                await uploader.upload(batch, self.state, self.repo)
+                self.uploaded_count += len(batch)
+                return
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (401, 403):
+                    self._upload_fatal = e
+                    return
+            except subprocess.CalledProcessError as e:
+                self._upload_fatal = e
+                return
+            except httpx.NetworkError:
+                pass
+            if attempt == WORKER_BATCH_RETRIES - 1:
+                self._upload_failed_batches += 1
+                return
+            await anyio.sleep(WORKER_BACKOFF_BASE_SECONDS * 3 ** attempt)
 
     def _add_records(self, new_records: list[SentimentRecord]) -> None:
         asyncio.get_running_loop()

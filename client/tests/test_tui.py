@@ -572,8 +572,9 @@ async def test_ccsentiment_app_runs_pipeline_and_uploads(tmp_path: Path, auth_ok
     state = AppState(config=GPGConfig(contributor_type="github", contributor_id=ContributorId("testuser"), fpr="ABCD1234"))
     db_path = tmp_path / "records.db"
 
-    async def fake_run(repo, *args, **kwargs):
+    async def fake_run(repo, *args, on_transcript_complete=lambda _: None, **kwargs):
         repo.save_records("/fake.jsonl", 0.0, records)
+        on_transcript_complete(records)
         return records
 
     mock_upload = AsyncMock()
@@ -823,8 +824,9 @@ async def test_successful_upload_lands_in_idle_after_upload(tmp_path: Path, auth
     state = AppState(config=GPGConfig(contributor_type="github", contributor_id=ContributorId("testuser"), fpr="ABCD1234"))
     db_path = tmp_path / "records.db"
 
-    async def fake_run(repo, *args, **kwargs):
+    async def fake_run(repo, *args, on_transcript_complete=lambda _: None, **kwargs):
         repo.save_records("/fake.jsonl", 0.0, records)
+        on_transcript_complete(records)
         return records
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
@@ -844,8 +846,9 @@ async def test_stage_transitions_across_successful_run(tmp_path: Path, auth_ok):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    async def fake_run(repo, *args, **kwargs):
+    async def fake_run(repo, *args, on_transcript_complete=lambda _: None, **kwargs):
         repo.save_records("/fake.jsonl", 0.0, records)
+        on_transcript_complete(records)
         return records
 
     seen: list[type[Stage]] = []
@@ -898,6 +901,119 @@ async def test_rescan_confirm_restores_previous_stage_on_cancel(tmp_path: Path, 
 
             await app._cancel_rescan()
             assert app.stage == prev
+
+
+async def test_upload_worker_retries_transient_network_errors(tmp_path: Path, auth_ok):
+    import anyio
+
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("u"), key_path=Path("/k")))
+    db_path = tmp_path / "records.db"
+
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+
+            send, recv = anyio.create_memory_object_stream[list](float("inf"))
+            send.send_nowait([make_record()])
+            send.close()
+
+            calls = 0
+
+            async def fake_upload(self, batch, state, repo, on_progress=None):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    raise httpx.ConnectError("boom")
+
+            app.uploaded_count = 0
+            app._upload_fatal = None
+            app._upload_failed_batches = 0
+
+            with patch("cc_sentiment.upload.Uploader.upload", fake_upload), \
+                 patch("cc_sentiment.tui.anyio.sleep", new_callable=AsyncMock):
+                await app._upload_worker(recv)
+
+            assert calls == 2
+            assert app.uploaded_count == 1
+            assert app._upload_failed_batches == 0
+            assert app._upload_fatal is None
+
+
+async def test_upload_worker_records_partial_failure_after_retries_exhaust(tmp_path: Path, auth_ok):
+    import anyio
+
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("u"), key_path=Path("/k")))
+    db_path = tmp_path / "records.db"
+
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+
+            send, recv = anyio.create_memory_object_stream[list](float("inf"))
+            send.send_nowait([make_record(session_id="s1")])
+            send.send_nowait([make_record(session_id="s2")])
+            send.close()
+
+            async def always_fail(self, batch, state, repo, on_progress=None):
+                raise httpx.ConnectError("down")
+
+            app.uploaded_count = 0
+            app._upload_fatal = None
+            app._upload_failed_batches = 0
+
+            with patch("cc_sentiment.upload.Uploader.upload", always_fail), \
+                 patch("cc_sentiment.tui.anyio.sleep", new_callable=AsyncMock):
+                await app._upload_worker(recv)
+
+            assert app._upload_failed_batches == 2
+            assert app.uploaded_count == 0
+            assert app._upload_fatal is None
+
+
+async def test_upload_worker_fatal_on_401_drops_subsequent_batches(tmp_path: Path, auth_ok):
+    import anyio
+
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("u"), key_path=Path("/k")))
+    db_path = tmp_path / "records.db"
+
+    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+
+            send, recv = anyio.create_memory_object_stream[list](float("inf"))
+            send.send_nowait([make_record(session_id="s1")])
+            send.send_nowait([make_record(session_id="s2")])
+            send.close()
+
+            calls = 0
+
+            async def reject_first(self, batch, state, repo, on_progress=None):
+                nonlocal calls
+                calls += 1
+                raise httpx.HTTPStatusError(
+                    "nope",
+                    request=httpx.Request("POST", "http://x"),
+                    response=httpx.Response(401),
+                )
+
+            app.uploaded_count = 0
+            app._upload_fatal = None
+            app._upload_failed_batches = 0
+
+            with patch("cc_sentiment.upload.Uploader.upload", reject_first):
+                await app._upload_worker(recv)
+
+            assert calls == 1
+            assert isinstance(app._upload_fatal, httpx.HTTPStatusError)
+            assert app._upload_fatal.response.status_code == 401
+            assert app.uploaded_count == 0
+            assert app._upload_failed_batches == 0
 
 
 class ChartHarness(App[None]):
