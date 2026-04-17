@@ -18,8 +18,8 @@ import anyio.streams.memory
 import anyio.to_thread
 import httpx
 from urllib.parse import urlencode
-from rich.markup import escape
 from rich.spinner import Spinner
+from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -380,7 +380,7 @@ class EngineBootView:
     section: Widget
     status: SpinnerLine
     log: Static
-    lines: deque[str] = field(default_factory=lambda: deque(maxlen=8))
+    lines: deque[Text] = field(default_factory=lambda: deque(maxlen=8))
     last_snippet_at: float = 0.0
     snippet_started: bool = False
 
@@ -397,8 +397,8 @@ class EngineBootView:
         self.section.remove_class("active")
 
     def write_from_thread(self, line: str) -> None:
-        self.lines.append(f"[dim]{escape(line)}[/]")
-        self.app.call_from_thread(self.log.update, "\n".join(self.lines))
+        self.lines.append(Text(line, style="dim"))
+        self.app.call_from_thread(self.log.update, Text("\n").join(self.lines))
 
     def add_snippet(self, snippet: str, score: int) -> None:
         now = time.monotonic()
@@ -413,8 +413,13 @@ class EngineBootView:
             self.status.display = False
         comment = random.choice(self.WITTY_COMMENTS[score])
         truncated = snippet if len(snippet) <= self.MAX_SNIPPET_CHARS else snippet[:self.MAX_SNIPPET_CHARS - 1] + "…"
-        self.lines.append(f'{ScoreBar.ICONS[score]} {score}  "{escape(truncated)}"  [dim]{escape(comment)}[/]')
-        self.log.update("\n".join(self.lines))
+        self.lines.append(Text.assemble(
+            f"{ScoreBar.ICONS[score]} {score}  ",
+            f'"{truncated}"',
+            "  ",
+            (comment, "dim"),
+        ))
+        self.log.update(Text("\n").join(self.lines))
 
 
 class ScoreBar(Static):
@@ -447,7 +452,6 @@ class HourlyChart(Static):
     """
 
     BLOCKS: ClassVar[str] = "▁▂▃▄▅▆▇█"
-    COLORS: ClassVar[dict[int, str]] = {1: "red", 2: "dark_orange", 3: "yellow", 4: "green", 5: "cyan"}
     X_LABELS: ClassVar[dict[int, str]] = {0: "12a", 6: "6a", 12: "12p", 18: "6p", 23: "11p"}
 
     def update_chart(self, records: list[SentimentRecord]) -> None:
@@ -468,7 +472,13 @@ class HourlyChart(Static):
             else:
                 avg = sums[h] / counts[h]
                 block = self.BLOCKS[min(7, int((avg - 1) / 4 * 8))]
-                color = self.COLORS[max(1, min(5, round(avg)))]
+                color = (
+                    "red" if avg < 1.8
+                    else "dark_orange" if avg < 2.7
+                    else "yellow" if avg < 3.3
+                    else "green" if avg < 4.2
+                    else "cyan"
+                )
                 cells.append(f"[{color}]{block}[/]")
 
         axis_buf = list(" " * 24)
@@ -848,8 +858,8 @@ class SetupScreen(Screen[bool]):
         files = len(TranscriptDiscovery.find_transcripts())
         rate = Hardware.estimate_buckets_per_sec(default_engine())
         self.query_one("#done-eta", Static).update(
-            f"[dim]Found [b]{files}[/] transcripts. "
-            f"About {format_duration(files * self.ROUGH_BUCKETS_PER_FILE / rate)} on this Mac.[/]"
+            f"[dim]Found [b]{files:,}[/] transcripts. "
+            f"About {format_duration(files * self.ROUGH_BUCKETS_PER_FILE / rate)} to score on this Mac.[/]"
             if rate and files else ""
         )
 
@@ -1381,6 +1391,7 @@ class CCSentimentApp(App[None]):
     #title-text { width: 1fr; }
     #score-digits { width: auto; min-width: 20; }
     #score-label { text-align: right; height: 1; color: $text-muted; }
+    #score-digits.inactive, #score-label.inactive { display: none; }
     #progress-section { height: auto; margin: 1 0 0 0; padding: 0 1; border: round $primary-background; }
     #progress-row { height: auto; }
     #progress-label { width: auto; min-width: 24; }
@@ -1449,8 +1460,8 @@ class CCSentimentApp(App[None]):
             with Vertical(id="header-section"):
                 with Horizontal(id="title-row"):
                     yield Static(f"[b]cc-sentiment[/b] [dim]v{CLIENT_VERSION}[/]", id="title-text")
-                    yield Digits("-.--", id="score-digits")
-                yield Static("[dim]average sentiment[/]", id="score-label")
+                    yield Digits("-.--", id="score-digits", classes="inactive")
+                yield Static("[dim]average sentiment[/]", id="score-label", classes="inactive")
 
             with Vertical(id="progress-section"):
                 with Horizontal(id="progress-row"):
@@ -1537,7 +1548,7 @@ class CCSentimentApp(App[None]):
             return
         self.records = list(existing)
         _, _, total_files = await anyio.to_thread.run_sync(self.repo.stats)
-        self.query_one("#stat-files", Static).update(f"[b]{total_files}[/]")
+        self.query_one("#stat-files", Static).update(f"[b]{total_files:,}[/]")
         self._render_scores()
         self.query_one("#stats-section").remove_class("inactive")
 
@@ -1597,9 +1608,9 @@ class CCSentimentApp(App[None]):
             self._update_status(self._scoring_status_text())
 
     def _render_stats(self, buckets: int, sessions: int, files: int) -> None:
-        self.query_one("#stat-buckets", Static).update(f"[b]{buckets}[/]")
-        self.query_one("#stat-sessions", Static).update(f"[b]{sessions}[/]")
-        self.query_one("#stat-files", Static).update(f"[b]{files}[/]")
+        self.query_one("#stat-buckets", Static).update(f"[b]{buckets:,}[/]")
+        self.query_one("#stat-sessions", Static).update(f"[b]{sessions:,}[/]")
+        self.query_one("#stat-files", Static).update(f"[b]{files:,}[/]")
         self.query_one("#stats-section").remove_class("inactive")
 
     async def _authenticate(self) -> bool:
@@ -1672,11 +1683,11 @@ class CCSentimentApp(App[None]):
             rate = Hardware.estimate_buckets_per_sec(engine)
             if rate and rate > 0:
                 self._update_status(
-                    f"[dim]Found [b]{bucket_count}[/] moments. "
-                    f"About {format_duration(bucket_count / rate)} on this Mac.[/]"
+                    f"[dim]Found [b]{bucket_count:,}[/] moments. "
+                    f"About {format_duration(bucket_count / rate)} to score on this Mac.[/]"
                 )
             else:
-                self._update_status(f"[dim]Found [b]{bucket_count}[/] moments.[/]")
+                self._update_status(f"[dim]Found [b]{bucket_count:,}[/] moments.[/]")
 
         if engine == "claude" and bucket_count > 0:
             ok = await self.push_screen_wait(
@@ -1876,6 +1887,8 @@ class CCSentimentApp(App[None]):
             self.query_one(stat_id, Static).update("--")
         self.query_one("#chart-section").add_class("inactive")
         self.query_one("#stats-section").add_class("inactive")
+        self.query_one("#score-digits").add_class("inactive")
+        self.query_one("#score-label").add_class("inactive")
 
     def _set_total(self, total: int, engine: str, total_files: int) -> None:
         self.total = total
@@ -1885,7 +1898,7 @@ class CCSentimentApp(App[None]):
         self._initial_estimate_seconds = total / rate if rate and rate > 0 else None
         self.query_one("#scan-progress", ProgressBar).update(total=total, progress=0)
         self._update_progress_label()
-        self.query_one("#stat-files", Static).update(f"[b]{total_files}[/]")
+        self.query_one("#stat-files", Static).update(f"[b]{total_files:,}[/]")
         self.query_one("#stats-section").remove_class("inactive")
         self.stage = Scoring(total=total, engine=engine)
 
@@ -1964,6 +1977,8 @@ class CCSentimentApp(App[None]):
             return
 
         self.query_one("#chart-section").remove_class("inactive")
+        self.query_one("#score-digits").remove_class("inactive")
+        self.query_one("#score-label").remove_class("inactive")
         scores = [int(r.sentiment_score) for r in self.records]
         counts = Counter(scores)
         total = len(scores)
@@ -1978,8 +1993,8 @@ class CCSentimentApp(App[None]):
         self.query_one("#hourly-chart", HourlyChart).update_chart(self.records)
 
         sessions = len({r.conversation_id for r in self.records})
-        self.query_one("#stat-buckets", Static).update(f"[b]{total}[/]")
-        self.query_one("#stat-sessions", Static).update(f"[b]{sessions}[/]")
+        self.query_one("#stat-buckets", Static).update(f"[b]{total:,}[/]")
+        self.query_one("#stat-sessions", Static).update(f"[b]{sessions:,}[/]")
         self._render_insights()
 
     @staticmethod

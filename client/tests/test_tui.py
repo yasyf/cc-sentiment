@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 from textual.app import App
-from textual.widgets import Button, ContentSwitcher, DataTable, Input, Label
+from textual.containers import Vertical
+from textual.widgets import Button, ContentSwitcher, DataTable, Input, Label, Static
 
 from cc_sentiment.models import AppState, ContributorId, GistConfig, GPGConfig, MyStat, SSHConfig
 from cc_sentiment.repo import Repository
@@ -15,6 +16,7 @@ from cc_sentiment.tui import (
     CCSentimentApp,
     CostReviewScreen,
     Discovering,
+    EngineBootView,
     HourlyChart,
     IdleAfterUpload,
     IdleCaughtUp,
@@ -23,6 +25,7 @@ from cc_sentiment.tui import (
     RescanConfirm,
     Scoring,
     SetupScreen,
+    SpinnerLine,
     Stage,
     StatShareScreen,
     Uploading,
@@ -1065,6 +1068,34 @@ async def test_hourly_chart_empty_records():
         chart.update_chart([])
         await pilot.pause()
         assert "no data yet" in str(chart.content)
+
+
+class EngineBootHarness(App[None]):
+    def compose(self):
+        with Vertical(id="section"):
+            yield SpinnerLine(id="status")
+            yield Static("", id="log")
+
+
+async def test_engine_boot_snippet_survives_bracket_heavy_content():
+    async with EngineBootHarness().run_test() as pilot:
+        boot = EngineBootView(
+            app=pilot.app,
+            section=pilot.app.query_one("#section"),
+            status=pilot.app.query_one("#status", SpinnerLine),
+            log=pilot.app.query_one("#log", Static),
+        )
+        boot.show("test-engine")
+        boot.add_snippet(
+            "2026-04-03T11:14:13.287367+0000 +13m26s [🐞][DSPyCompilationServer.compile] 'ignore'",
+            1,
+        )
+        boot.last_snippet_at = 0.0
+        boot.add_snippet("prefix text [dim", 1)
+        boot.last_snippet_at = 0.0
+        boot.add_snippet("<task-notification> <task-id>abc</task-id> body", 5)
+        await pilot.pause()
+        assert len(boot.lines) >= 1
 
 
 class StatShareHarness(App[None]):
