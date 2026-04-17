@@ -3,10 +3,11 @@
 	import { Chart, LineElement, PointElement, BarElement, LinearScale, TimeScale, Filler, Tooltip, Legend, BarController, LineController } from 'chart.js';
 	import annotationPlugin from 'chartjs-plugin-annotation';
 	import 'chartjs-adapter-luxon';
+	import { DateTime } from 'luxon';
 	import type { TimelinePoint } from '$lib/types.js';
 	import { EVENTS } from '$lib/events.js';
 	import { ACCENT, GRID, TICK, TOOLTIP, SENTIMENT_EMOJI, paddedRange } from '$lib/chart-theme.js';
-	import { bucketByDayPart, dayBoundaryAnnotations } from '$lib/bucket.js';
+	import { bucketByDayPart, dayBoundaryAnnotations, dayPartBandAnnotations, dayPartFor, DAY_PART_EMOJI } from '$lib/bucket.js';
 
 	Chart.register(LineElement, PointElement, BarElement, LinearScale, TimeScale, Filler, Tooltip, Legend, BarController, LineController, annotationPlugin);
 
@@ -25,7 +26,10 @@
 	});
 
 	const annotations = $derived.by(() => {
-		const out: Record<string, object> = { ...dayBoundaryAnnotations(buckets, DISPLAY_TZ) };
+		const out: Record<string, object> = {
+			...dayPartBandAnnotations(buckets, DISPLAY_TZ),
+			...dayBoundaryAnnotations(buckets, DISPLAY_TZ)
+		};
 		for (const evt of EVENTS) {
 			const t = new Date(evt.date).getTime();
 			if (t >= timeRange.min && t <= timeRange.max) {
@@ -95,10 +99,22 @@
 		scales: {
 			x: {
 				type: 'time' as const,
-				time: { unit: 'day' as const, tooltipFormat: 'LLL d, yyyy' },
+				time: { unit: 'hour' as const, tooltipFormat: 'LLL d, yyyy · h a' },
 				adapters: { date: { zone: DISPLAY_TZ } },
-				grid: { color: GRID },
-				ticks: { color: TICK, font: { size: 11 }, maxTicksLimit: 8 },
+				grid: { display: false },
+				ticks: {
+					source: 'data' as const,
+					autoSkip: true,
+					maxRotation: 0,
+					color: TICK,
+					font: { size: 12 },
+					callback: (value: number | string) => {
+						const dt = DateTime.fromMillis(Number(value), { zone: DISPLAY_TZ });
+						const part = dayPartFor(dt.hour);
+						const emoji = DAY_PART_EMOJI[part.key];
+						return part.key === 'late' ? [emoji, dt.toFormat('LLL d')] : emoji;
+					}
+				},
 				border: { display: false }
 			},
 			score: {

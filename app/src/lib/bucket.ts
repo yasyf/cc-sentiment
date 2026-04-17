@@ -18,6 +18,20 @@ export const DAY_PARTS: readonly DayPart[] = [
 	{ key: 'evening', label: 'evening', start: 18, end: 22, mid: 20 }
 ] as const;
 
+export const DAY_PART_EMOJI: Record<DayPartKey, string> = {
+	morning: '🌅',
+	afternoon: '☀️',
+	evening: '🌆',
+	late: '🌙'
+};
+
+export const DAY_PART_TINT: Record<DayPartKey, string> = {
+	morning: 'rgba(251, 191, 36, 0.06)',
+	afternoon: 'rgba(251, 146, 60, 0.05)',
+	evening: 'rgba(167, 139, 250, 0.06)',
+	late: 'rgba(99, 102, 241, 0.07)'
+};
+
 export function dayPartFor(hour: number): DayPart {
 	for (const part of DAY_PARTS) {
 		const hit = part.start < part.end
@@ -127,10 +141,45 @@ export function dayBoundaryAnnotations(points: { time: string }[], zone: string)
 				type: 'line',
 				xMin: iso,
 				xMax: iso,
-				borderColor: 'rgba(0, 0, 0, 0.08)',
-				borderWidth: 1,
-				borderDash: [2, 4],
+				borderColor: 'rgba(0, 0, 0, 0.18)',
+				borderWidth: 1.5,
 				label: { display: false }
+			};
+		}
+		cursor = cursor.plus({ days: 1 });
+	}
+	return annotations;
+}
+
+export function dayPartBandAnnotations(points: { time: string }[], zone: string): Record<string, object> {
+	if (points.length === 0) return {};
+	const first = DateTime.fromISO(points[0].time, { zone });
+	const last = DateTime.fromISO(points[points.length - 1].time, { zone });
+	if (!first.isValid || !last.isValid) return {};
+	const annotations: Record<string, object> = {};
+	let cursor = first.startOf('day').minus({ days: 1 });
+	const limit = last.endOf('day');
+	while (cursor <= limit) {
+		const date = cursor.toISODate();
+		if (!date) {
+			cursor = cursor.plus({ days: 1 });
+			continue;
+		}
+		for (const part of DAY_PARTS) {
+			const xMin = cursor.set({ hour: part.start, minute: 0, second: 0, millisecond: 0 });
+			const xMax = part.start < part.end
+				? cursor.set({ hour: part.end, minute: 0, second: 0, millisecond: 0 })
+				: cursor.plus({ days: 1 }).set({ hour: part.end, minute: 0, second: 0, millisecond: 0 });
+			const xMinIso = xMin.toISO();
+			const xMaxIso = xMax.toISO();
+			if (!xMinIso || !xMaxIso) continue;
+			annotations[`band-${date}-${part.key}`] = {
+				type: 'box',
+				xMin: xMinIso,
+				xMax: xMaxIso,
+				backgroundColor: DAY_PART_TINT[part.key],
+				borderWidth: 0,
+				drawTime: 'beforeDatasetsDraw'
 			};
 		}
 		cursor = cursor.plus({ days: 1 });
