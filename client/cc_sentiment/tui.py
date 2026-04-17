@@ -36,7 +36,6 @@ from textual.widgets import (
     RadioButton,
     RadioSet,
     Rule,
-    Sparkline,
     Static,
 )
 
@@ -427,6 +426,70 @@ class ScoreBar(Static):
         label = SCORE_LABELS[self.score]
         bar = "━" * bar_len + "╺" + "─" * (bar_width - bar_len)
         return f" {icon} {self.score} [{color}]{label:>11}[/]  [{color}]{bar}[/]  {pct:4.1f}%  ({count})"
+
+
+CHART_COLORS = {1: "red", 2: "dark_orange", 3: "yellow", 4: "green", 5: "cyan"}
+CHART_Y_TICKS = {5: "😄", 4: "🙂", 3: "😐", 2: "😕", 1: "😡"}
+CHART_X_LABELS = {0: "12a", 6: "6a", 12: "12p", 18: "6p", 23: "11p"}
+
+
+class HourlyChart(Static):
+    DEFAULT_CSS = """
+    HourlyChart { height: 7; }
+    """
+
+    def update_chart(self, records: list[SentimentRecord]) -> None:
+        sums = [0.0] * 24
+        counts = [0] * 24
+        for r in records:
+            h = r.time.astimezone().hour
+            sums[h] += int(r.sentiment_score)
+            counts[h] += 1
+        avgs: list[float | None] = [
+            sums[h] / counts[h] if counts[h] else None for h in range(24)
+        ]
+
+        if all(a is None for a in avgs):
+            self.update("[dim]no data yet[/]")
+            return
+
+        rows: list[str] = []
+        for row_score in range(5, 0, -1):
+            tick = CHART_Y_TICKS[row_score]
+            cells: list[str] = []
+            for h in range(24):
+                avg = avgs[h]
+                if avg is not None and round(avg) == row_score:
+                    color = CHART_COLORS[row_score]
+                    cells.append(f"[{color}]●[/]")
+                elif self._on_line_segment(h, row_score, avgs):
+                    cells.append("[dim]│[/]")
+                else:
+                    cells.append(" ")
+            rows.append(f"{tick} " + "".join(cells))
+
+        rows.append("   " + "─" * 24)
+        buf = list(" " * 27)
+        for h, lbl in CHART_X_LABELS.items():
+            for i, ch in enumerate(lbl):
+                buf[h + i] = ch
+        rows.append("   " + "".join(buf).rstrip())
+
+        self.update("\n".join(rows))
+
+    @staticmethod
+    def _on_line_segment(h: int, row_score: int, avgs: list[float | None]) -> bool:
+        if avgs[h] is not None:
+            return False
+        prev_h = next((i for i in range(h - 1, -1, -1) if avgs[i] is not None), None)
+        next_h = next((i for i in range(h + 1, 24) if avgs[i] is not None), None)
+        if prev_h is None or next_h is None:
+            return False
+        prev_row = round(avgs[prev_h])  # type: ignore[arg-type]
+        next_row = round(avgs[next_h])  # type: ignore[arg-type]
+        lo = min(prev_row, next_row)
+        hi = max(prev_row, next_row)
+        return lo < row_score < hi
 
 
 class PlatformErrorScreen(Screen[None]):
@@ -1153,8 +1216,7 @@ class CCSentimentApp(App[None]):
     #scan-progress { width: 1fr; }
     #chart-section { height: auto; margin: 1 0 0 0; }
     #chart-section.inactive, #stats-section.inactive { display: none; }
-    #sparkline-container { height: 3; margin: 0 0 1 0; }
-    #score-sparkline { height: 3; }
+    #hourly-chart { height: 7; margin: 0 0 1 0; }
     #distribution { height: auto; }
     #engine-boot-section { height: auto; margin: 1 0 0 0; display: none; }
     #engine-boot-section.active { display: block; }
@@ -1197,7 +1259,6 @@ class CCSentimentApp(App[None]):
         self.setup_only = setup_only
         self.repo: Repository | None = None
         self.records: list[SentimentRecord] = []
-        self._score_history: list[float] = []
         self._score_bars: dict[int, ScoreBar] = {}
         self._start_time = 0.0
 
@@ -1218,9 +1279,8 @@ class CCSentimentApp(App[None]):
             Rule(line_style="heavy")
 
             with Vertical(id="chart-section", classes="inactive"):
-                yield Static("[dim]Score trend[/]", id="sparkline-label")
-                with Vertical(id="sparkline-container"):
-                    yield Sparkline([], id="score-sparkline")
+                yield Static("[dim]Sentiment by hour of day[/]", id="hourly-chart-label")
+                yield HourlyChart(id="hourly-chart")
 
                 with Vertical(id="distribution"):
                     for s in range(1, 6):
@@ -1275,7 +1335,6 @@ class CCSentimentApp(App[None]):
         if not existing:
             return
         self.records = list(existing)
-        self._score_history = [float(r.sentiment_score) for r in existing]
         _, _, total_files = await anyio.to_thread.run_sync(self.repo.stats)
         self.query_one("#stat-files", Static).update(f"[b]{total_files}[/]")
         self._render_scores()
@@ -1538,14 +1597,13 @@ class CCSentimentApp(App[None]):
         assert self.repo is not None
         await anyio.to_thread.run_sync(self.repo.clear_all)
         self.records = []
-        self._score_history = []
         self.scored = 0
         self.total = 0
         self._start_time = time.monotonic()
         self.query_one("#scan-progress", ProgressBar).update(total=100, progress=0)
         self.query_one("#progress-label", Label).update("Preparing...")
         self.query_one("#score-digits", Digits).update("-.--")
-        self.query_one("#score-sparkline", Sparkline).data = []
+        self.query_one("#hourly-chart", HourlyChart).update_chart([])
         for s in range(1, 6):
             self._score_bars[s].update("")
         for stat_id in ("#stat-buckets", "#stat-sessions", "#stat-files", "#stat-rate"):
@@ -1580,10 +1638,6 @@ class CCSentimentApp(App[None]):
     def _add_records(self, new_records: list[SentimentRecord]) -> None:
         asyncio.get_running_loop()
         self.records.extend(new_records)
-
-        for r in new_records:
-            self._score_history.append(float(r.sentiment_score))
-
         self._render_scores()
 
     def _update_status(self, text: str) -> None:
@@ -1606,7 +1660,7 @@ class CCSentimentApp(App[None]):
 
         avg = mean(scores)
         self.query_one("#score-digits", Digits).update(f"{avg:.2f}")
-        self.query_one("#score-sparkline", Sparkline).data = self._score_history[-80:]
+        self.query_one("#hourly-chart", HourlyChart).update_chart(self.records)
 
         sessions = len({r.conversation_id for r in self.records})
         self.query_one("#stat-buckets", Static).update(f"[b]{total}[/]")

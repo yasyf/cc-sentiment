@@ -15,6 +15,7 @@ from cc_sentiment.tui import (
     CCSentimentApp,
     CostReviewScreen,
     Discovering,
+    HourlyChart,
     IdleAfterUpload,
     IdleCaughtUp,
     IdleEmpty,
@@ -784,3 +785,34 @@ async def test_rescan_confirm_restores_previous_stage_on_cancel(tmp_path: Path, 
 
             await app._cancel_rescan()
             assert app.stage == prev
+
+
+class ChartHarness(App[None]):
+    def compose(self):
+        yield HourlyChart(id="chart")
+
+
+async def test_hourly_chart_renders_dots_at_correct_rows():
+    from datetime import datetime, timezone
+
+    records = [
+        make_record(score=5, time=datetime(2026, 4, 10, 8, 0, tzinfo=timezone.utc)),
+        make_record(score=1, time=datetime(2026, 4, 10, 14, 0, tzinfo=timezone.utc)),
+        make_record(score=3, time=datetime(2026, 4, 10, 20, 0, tzinfo=timezone.utc)),
+    ]
+    async with ChartHarness().run_test() as pilot:
+        chart = pilot.app.query_one("#chart", HourlyChart)
+        chart.update_chart(records)
+        await pilot.pause()
+        text = str(chart.content)
+        assert "●" in text
+        lines = text.split("\n")
+        assert len(lines) == 7
+
+
+async def test_hourly_chart_empty_records():
+    async with ChartHarness().run_test() as pilot:
+        chart = pilot.app.query_one("#chart", HourlyChart)
+        chart.update_chart([])
+        await pilot.pause()
+        assert "no data yet" in str(chart.content)

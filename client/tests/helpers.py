@@ -15,9 +15,10 @@ def make_record(
     bucket_index: int = 0,
     score: int = 4,
     claude_model: str = "claude-sonnet-4-20250514",
+    time: datetime | None = None,
 ) -> SentimentRecord:
     return SentimentRecord(
-        time=datetime(2026, 4, 10, 7, 35, 0, tzinfo=timezone.utc),
+        time=time or datetime(2026, 4, 10, 7, 35, 0, tzinfo=timezone.utc),
         conversation_id=SessionId(session_id),
         bucket_index=BucketIndex(bucket_index),
         sentiment_score=SentimentScore(score),
