@@ -13,11 +13,10 @@ import pytest
 from cc_sentiment.engines import (
     NOOP_PROGRESS,
     ClaudeCLIEngine,
+    EngineFactory,
     FrustrationFilter,
-    check_frustration,
-    default_engine,
-    extract_score,
 )
+from cc_sentiment.text import extract_score
 from cc_sentiment.models import (
     AssistantMessage,
     BucketIndex,
@@ -107,28 +106,28 @@ class TestExtractScore:
 
 class TestFrustrationDetection:
     def test_detects_wtf(self) -> None:
-        assert check_frustration(make_bucket("wtf is this"))
+        assert FrustrationFilter.check_frustration(make_bucket("wtf is this"))
 
     def test_detects_this_sucks(self) -> None:
-        assert check_frustration(make_bucket("this sucks"))
+        assert FrustrationFilter.check_frustration(make_bucket("this sucks"))
 
     def test_detects_fucking_broken(self) -> None:
-        assert check_frustration(make_bucket("this is fucking broken"))
+        assert FrustrationFilter.check_frustration(make_bucket("this is fucking broken"))
 
     def test_detects_correction_phrase(self) -> None:
-        assert check_frustration(make_bucket("no, that's wrong"))
+        assert FrustrationFilter.check_frustration(make_bucket("no, that's wrong"))
 
     def test_detects_not_what_i_asked(self) -> None:
-        assert check_frustration(make_bucket("that's not what I asked"))
+        assert FrustrationFilter.check_frustration(make_bucket("that's not what I asked"))
 
     def test_detects_giving_up(self) -> None:
-        assert check_frustration(make_bucket("I give up"))
+        assert FrustrationFilter.check_frustration(make_bucket("I give up"))
 
     def test_no_false_positive_on_neutral(self) -> None:
-        assert not check_frustration(make_bucket("please fix the login form"))
+        assert not FrustrationFilter.check_frustration(make_bucket("please fix the login form"))
 
     def test_no_false_positive_on_positive(self) -> None:
-        assert not check_frustration(make_bucket("this is great, thanks!"))
+        assert not FrustrationFilter.check_frustration(make_bucket("this is great, thanks!"))
 
     def test_ignores_assistant_messages(self) -> None:
         bucket = ConversationBucket(
@@ -137,7 +136,7 @@ class TestFrustrationDetection:
             bucket_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
             messages=(make_message("assistant", "wtf this sucks"),),
         )
-        assert not check_frustration(bucket)
+        assert not FrustrationFilter.check_frustration(bucket)
 
 
 class TestEstimateClaudeCost:
@@ -160,47 +159,47 @@ class TestEstimateClaudeCost:
 
 class TestClaudeCliAvailable:
     def test_false_when_binary_missing(self) -> None:
-        with patch("cc_sentiment.engines.shutil.which", return_value=None):
+        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value=None):
             assert ClaudeCLIEngine.is_available() is False
 
     def test_true_when_auth_status_zero(self) -> None:
         completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
-        with patch("cc_sentiment.engines.shutil.which", return_value="/usr/bin/claude"), \
-             patch("cc_sentiment.engines.subprocess.run", return_value=completed):
+        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"), \
+             patch("cc_sentiment.engines.claude_cli.subprocess.run", return_value=completed):
             assert ClaudeCLIEngine.is_available() is True
 
     def test_false_when_auth_status_nonzero(self) -> None:
         completed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="not logged in")
-        with patch("cc_sentiment.engines.shutil.which", return_value="/usr/bin/claude"), \
-             patch("cc_sentiment.engines.subprocess.run", return_value=completed):
+        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"), \
+             patch("cc_sentiment.engines.claude_cli.subprocess.run", return_value=completed):
             assert ClaudeCLIEngine.is_available() is False
 
     def test_false_on_timeout(self) -> None:
-        with patch("cc_sentiment.engines.shutil.which", return_value="/usr/bin/claude"), \
-             patch("cc_sentiment.engines.subprocess.run", side_effect=subprocess.TimeoutExpired("claude", 10)):
+        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"), \
+             patch("cc_sentiment.engines.claude_cli.subprocess.run", side_effect=subprocess.TimeoutExpired("claude", 10)):
             assert ClaudeCLIEngine.is_available() is False
 
 
 class TestDefaultEngine:
     def test_apple_silicon_prefers_omlx(self) -> None:
-        with patch("cc_sentiment.engines.sys.platform", "darwin"), \
-             patch("cc_sentiment.engines.platform.machine", return_value="arm64"):
-            assert default_engine() == "omlx"
+        with patch("cc_sentiment.engines.factory.sys.platform", "darwin"), \
+             patch("cc_sentiment.engines.factory.platform.machine", return_value="arm64"):
+            assert EngineFactory.default() == "omlx"
 
     def test_linux_falls_back_to_claude(self) -> None:
-        with patch("cc_sentiment.engines.sys.platform", "linux"), \
-             patch("cc_sentiment.engines.platform.machine", return_value="x86_64"):
-            assert default_engine() == "claude"
+        with patch("cc_sentiment.engines.factory.sys.platform", "linux"), \
+             patch("cc_sentiment.engines.factory.platform.machine", return_value="x86_64"):
+            assert EngineFactory.default() == "claude"
 
     def test_darwin_intel_falls_back_to_claude(self) -> None:
-        with patch("cc_sentiment.engines.sys.platform", "darwin"), \
-             patch("cc_sentiment.engines.platform.machine", return_value="x86_64"):
-            assert default_engine() == "claude"
+        with patch("cc_sentiment.engines.factory.sys.platform", "darwin"), \
+             patch("cc_sentiment.engines.factory.platform.machine", return_value="x86_64"):
+            assert EngineFactory.default() == "claude"
 
 
 class TestClaudeCLIEngine:
     def test_init_raises_without_claude_binary(self) -> None:
-        with patch("cc_sentiment.engines.shutil.which", return_value=None), \
+        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value=None), \
              pytest.raises(RuntimeError, match="claude.*not found"):
             ClaudeCLIEngine(model="claude-haiku-4-5")
 
@@ -214,9 +213,9 @@ class TestClaudeCLIEngine:
         })
         proc = MagicMock(returncode=0, communicate=AsyncMock(return_value=(response, b"")))
 
-        with patch("cc_sentiment.engines.shutil.which", return_value="/usr/bin/claude"):
+        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"):
             engine = ClaudeCLIEngine(model="claude-haiku-4-5")
-        with patch("cc_sentiment.engines.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        with patch("cc_sentiment.engines.claude_cli.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
             scores = await engine.score([make_bucket("please help me fix this")])
 
         assert scores == [SentimentScore(4)]
@@ -227,9 +226,9 @@ class TestClaudeCLIEngine:
     async def test_score_raises_on_subprocess_failure(self) -> None:
         proc = MagicMock(returncode=2, communicate=AsyncMock(return_value=(b"", b"auth failed")))
 
-        with patch("cc_sentiment.engines.shutil.which", return_value="/usr/bin/claude"):
+        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"):
             engine = ClaudeCLIEngine(model="claude-haiku-4-5")
-        with patch("cc_sentiment.engines.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)), \
+        with patch("cc_sentiment.engines.claude_cli.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)), \
              pytest.raises(RuntimeError, match="claude -p failed"):
             await engine.score([make_bucket("please help me fix this")])
 
@@ -243,11 +242,11 @@ class TestClaudeCLIEngine:
         })
         proc = MagicMock(returncode=0, communicate=AsyncMock(return_value=(response, b"")))
 
-        with patch("cc_sentiment.engines.shutil.which", return_value="/usr/bin/claude"):
+        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"):
             engine = ClaudeCLIEngine(model="claude-haiku-4-5")
 
         calls: list[int] = []
-        with patch("cc_sentiment.engines.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        with patch("cc_sentiment.engines.claude_cli.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
             await engine.score([make_bucket("please help me")], on_progress=calls.append)
         assert calls == [1]
 

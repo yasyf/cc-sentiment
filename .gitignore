@@ -37,7 +37,7 @@ bun.lockb
 *.gguf
 *.bin
 *.npz
-models/
+/models/
 mlx_models/
 .mlx_cache/
 

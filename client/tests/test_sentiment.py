@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cc_sentiment.engines import (
+from cc_sentiment.text import (
     MAX_CONVERSATION_CHARS,
     extract_score,
     format_conversation,
@@ -134,7 +134,7 @@ class TestClassifierIntegration:
         with patch.dict(sys.modules, {
             "mlx_lm": mock_mlx_lm,
         }), patch("cc_sentiment.patches.apply_kv_cache_patch"), \
-             patch("cc_sentiment.sentiment.make_score_logit_processor", return_value=mock_logit_proc):
+             patch("cc_sentiment.sentiment.SentimentClassifier.make_score_logit_processor", return_value=mock_logit_proc):
             classifier = SentimentClassifier.__new__(SentimentClassifier)
             classifier.model = mock_model
             classifier.tokenizer = mock_tokenizer

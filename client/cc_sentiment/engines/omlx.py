@@ -2,133 +2,25 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import importlib.util
-import platform
-import re
-import shutil
 import socket
 import subprocess
-import sys
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
 
-import anyio.to_thread
 import httpx
-import orjson
 
 from cc_sentiment.models import ConversationBucket, SentimentScore
+from cc_sentiment.text import extract_score, format_conversation
 
-DEFAULT_MODEL = "unsloth/gemma-4-E2B-it-UD-MLX-4bit"
-MAX_CONVERSATION_CHARS = 8192
-
-FRUSTRATION_PATTERN = re.compile(
-    r"\b("
-    r"wtf|wth|ffs|omfg|"
-    r"shit(?:ty|tiest)?|dumbass|horrible|awful|"
-    r"piss(?:ed|ing)?off|piece\s*of\s*(?:shit|crap|junk)|"
-    r"what\s*the\s*(?:fuck|hell)|"
-    r"fuck(?:ing?)?\s*(?:broken|useless|terrible|awful|horrible)|"
-    r"fuck\s*you|screw\s*(?:this|you)|"
-    r"so\s*frustrating|this\s*sucks|damnit|damn\s*it|"
-    r"no,?\s*that'?s\s*wrong|not\s*what\s*i\s*asked|"
-    r"you\s*misunderstood|that'?s\s*not\s*right|"
-    r"undo\s*that|why\s*did\s*you|try\s*again|"
-    r"useless|this\s*is\s*terrible|completely\s*wrong|"
-    r"i\s*give\s*up|giving\s*up"
-    r")\b",
-    re.IGNORECASE,
+from cc_sentiment.engines.protocol import (
+    DEFAULT_MODEL,
+    NOOP_PROGRESS,
+    STRUCTURED_OUTPUTS_CHOICE,
+    SYSTEM_PROMPT,
 )
-
-SYSTEM_PROMPT = """Rate the developer's sentiment in this developer-AI conversation. Reply with ONLY a single digit 1-5.
-
-1 - Frustrated, angry, or giving up. Examples: "this still doesn't work", "ugh why did you do that", "forget it, i'll do it myself".
-2 - Annoyed, pointing out mistakes. Examples: "that's wrong, try again", "you missed the null case", "no, the other file".
-3 - Neutral, just giving instructions or routine approvals. Examples: "go ahead and commit", "add a test for this", "run the linter", "sounds good, proceed", "yes", "ok".
-4 - Satisfied, says it works well. Examples: "perfect", "that works", "nice, looks good".
-5 - Enthusiastic praise, amazement, strong positive emotion. Examples: "incredible!", "this is amazing", "blown away", "love it!!!".
-
-Key rule: routine greenlights like "go ahead", "yes do it", "sounds good", "ok commit" are 3 (neutral), not 1. Simple approval without strong emotion ("works", "good", "nice") is 4. Strong positive emotion or multiple exclamation marks is 5.
-
-Score ONLY the developer's messages."""
-
-STRUCTURED_OUTPUTS_CHOICE = ["1", "2", "3", "4", "5"]
-
-
-NOOP_PROGRESS: Callable[[int], None] = lambda _: None
-NOOP_SNIPPET: Callable[[str, int], None] = lambda _s, _i: None
-
-
-class InferenceEngine(Protocol):
-    async def score(
-        self,
-        buckets: list[ConversationBucket],
-        on_progress: Callable[[int], None] = NOOP_PROGRESS,
-    ) -> list[SentimentScore]: ...
-    def peak_memory_gb(self) -> float: ...
-    async def close(self) -> None: ...
-
-
-def check_frustration(bucket: ConversationBucket) -> bool:
-    return any(
-        msg.role == "user" and FRUSTRATION_PATTERN.search(msg.content)
-        for msg in bucket.messages
-    )
-
-
-class FrustrationFilter:
-    def __init__(self, inner: InferenceEngine) -> None:
-        self.inner = inner
-
-    async def score(
-        self,
-        buckets: list[ConversationBucket],
-        on_progress: Callable[[int], None] = NOOP_PROGRESS,
-    ) -> list[SentimentScore]:
-        flags = [check_frustration(b) for b in buckets]
-        to_infer = [(i, b) for i, (b, f) in enumerate(zip(buckets, flags)) if not f]
-        if pre := sum(flags):
-            on_progress(pre)
-        inferred = await self.inner.score([b for _, b in to_infer], on_progress)
-        scores = [SentimentScore(1) if f else SentimentScore(0) for f in flags]
-        for (idx, _), s in zip(to_infer, inferred):
-            scores[idx] = s
-        return scores
-
-    def peak_memory_gb(self) -> float:
-        return self.inner.peak_memory_gb()
-
-    async def close(self) -> None:
-        await self.inner.close()
-
-
-def format_conversation(bucket: ConversationBucket) -> str:
-    full = "\n".join(
-        f"{'DEVELOPER' if msg.role == 'user' else 'AI'}: {msg.content}"
-        for msg in bucket.messages
-    )
-    if len(full) > MAX_CONVERSATION_CHARS:
-        return full[:MAX_CONVERSATION_CHARS] + "\n[... truncated]"
-    return full
-
-
-def extract_score(response: str) -> SentimentScore:
-    cleaned = response.replace("<pad>", "").strip()
-    if cleaned in "12345":
-        return SentimentScore(int(cleaned))
-    match = re.search(r"[1-5]", cleaned)
-    if match:
-        return SentimentScore(int(match.group()))
-    raise ValueError(f"Could not extract score from: {cleaned!r}")
-
-
-def find_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
 
 
 class StallDetected(Exception):
@@ -170,6 +62,12 @@ class OMLXEngine:
         self.on_log: Callable[[str], None] = on_log or SILENT_LOG
         self._start_server()
 
+    @staticmethod
+    def find_free_port() -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("", 0))
+            return s.getsockname()[1]
+
     def _spawn_server(self, port: int, capture_log: bool) -> subprocess.Popen:
         proc = subprocess.Popen(
             [
@@ -193,7 +91,7 @@ class OMLXEngine:
                 self.on_log(line)
 
     def _start_server(self) -> None:
-        self.port = find_free_port()
+        self.port = self.find_free_port()
         self.base_url = f"http://localhost:{self.port}"
         self.process = self._spawn_server(self.port, capture_log=True)
         self.model_name = None
@@ -201,7 +99,7 @@ class OMLXEngine:
         self.client = httpx.AsyncClient(base_url=self.base_url, timeout=300.0)
 
     def _start_next_server_background(self) -> None:
-        port = find_free_port()
+        port = self.find_free_port()
         proc = self._spawn_server(port, capture_log=False)
         self._next_server = WarmServer(process=proc, port=port)
         self._next_warm_task = asyncio.create_task(
@@ -292,10 +190,8 @@ class OMLXEngine:
 
     async def warm_system_prompt(self) -> None:
         assert self.client is not None
-        try:
+        with contextlib.suppress(httpx.HTTPError):
             await self.client.post("/v1/chat/completions", json=self._make_body("warmup"))
-        except httpx.HTTPError:
-            pass
 
     def _make_body(self, user_content: str) -> dict:
         return {
@@ -398,136 +294,3 @@ class OMLXEngine:
 
     def __del__(self) -> None:
         self._shutdown()
-
-
-def default_engine() -> str:
-    match (sys.platform, platform.machine()):
-        case ("darwin", "arm64"):
-            return "omlx"
-        case _:
-            return "claude"
-
-
-def resolve_engine(requested: str | None) -> str:
-    engine = requested or default_engine()
-    if engine != "claude" or ClaudeCLIEngine.is_available():
-        return engine
-    raise RuntimeError(
-        "Can't run sentiment analysis on this platform.\n"
-        "cc-sentiment needs Apple Silicon for local inference, "
-        "or the `claude` CLI as a fallback.\n\n"
-        "Install Claude Code from https://claude.com/claude-code, "
-        "then run `claude auth login` and try again."
-    )
-
-
-class ClaudeCLIEngine:
-    HAIKU_MODEL = "claude-haiku-4-5"
-    HAIKU_INPUT_USD_PER_MTOK = 1.0
-    HAIKU_OUTPUT_USD_PER_MTOK = 5.0
-    EST_INPUT_TOKENS_PER_BUCKET = 2650
-    EST_OUTPUT_TOKENS_PER_BUCKET = 1
-    CONCURRENCY = 4
-
-    def __init__(self, model: str) -> None:
-        if not shutil.which("claude"):
-            raise RuntimeError(
-                "`claude` CLI not found. Install Claude Code from https://claude.com/claude-code"
-            )
-        self.model = model
-        self.total_cost_usd = 0.0
-        self.total_input_tokens = 0
-        self.total_output_tokens = 0
-
-    @classmethod
-    def estimate_cost_usd(cls, bucket_count: int) -> float:
-        return bucket_count * (
-            cls.EST_INPUT_TOKENS_PER_BUCKET * cls.HAIKU_INPUT_USD_PER_MTOK
-            + cls.EST_OUTPUT_TOKENS_PER_BUCKET * cls.HAIKU_OUTPUT_USD_PER_MTOK
-        ) / 1_000_000
-
-    @staticmethod
-    def is_available() -> bool:
-        if not shutil.which("claude"):
-            return False
-        try:
-            result = subprocess.run(
-                ["claude", "auth", "status"],
-                capture_output=True, text=True, timeout=10, check=False,
-            )
-        except subprocess.TimeoutExpired:
-            return False
-        return result.returncode == 0
-
-    async def score_one(self, bucket: ConversationBucket) -> SentimentScore:
-        proc = await asyncio.create_subprocess_exec(
-            "claude", "-p", f"CONVERSATION:\n{format_conversation(bucket)}",
-            "--model", self.model,
-            "--system-prompt", SYSTEM_PROMPT,
-            "--output-format", "json",
-            "--max-turns", "1",
-            "--tools", "",
-            "--disable-slash-commands",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            raise RuntimeError(f"claude -p failed ({proc.returncode}): {stderr.decode()[:500]}")
-        data = orjson.loads(stdout)
-        if data["is_error"]:
-            raise RuntimeError(f"claude -p error: {data['result']}")
-        usage = data["usage"]
-        self.total_cost_usd += data["total_cost_usd"]
-        self.total_input_tokens += usage["input_tokens"]
-        self.total_output_tokens += usage["output_tokens"]
-        return extract_score(data["result"])
-
-    async def score(
-        self,
-        buckets: list[ConversationBucket],
-        on_progress: Callable[[int], None] = NOOP_PROGRESS,
-    ) -> list[SentimentScore]:
-        sem = asyncio.Semaphore(self.CONCURRENCY)
-
-        async def one(bucket: ConversationBucket) -> SentimentScore:
-            async with sem:
-                score = await self.score_one(bucket)
-            on_progress(1)
-            return score
-
-        return list(await asyncio.gather(*(one(b) for b in buckets)))
-
-    def peak_memory_gb(self) -> float:
-        return 0.0
-
-    async def close(self) -> None:
-        pass
-
-
-async def build_engine(
-    kind: str,
-    model_repo: str | None = None,
-    on_engine_log: Callable[[str], None] | None = None,
-) -> InferenceEngine:
-    match kind:
-        case "mlx":
-            if importlib.util.find_spec("mlx_lm") is None:
-                raise RuntimeError(
-                    "The local mlx engine needs the `mlx` extra. "
-                    "Install with `uvx 'cc-sentiment[mlx]'` (Apple Silicon only), "
-                    "or use the default engine instead."
-                )
-            from cc_sentiment.sentiment import SentimentClassifier
-            inner: InferenceEngine = await anyio.to_thread.run_sync(
-                SentimentClassifier, model_repo or DEFAULT_MODEL
-            )
-        case "omlx":
-            omlx = await anyio.to_thread.run_sync(OMLXEngine, model_repo, on_engine_log)
-            await omlx.warm_system_prompt()
-            inner = omlx
-        case "claude":
-            inner = ClaudeCLIEngine(model=model_repo or ClaudeCLIEngine.HAIKU_MODEL)
-        case _:
-            raise ValueError(f"Unknown engine: {kind}")
-    return FrustrationFilter(inner)

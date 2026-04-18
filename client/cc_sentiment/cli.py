@@ -115,13 +115,13 @@ def benchmark(
     transcripts: int, runs: int, engines: str,
     model_repo: str | None, scaling: bool, accuracy: bool,
 ) -> None:
-    from cc_sentiment.benchmark import run_accuracy_test, run_benchmark
+    from cc_sentiment.benchmark import BenchmarkRunner
 
     if accuracy:
-        run_accuracy_test(engines.split(",")[0].strip(), model_repo)
+        BenchmarkRunner.run_accuracy_test(engines.split(",")[0].strip(), model_repo)
         return
 
-    run_benchmark(
+    BenchmarkRunner.run_benchmark(
         max_transcripts=transcripts,
         runs=runs,
         engines=[e.strip() for e in engines.split(",")],

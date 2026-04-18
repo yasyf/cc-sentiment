@@ -90,7 +90,7 @@ class UploadProgress:
         self.fatal = None
         self.started_at = 0.0
 
-_retry = retry(
+RETRY_POLICY = retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, max=8),
     retry=retry_if_exception(lambda exc: (
@@ -146,7 +146,7 @@ class Uploader:
             case _:
                 return config.contributor_id
 
-    @_retry
+    @RETRY_POLICY
     async def _verify_credentials(self, config: SSHConfig | GPGConfig | GistConfig) -> None:
         backend = self.backend_from_config(config)
         signature = await anyio.to_thread.run_sync(PayloadSigner.sign, TEST_PAYLOAD, backend)

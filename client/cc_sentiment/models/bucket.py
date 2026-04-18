@@ -2,52 +2,18 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime
-from importlib.metadata import version
-from pathlib import Path
-from typing import Annotated, Literal, NamedTuple, NewType
+from typing import NamedTuple, NewType
 
-from pydantic import BaseModel, Discriminator, Tag
+from pydantic import BaseModel
+
+from .transcript import AssistantMessage, TranscriptMessage, UserMessage
 
 SessionId = NewType("SessionId", str)
 BucketIndex = NewType("BucketIndex", int)
 SentimentScore = NewType("SentimentScore", int)
 PromptVersion = NewType("PromptVersion", str)
-ContributorId = NewType("ContributorId", str)
-
-ContributorType = Literal["github", "gpg", "gist"]
 
 PROMPT_VERSION = PromptVersion("v1")
-CLIENT_VERSION = version("cc-sentiment")
-
-
-class ToolCall(NamedTuple):
-    name: str
-    file_path: str | None = None
-
-
-class UserMessage(NamedTuple):
-    content: str
-    timestamp: datetime
-    session_id: SessionId
-    uuid: str
-    tool_calls: tuple[ToolCall, ...]
-    thinking_chars: int
-    cc_version: str
-    role: Literal["user"] = "user"
-
-
-class AssistantMessage(NamedTuple):
-    content: str
-    timestamp: datetime
-    session_id: SessionId
-    uuid: str
-    tool_calls: tuple[ToolCall, ...]
-    thinking_chars: int
-    claude_model: str
-    role: Literal["assistant"] = "assistant"
-
-
-TranscriptMessage = UserMessage | AssistantMessage
 
 
 class BucketMetrics(BaseModel, frozen=True):
@@ -130,93 +96,6 @@ class ConversationBucket(NamedTuple):
         return BucketMetrics.from_messages(self.messages)
 
 
-class SentimentRecord(BaseModel, frozen=True):
-    time: datetime
-    conversation_id: SessionId
-    bucket_index: BucketIndex
-    sentiment_score: SentimentScore
-    prompt_version: PromptVersion = PROMPT_VERSION
-    claude_model: str
-    client_version: str = CLIENT_VERSION
-    read_edit_ratio: float | None
-    edits_without_prior_read_ratio: float | None
-    write_edit_ratio: float | None
-    tool_calls_per_turn: float
-    subagent_count: int
-    turn_count: int
-    thinking_present: bool
-    thinking_chars: int
-    cc_version: str
-
-
-class UploadPayload(BaseModel, frozen=True):
-    contributor_type: ContributorType
-    contributor_id: str
-    signature: str
-    records: tuple[SentimentRecord, ...]
-
-
-class MyStat(BaseModel, frozen=True):
-    kind: str
-    percentile: int
-    text: str
-    tweet_text: str
-    total_contributors: int
-
-
-class SSHConfig(BaseModel, frozen=True):
-    key_type: Literal["ssh"] = "ssh"
-    contributor_type: Literal["github"] = "github"
-    contributor_id: ContributorId
-    key_path: Path
-
-
-class GPGConfig(BaseModel, frozen=True):
-    key_type: Literal["gpg"] = "gpg"
-    contributor_type: ContributorType
-    contributor_id: ContributorId
-    fpr: str
-
-
-class GistConfig(BaseModel, frozen=True):
-    key_type: Literal["gist"] = "gist"
-    contributor_type: Literal["gist"] = "gist"
-    contributor_id: ContributorId
-    key_path: Path
-    gist_id: str
-
-
-ClientConfig = Annotated[
-    Annotated[SSHConfig, Tag("ssh")]
-    | Annotated[GPGConfig, Tag("gpg")]
-    | Annotated[GistConfig, Tag("gist")],
-    Discriminator(lambda v: v.get("key_type", "ssh") if isinstance(v, dict) else v.key_type),
-]
-
-
 class BucketKey(NamedTuple):
     session_id: SessionId
     bucket_index: BucketIndex
-
-
-class AppState(BaseModel):
-    model_config = {"extra": "ignore"}
-
-    config: ClientConfig | None = None
-    daemon_prompt_dismissed: bool = False
-
-    @classmethod
-    def state_path(cls) -> Path:
-        return Path.home() / ".cc-sentiment" / "state.json"
-
-    @classmethod
-    def load(cls) -> AppState:
-        path = cls.state_path()
-        if not path.exists():
-            return cls()
-        return cls.model_validate_json(path.read_text())
-
-    def save(self) -> None:
-        path = self.state_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(self.model_dump_json(indent=2))

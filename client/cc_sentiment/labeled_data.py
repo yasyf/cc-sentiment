@@ -22,49 +22,60 @@ class LabeledBucket(NamedTuple):
     expected_score: SentimentScore
 
 
-def _message(session_id: SessionId, uuid: str, ts: datetime, role: str, content: str) -> TranscriptMessage:
-    match role:
-        case "user":
-            return UserMessage(
-                content=content,
-                timestamp=ts,
-                session_id=session_id,
-                uuid=uuid,
-                tool_calls=(),
-                thinking_chars=0,
-                cc_version=LABELED_CC_VERSION,
-            )
-        case "assistant":
-            return AssistantMessage(
-                content=content,
-                timestamp=ts,
-                session_id=session_id,
-                uuid=uuid,
-                tool_calls=(),
-                thinking_chars=0,
-                claude_model=LABELED_CLAUDE_MODEL,
-            )
-        case _:
-            raise ValueError(f"unknown role: {role}")
+class LabeledDataset:
+    @staticmethod
+    def message(session_id: SessionId, uuid: str, ts: datetime, role: str, content: str) -> TranscriptMessage:
+        match role:
+            case "user":
+                return UserMessage(
+                    content=content,
+                    timestamp=ts,
+                    session_id=session_id,
+                    uuid=uuid,
+                    tool_calls=(),
+                    thinking_chars=0,
+                    cc_version=LABELED_CC_VERSION,
+                )
+            case "assistant":
+                return AssistantMessage(
+                    content=content,
+                    timestamp=ts,
+                    session_id=session_id,
+                    uuid=uuid,
+                    tool_calls=(),
+                    thinking_chars=0,
+                    claude_model=LABELED_CLAUDE_MODEL,
+                )
+            case _:
+                raise ValueError(f"unknown role: {role}")
 
+    @classmethod
+    def bucket(cls, label: str, index: int, messages: list[tuple[str, str]]) -> ConversationBucket:
+        session_id = SessionId(f"labeled-{label}-{index}")
+        return ConversationBucket(
+            session_id=session_id,
+            bucket_index=BucketIndex(0),
+            bucket_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            messages=tuple(
+                cls.message(
+                    session_id,
+                    f"labeled-{label}-{index}-{i}",
+                    datetime(2026, 1, 1, 0, 0, i, tzinfo=timezone.utc),
+                    role,
+                    content,
+                )
+                for i, (role, content) in enumerate(messages)
+            ),
+        )
 
-def _bucket(label: str, index: int, messages: list[tuple[str, str]]) -> ConversationBucket:
-    session_id = SessionId(f"labeled-{label}-{index}")
-    return ConversationBucket(
-        session_id=session_id,
-        bucket_index=BucketIndex(0),
-        bucket_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        messages=tuple(
-            _message(
-                session_id,
-                f"labeled-{label}-{index}-{i}",
-                datetime(2026, 1, 1, 0, 0, i, tzinfo=timezone.utc),
-                role,
-                content,
-            )
-            for i, (role, content) in enumerate(messages)
-        ),
-    )
+    @classmethod
+    def build(cls) -> list[LabeledBucket]:
+        dataset: list[LabeledBucket] = []
+        for score, conversations in ALL_CONVERSATIONS.items():
+            for i, messages in enumerate(conversations):
+                bucket = cls.bucket(f"s{score}", i, messages)
+                dataset.append(LabeledBucket(bucket, SentimentScore(score)))
+        return dataset
 
 
 SCORE_1_CONVERSATIONS: list[list[tuple[str, str]]] = [
@@ -425,12 +436,3 @@ ALL_CONVERSATIONS: dict[int, list[list[tuple[str, str]]]] = {
     4: SCORE_4_CONVERSATIONS,
     5: SCORE_5_CONVERSATIONS,
 }
-
-
-def build_labeled_dataset() -> list[LabeledBucket]:
-    dataset: list[LabeledBucket] = []
-    for score, conversations in ALL_CONVERSATIONS.items():
-        for i, messages in enumerate(conversations):
-            bucket = _bucket(f"s{score}", i, messages)
-            dataset.append(LabeledBucket(bucket, SentimentScore(score)))
-    return dataset

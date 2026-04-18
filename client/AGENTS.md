@@ -2,6 +2,40 @@
 
 macOS Apple Silicon CLI tool. Discovers Claude Code conversation transcripts, runs them through Gemma 4 via MLX for local sentiment analysis, signs results with GitHub SSH keys, and uploads to the server.
 
+## Python Style
+
+Adapted from the bioqa styleguide. Root `AGENTS.md` rules apply unless overridden here.
+
+1. **No comments or docstrings.** Code is self-documenting via names, types, and organization. Comments only for `TODO:`, non-obvious workarounds, or temporarily disabled code. Explanatory prose belongs in PR descriptions and commit messages, not in source.
+
+2. **Functional over imperative.** Walrus `:=`, comprehensions, chained operations. Avoid intermediate variables when a pipeline reads clearly. `extract_score` in `cc_sentiment/text.py` is the canonical pattern: walrus-guarded regex, no temporary `match` variable lying around.
+
+3. **No underscore prefixes on module-level helpers, classes, constants, or free functions.** Use `__all__` in package `__init__.py` for export control. Underscore prefixes are *only* allowed on class methods that are truly private — called only from within their own class. Positive examples: `OMLXEngine._spawn_server`, `OMLXEngine._drain`, `OMLXEngine._make_body`, `SentimentClassifier._ensure_prompt_cache`, `Pipeline._parse_buckets_with_metrics`, `Uploader._verify_credentials`, `UploadPool._worker_loop`. Negative examples (now fixed): `parser.py:_build_message`, `engines.py:_check_frustration`, `tui.py:_format_duration`.
+
+4. **No free-floating functions outside named pure utility modules.** Methods on classes belong in classes; everything else gets a class to live on. The named utility modules are:
+   - `cc_sentiment/text.py` — `format_conversation`, `extract_score`, `MAX_CONVERSATION_CHARS`
+   - `cc_sentiment/nlp.py` — spaCy lazy loader (`NLP` classmethods)
+   - `cc_sentiment/transcripts/parser.py` — carve-out: hosts `Backend`-implementing class plus picklable parsing helpers (`build_message`, `python_parse_chunk`, etc.) that must stay module-level for `anyio.to_process.run_sync`
+   - `cc_sentiment/patches/__init__.py` — `apply_kv_cache_patch`
+   - `cc_sentiment/_transcripts_rs.pyi` — `.pyi` stub; free `def` is required syntax
+   New utility modules require justification. Click-decorated commands in `cli.py` are framework convention and stay free.
+
+5. **Match statements for type dispatch.** `match (sys.platform, platform.machine())`, `match kind:` in `EngineFactory.build`. `if/elif` only for boolean flags or non-type-discriminated branching.
+
+6. **Minimal `try`/`except`.** Only the line that actually throws goes inside the `try`. Use `contextlib.suppress(SomeError)` for fire-and-forget. Never bare `try/except: pass`. `OMLXEngine.warm_system_prompt` is the canonical pattern: `with contextlib.suppress(httpx.HTTPError): await self.client.post(...)`.
+
+7. **No defensive coding, backwards-compat shims, or optional modeling.** Crash on unexpected errors. `os.environ["KEY"]`, not `.get()`. No sentinel return values. No optional fields with fallback defaults — make the field required or split the model. Pre-launch, no migrations: edit `CREATE_TABLE_SQL` directly and drop the DB if needed.
+
+8. **Make invalid states unrepresentable.** `NewType` for branded primitives (`SentimentScore`, `BucketIndex`, `SessionId`, `PromptVersion`, `ContributorId`). Frozen `pydantic.dataclasses.dataclass(frozen=True)` for immutable data. Required fields over optionals.
+
+9. **Flat over nested.** Early returns. Three or more levels of nesting is a smell — extract a helper or invert the condition.
+
+10. **Module organization order.** Imports → constants → types → helpers → classes → functions → entrypoint. `from __future__ import annotations` at the top of every file.
+
+11. **Mutable defaults forbidden.** Use `field(default_factory=...)` / `Field(default_factory=...)`.
+
+12. **Boy Scout rule.** When you touch a file for any reason, fix nearby style violations as you go. Don't open a separate PR for them; bundle.
+
 ## Tech Stack
 
 - **Runtime**: Python 3.12+. Cross-platform — local MLX inference is Apple Silicon only, other platforms fall back to the `claude` CLI engine.
@@ -23,23 +57,33 @@ uv run cc-sentiment setup          # Configure GitHub username, verify SSH keys
 uv run pytest client/              # Run tests
 ```
 
-## Directory Structure (planned)
+## Directory Structure
 
 ```
 client/
 ├── pyproject.toml
-├── cli.py              # CLI entry point (click/typer commands)
-├── transcripts.py      # Transcript discovery and parsing
-├── sentiment.py        # MLX inference, prompt construction, score extraction
-├── signing.py          # GitHub SSH key discovery and payload signing
-├── upload.py           # HTTP client for server API
-├── models.py           # Pydantic models for transcripts, scores, payloads
-└── tests/
-    ├── test_transcripts.py
-    ├── test_sentiment.py
-    ├── test_signing.py
-    └── fixtures/
-        └── sample_transcript.jsonl
+└── cc_sentiment/
+    ├── __init__.py
+    ├── _transcripts_rs.pyi  # PyO3 stub
+    ├── benchmark.py         # BenchmarkRunner (accuracy + scaling tests)
+    ├── cli.py               # Click commands — thin
+    ├── daemon.py            # background daemon entry
+    ├── hardware.py          # platform / RAM detection
+    ├── headless.py          # headless scan flow (no TUI)
+    ├── labeled_data.py      # LabeledDataset builder for offline eval
+    ├── nlp.py               # spaCy NLP utility (lazy-loaded)
+    ├── pipeline.py          # Pipeline orchestrator
+    ├── repo.py              # SQLite Repository
+    ├── sentiment.py         # SentimentClassifier (MLX-only)
+    ├── text.py              # format_conversation, extract_score, MAX_CONVERSATION_CHARS
+    ├── upload.py            # Uploader, UploadPool, UploadProgress
+    ├── models/              # split: transcript, bucket, record, stats, config
+    ├── engines/             # split: protocol, filter, omlx, claude_cli, factory
+    ├── signing/             # split: backends, discovery, signer
+    ├── tui/                 # split: stages, progress, status, format, widgets,
+    │                        #        boot_view, view, app, screens/
+    ├── transcripts/         # parser, backend, rust
+    └── patches/             # mlx-lm KV cache patch
 ```
 
 ## Optional Rust Parser
@@ -152,23 +196,25 @@ Namespace `cc-sentiment` prevents signature reuse across applications. Canonical
 5. On success, mark records as uploaded in state
 6. On failure, retain for retry on next run
 
-## Style Specifics
+## Client-Specific Rules
 
-All rules from root `AGENTS.md` apply, plus:
+All rules from root `AGENTS.md` and the **Python Style** section above apply, plus:
 
-- **MLX isolated in `sentiment.py`.** No MLX imports leak into other modules. Keeps the CLI testable on non-Apple-Silicon (mock sentiment module).
+- **Submodule layout.** Each large concept (`engines`, `signing`, `models`, `tui`, `transcripts`) is a package under `cc_sentiment/`. The package `__init__.py` re-exports the public API (`from .factory import EngineFactory; ... __all__ = [...]`) so external callers `from cc_sentiment.engines import EngineFactory` keep working. One concept per file inside the package. Cross-references between split files are inter-package imports.
+- **MLX isolated in `sentiment.py`.** No MLX imports leak into other modules. Keeps the CLI testable on non-Apple-Silicon (mock `cc_sentiment.sentiment`).
 - **Subprocess calls use explicit argument lists.** Never `shell=True`. Always `subprocess.run(["ssh-keygen", "-Y", "sign", ...])`.
 - **Local state is split between JSON and SQLite.** `~/.cc-sentiment/state.json` holds only the signing config. Derived state (records, sessions, scored buckets, file mtimes) lives in `~/.cc-sentiment/records.db` via stdlib `sqlite3` wrapped in `anyio.to_thread.run_sync`.
 - **CLI commands are thin.** Parse args, call library modules, format output. No business logic in CLI handlers.
-- **All network calls through `upload.py`.** Single module owns the HTTP client, base URL, retry logic. Upload **concurrency** (worker count, timeout, retry policy, backoff) is defined as module-level constants in `upload.py` (`UPLOAD_WORKER_COUNT`, `UPLOAD_POOL_TIMEOUT_SECONDS`, `WORKER_BATCH_RETRIES`, `WORKER_BACKOFF_BASE_SECONDS`). `tui.py` must not hardcode its own values.
-- **MLX is an optional `[mlx]` extra.** `cc_sentiment.sentiment` is only imported from the `mlx` engine branch in `engines.py`, after a `find_spec("mlx_lm")` check raises an install hint when the extra is missing. The platform guard at the top of `sentiment.py` fails fast if the module is somehow loaded on the wrong arch.
-- **Parallelism in pipeline/engine code uses anyio, not `ThreadPoolExecutor` or Textual workers.** For parallel CPU/IO work inside async library code (e.g. parsing N transcripts), the pattern is `async with anyio.create_task_group() as tg: tg.start_soon(run_one, ...)` where each task body calls `await anyio.to_thread.run_sync(sync_fn, ...)`. AnyIO's default thread limiter bounds concurrency; tune via `to_thread.current_default_thread_limiter().total_tokens` if needed. Textual `@work` decorators are reserved for UI-coupled tasks in `tui.py` — never import them in `pipeline.py`, `engines.py`, or any module also consumed by `headless.py`. `ThreadPoolExecutor` is only used in `benchmark.py` (sync CLI entry with `click.progressbar`); new async code should not reach for it.
+- **All network calls through `upload.py`.** Single module owns the HTTP client, base URL, retry logic. Upload **concurrency** (worker count, timeout, retry policy, backoff) is defined as module-level constants in `upload.py` (`UPLOAD_WORKER_COUNT`, `UPLOAD_POOL_TIMEOUT_SECONDS`, `WORKER_BATCH_RETRIES`, `WORKER_BACKOFF_BASE_SECONDS`). The `tui/` package must not hardcode its own values.
+- **MLX is an optional `[mlx]` extra.** `cc_sentiment.sentiment` is only imported from the `mlx` branch in `EngineFactory.build` (`engines/factory.py`), after a `find_spec("mlx_lm")` check raises an install hint when the extra is missing. The platform guard at the top of `sentiment.py` fails fast if the module is somehow loaded on the wrong arch.
+- **Parallelism in pipeline/engine code uses anyio, not `ThreadPoolExecutor` or Textual workers.** For parallel CPU/IO work inside async library code (e.g. parsing N transcripts), the pattern is `async with anyio.create_task_group() as tg: tg.start_soon(run_one, ...)` where each task body calls `await anyio.to_thread.run_sync(sync_fn, ...)`. AnyIO's default thread limiter bounds concurrency; tune via `to_thread.current_default_thread_limiter().total_tokens` if needed. Textual `@work` decorators are reserved for UI-coupled tasks inside the `tui/` package — never import them in `pipeline.py`, `engines/`, or any module also consumed by `headless.py`. `ThreadPoolExecutor` is only used in `benchmark.py` (sync CLI entry with `click.progressbar`); new async code should not reach for it.
 
-### TUI state and view conventions (`tui.py`)
+### TUI state and view conventions (`tui/`)
 
-- **TUI state lives in dataclasses, not loose attributes.** Scoring state → `ScoringProgress`; upload state → `UploadProgress`. A new long-running phase gets its own dataclass with a `reset()` method. No floating `self._foo_count` / `self._bar_in_flight` counters on `CCSentimentApp`. Reactive properties (`scored`, `total`, `uploaded_count`) are thin mirrors of dataclass fields and exist only to trigger Textual watchers — the dataclass is the source of truth.
-- **No ad-hoc `query_one()` in App methods.** All widget reads/writes on the processing screen go through `ProcessingView`. If you need a new widget update, add a method to `ProcessingView` rather than reaching into `query_one()` from the App. This keeps the widget tree and its mutations in one place and makes reset/teardown a single call.
+- **TUI state lives in dataclasses, not loose attributes.** Scoring state → `ScoringProgress` (`tui/progress.py`); upload state → `UploadProgress` (`upload.py`). A new long-running phase gets its own dataclass with a `reset()` method. No floating `self._foo_count` / `self._bar_in_flight` counters on `CCSentimentApp`. Reactive properties (`scored`, `total`, `uploaded_count`) are thin mirrors of dataclass fields and exist only to trigger Textual watchers — the dataclass is the source of truth.
+- **No ad-hoc `query_one()` in App methods.** All widget reads/writes on the processing screen go through `ProcessingView` (`tui/view.py`). If you need a new widget update, add a method to `ProcessingView` rather than reaching into `query_one()` from `tui/app.py`. This keeps the widget tree and its mutations in one place and makes reset/teardown a single call.
 - **Reset is one call, not a checklist.** Adding a phase means adding `<phase>.reset()` on its dataclass and (if it owns widgets) a helper on `ProcessingView`. `_reset_for_rescan` and flow init must call the same reset helpers — never duplicate field-by-field resets between the two paths.
 - **Upload orchestration lives in `UploadPool`, not the App.** Worker pool, memory streams, retry/backoff, and timeout enforcement belong in `upload.py`. The App supplies a `producer` coroutine and an `on_progress_change` callback and nothing else. Don't grow new `_upload_*` methods on `CCSentimentApp`.
 - **Progress bars show progress; status text shows context.** Any long-running phase that produces discrete units of work gets a `ProgressBar`. Status text explains what's happening and where (e.g. "Uploading to sentiments.cc"), not how much is done. Don't regress to text-only "X/Y batches" indicators.
 - **Widget updates driven by reactive watchers.** Instead of calling `self._render_*()` imperatively from 8 places, assign to a reactive attribute (or reassign the dataclass in place and nudge a reactive) and put the update logic in `watch_*`. Imperative paint calls are a smell.
+- **One screen per file under `tui/screens/`.** `BootingScreen`, `PlatformErrorScreen`, `StatShareScreen`, `DaemonPromptScreen`, `CostReviewScreen`, `SetupScreen`. The screen class is the only top-level export — its private helpers stay underscore-prefixed methods on the screen class itself.

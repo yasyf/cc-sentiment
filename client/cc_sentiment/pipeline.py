@@ -12,8 +12,8 @@ import anyio.to_thread
 from cc_sentiment.engines import (
     NOOP_PROGRESS,
     NOOP_SNIPPET,
+    EngineFactory,
     InferenceEngine,
-    build_engine,
 )
 from cc_sentiment.models import (
     BucketKey,
@@ -212,7 +212,7 @@ class Pipeline:
         on_snippet: Callable[[str, int], None] = NOOP_SNIPPET,
         on_transcript_complete: Callable[[list[SentimentRecord]], None] = lambda _: None,
     ) -> list[SentimentRecord]:
-        classifier = await build_engine(engine, model_repo, on_engine_log)
+        classifier = await EngineFactory.build(engine, model_repo, on_engine_log)
 
         try:
             if not scan.transcripts:

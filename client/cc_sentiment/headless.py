@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import anyio.to_thread
 import httpx
 
-from cc_sentiment.engines import resolve_engine
+from cc_sentiment.engines import EngineFactory
 from cc_sentiment.models import AppState
 from cc_sentiment.pipeline import Pipeline
 from cc_sentiment.repo import Repository
@@ -90,7 +90,7 @@ class HeadlessRunner:
         if state.config is None:
             return HeadlessNotConfigured()
 
-        engine = await anyio.to_thread.run_sync(resolve_engine, None)
+        engine = await anyio.to_thread.run_sync(EngineFactory.resolve, None)
         cls.trace(debug, f"engine={engine}")
         cls.trace(debug, f"transcript-backend: {TranscriptParser.backend_name()}")
         if engine == "claude":

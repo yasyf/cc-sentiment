@@ -135,7 +135,7 @@ class ConversationBucketer:
         return buckets
 
 
-def _build_message(data: dict[str, Any]) -> TranscriptMessage | None:
+def build_message(data: dict[str, Any]) -> TranscriptMessage | None:
     if data.get("entrypoint") in EPHEMERAL_ENTRYPOINTS:
         return None
 
@@ -210,7 +210,7 @@ def _build_message(data: dict[str, Any]) -> TranscriptMessage | None:
             return None
 
 
-def _parse_messages_from_bytes(raw: bytes) -> list[TranscriptMessage]:
+def parse_messages_from_bytes(raw: bytes) -> list[TranscriptMessage]:
     messages: list[TranscriptMessage] = []
     for line in raw.split(b"\n"):
         if not line.strip():
@@ -219,33 +219,33 @@ def _parse_messages_from_bytes(raw: bytes) -> list[TranscriptMessage]:
             data = orjson.loads(line)
         except orjson.JSONDecodeError:
             continue
-        msg = _build_message(data)
+        msg = build_message(data)
         if msg is not None:
             messages.append(msg)
     return messages
 
 
-def _extract_bucket_keys(messages: list[TranscriptMessage]) -> list[BucketKey]:
+def extract_bucket_keys(messages: list[TranscriptMessage]) -> list[BucketKey]:
     return [
         BucketKey(session_id=b.session_id, bucket_index=b.bucket_index)
         for b in ConversationBucketer.bucket_messages(messages)
     ]
 
 
-def _python_parse_one(path_str: str, mtime: float) -> ParsedTranscript:
+def python_parse_one(path_str: str, mtime: float) -> ParsedTranscript:
     path = Path(path_str)
     raw = path.read_bytes()
-    messages = _parse_messages_from_bytes(raw)
+    messages = parse_messages_from_bytes(raw)
     return ParsedTranscript(
         path=path,
         mtime=mtime,
-        bucket_keys=tuple(_extract_bucket_keys(messages)),
+        bucket_keys=tuple(extract_bucket_keys(messages)),
         messages=tuple(messages),
     )
 
 
-def _python_parse_chunk(chunk: list[tuple[str, float]]) -> list[ParsedTranscript]:
-    return [_python_parse_one(path_str, mtime) for path_str, mtime in chunk]
+def python_parse_chunk(chunk: list[tuple[str, float]]) -> list[ParsedTranscript]:
+    return [python_parse_one(path_str, mtime) for path_str, mtime in chunk]
 
 
 class PythonBackend:
@@ -272,7 +272,7 @@ class PythonBackend:
 
         async def worker(chunk: list[tuple[str, float]]) -> None:
             async with limiter:
-                parsed_list = await anyio.to_process.run_sync(_python_parse_chunk, chunk)
+                parsed_list = await anyio.to_process.run_sync(python_parse_chunk, chunk)
             for parsed in parsed_list:
                 await send_ch.send(parsed)
 

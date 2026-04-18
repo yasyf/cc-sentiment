@@ -11,14 +11,13 @@ from cc_sentiment.engines import (
     DEFAULT_MODEL,
     NOOP_PROGRESS,
     SYSTEM_PROMPT,
-    extract_score,
-    format_conversation,
 )
 from cc_sentiment.models import (
     ConversationBucket,
     SentimentScore,
 )
 from cc_sentiment.patches import apply_kv_cache_patch
+from cc_sentiment.text import extract_score, format_conversation
 
 if sys.platform != "darwin" or platform.machine() != "arm64":
     raise RuntimeError(
@@ -33,27 +32,27 @@ CACHE_DIR = Path.home() / ".cc-sentiment"
 PROMPT_CACHE_FILE = CACHE_DIR / "prompt_cache.safetensors"
 
 
-def make_score_logit_processor() -> Callable:
-    import mlx.core as mx
-
-    allowed = mx.array(SCORE_TOKEN_IDS)
-
-    def processor(input_ids: mx.array, logits: mx.array) -> mx.array:
-        mask = mx.full(logits.shape, -1e9)
-        mask[..., allowed] = logits[..., allowed]
-        return mask
-
-    return processor
-
-
 class SentimentClassifier:
+    @staticmethod
+    def make_score_logit_processor() -> Callable:
+        import mlx.core as mx
+
+        allowed = mx.array(SCORE_TOKEN_IDS)
+
+        def processor(input_ids: mx.array, logits: mx.array) -> mx.array:
+            mask = mx.full(logits.shape, -1e9)
+            mask[..., allowed] = logits[..., allowed]
+            return mask
+
+        return processor
+
     def __init__(self, model_repo: str = DEFAULT_MODEL) -> None:
         apply_kv_cache_patch()
 
         from mlx_lm import load
 
         self.model, self.tokenizer = load(model_repo)
-        self.logit_processor = make_score_logit_processor()
+        self.logit_processor = self.make_score_logit_processor()
         self._system_tokens = self.tokenizer.apply_chat_template(
             [{"role": "system", "content": SYSTEM_PROMPT}],
             tokenize=True,

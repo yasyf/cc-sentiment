@@ -17,7 +17,7 @@ from tests.helpers import make_record
 
 class TestKeyDiscovery:
     def test_find_ssh_keys_ed25519(self) -> None:
-        with patch("cc_sentiment.signing.SSH_DIR") as mock_ssh_dir:
+        with patch("cc_sentiment.signing.discovery.SSH_DIR") as mock_ssh_dir:
             ed25519_path = MagicMock(spec=Path)
             ed25519_path.exists.return_value = True
             pub_path = MagicMock()
@@ -34,11 +34,11 @@ class TestKeyDiscovery:
             assert keys[0].algorithm == "ssh-ed25519"
 
     def test_find_ssh_keys_missing(self) -> None:
-        with patch("cc_sentiment.signing.SSH_DIR", Path("/nonexistent")):
+        with patch("cc_sentiment.signing.discovery.SSH_DIR", Path("/nonexistent")):
             keys = KeyDiscovery.find_ssh_keys()
             assert keys == ()
 
-    @patch("cc_sentiment.signing.httpx.get")
+    @patch("cc_sentiment.signing.discovery.httpx.get")
     def test_fetch_github_ssh_keys(self, mock_get: MagicMock) -> None:
         mock_response = MagicMock()
         mock_response.text = "ssh-ed25519 AAAA key1\nssh-rsa BBBB key2\n"
@@ -49,7 +49,7 @@ class TestKeyDiscovery:
         assert len(keys) == 2
         assert keys[0] == "ssh-ed25519 AAAA key1"
 
-    @patch("cc_sentiment.signing.httpx.get")
+    @patch("cc_sentiment.signing.discovery.httpx.get")
     def test_fetch_github_ssh_keys_empty(self, mock_get: MagicMock) -> None:
         mock_response = MagicMock()
         mock_response.text = ""
@@ -109,7 +109,7 @@ class TestKeyDiscovery:
             seen.append(kwargs.get("gnupghome"))
             return real_cls(*args, **kwargs)
 
-        with patch("cc_sentiment.signing.gnupg.GPG", side_effect=spy):
+        with patch("cc_sentiment.signing.discovery.gnupg.GPG", side_effect=spy):
             KeyDiscovery.parse_armored_fingerprints(armor)
 
         assert seen, "gnupg.GPG was not invoked"
@@ -194,8 +194,8 @@ class TestPayloadSigner:
 
 class TestKeyGeneration:
     def test_generate_ssh_key(self) -> None:
-        with patch("cc_sentiment.signing.SSH_DIR", Path("/home/.ssh")), \
-             patch("cc_sentiment.signing.subprocess.run") as mock_run, \
+        with patch("cc_sentiment.signing.discovery.SSH_DIR", Path("/home/.ssh")), \
+             patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run, \
              patch("pathlib.Path.read_text", return_value="ssh-ed25519 AAAA cc-sentiment\n"), \
              patch("pathlib.Path.exists", return_value=True):
             mock_run.return_value = MagicMock(returncode=0)
@@ -207,21 +207,21 @@ class TestKeyGeneration:
 
     def test_upload_github_ssh_key_success(self) -> None:
         key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
-        with patch("cc_sentiment.signing.subprocess.run") as mock_run:
+        with patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
             assert KeyDiscovery.upload_github_ssh_key(key) is True
 
     def test_upload_github_ssh_key_failure(self) -> None:
         key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
-        with patch("cc_sentiment.signing.subprocess.run") as mock_run:
+        with patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=1)
             assert KeyDiscovery.upload_github_ssh_key(key) is False
 
     def test_upload_github_gpg_key_success(self) -> None:
         key = GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096")
-        with patch("cc_sentiment.signing.gnupg.GPG") as mock_gpg_cls, \
-             patch("cc_sentiment.signing.subprocess.run") as mock_run, \
-             patch("cc_sentiment.signing.tempfile.NamedTemporaryFile"), \
+        with patch("cc_sentiment.signing.discovery.gnupg.GPG") as mock_gpg_cls, \
+             patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run, \
+             patch("cc_sentiment.signing.discovery.tempfile.NamedTemporaryFile"), \
              patch("pathlib.Path.unlink"):
             mock_gpg_cls.return_value.export_keys.return_value = "-----BEGIN PGP PUBLIC KEY BLOCK-----"
             mock_run.return_value = MagicMock(returncode=0)
@@ -229,7 +229,7 @@ class TestKeyGeneration:
 
     def test_upload_github_gpg_key_no_export(self) -> None:
         key = GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096")
-        with patch("cc_sentiment.signing.gnupg.GPG") as mock_gpg_cls:
+        with patch("cc_sentiment.signing.discovery.gnupg.GPG") as mock_gpg_cls:
             mock_gpg_cls.return_value.export_keys.return_value = ""
             assert KeyDiscovery.upload_github_gpg_key(key) is False
 
@@ -242,7 +242,7 @@ class TestGistKeypair:
     def test_gh_authenticated_success(self) -> None:
         with (
             patch.object(KeyDiscovery, "has_tool", return_value=True),
-            patch("cc_sentiment.signing.subprocess.run") as mock_run,
+            patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=0)
             assert KeyDiscovery.gh_authenticated() is True
@@ -250,7 +250,7 @@ class TestGistKeypair:
     def test_gh_authenticated_not_logged_in(self) -> None:
         with (
             patch.object(KeyDiscovery, "has_tool", return_value=True),
-            patch("cc_sentiment.signing.subprocess.run") as mock_run,
+            patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=1)
             assert KeyDiscovery.gh_authenticated() is False
@@ -260,24 +260,24 @@ class TestGistKeypair:
         pub = tmp_path / "id_ed25519.pub"
         key.write_text("private")
         pub.write_text("ssh-ed25519 AAA cc-sentiment")
-        with patch("cc_sentiment.signing.CC_SENTIMENT_KEY_DIR", tmp_path):
+        with patch("cc_sentiment.signing.discovery.CC_SENTIMENT_KEY_DIR", tmp_path):
             assert KeyDiscovery.find_gist_keypair() == key
 
     def test_find_gist_keypair_missing_pub(self, tmp_path: Path) -> None:
         (tmp_path / "id_ed25519").write_text("private")
-        with patch("cc_sentiment.signing.CC_SENTIMENT_KEY_DIR", tmp_path):
+        with patch("cc_sentiment.signing.discovery.CC_SENTIMENT_KEY_DIR", tmp_path):
             assert KeyDiscovery.find_gist_keypair() is None
 
     def test_find_gist_keypair_missing_private(self, tmp_path: Path) -> None:
         (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAA cc-sentiment")
-        with patch("cc_sentiment.signing.CC_SENTIMENT_KEY_DIR", tmp_path):
+        with patch("cc_sentiment.signing.discovery.CC_SENTIMENT_KEY_DIR", tmp_path):
             assert KeyDiscovery.find_gist_keypair() is None
 
     def test_generate_gist_keypair_runs_ssh_keygen(self, tmp_path: Path) -> None:
         with (
-            patch("cc_sentiment.signing.CC_SENTIMENT_KEY_DIR", tmp_path),
+            patch("cc_sentiment.signing.discovery.CC_SENTIMENT_KEY_DIR", tmp_path),
             patch.object(KeyDiscovery, "find_gist_keypair", return_value=None),
-            patch("cc_sentiment.signing.subprocess.run") as mock_run,
+            patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=0)
             result = KeyDiscovery.generate_gist_keypair()
@@ -292,7 +292,7 @@ class TestGistKeypair:
         existing = tmp_path / "id_ed25519"
         with (
             patch.object(KeyDiscovery, "find_gist_keypair", return_value=existing),
-            patch("cc_sentiment.signing.subprocess.run") as mock_run,
+            patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run,
         ):
             result = KeyDiscovery.generate_gist_keypair()
 
@@ -304,7 +304,7 @@ class TestGistKeypair:
         pub_path = tmp_path / "id_ed25519.pub"
         pub_path.write_text("ssh-ed25519 AAAAPUBKEY cc-sentiment")
 
-        with patch("cc_sentiment.signing.subprocess.run") as mock_run:
+        with patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0,
                 stdout="https://gist.github.com/octocat/abcdef1234567890abcd\n",
@@ -328,7 +328,7 @@ class TestGistKeypair:
         )
         with (
             patch.object(KeyDiscovery, "has_tool", return_value=True),
-            patch("cc_sentiment.signing.subprocess.run") as mock_run,
+            patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=0, stdout=tsv_output)
             assert KeyDiscovery.find_cc_sentiment_gist_id() == "fedcba987654321fedcb"
@@ -336,7 +336,7 @@ class TestGistKeypair:
     def test_find_cc_sentiment_gist_id_no_match(self) -> None:
         with (
             patch.object(KeyDiscovery, "has_tool", return_value=True),
-            patch("cc_sentiment.signing.subprocess.run") as mock_run,
+            patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=0, stdout="abc123\tother\t1 file\tpublic\tupdated\n")
             assert KeyDiscovery.find_cc_sentiment_gist_id() is None

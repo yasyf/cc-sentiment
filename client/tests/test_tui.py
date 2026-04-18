@@ -12,25 +12,26 @@ from textual.widgets import Button, ContentSwitcher, DataTable, Input, Label, St
 from cc_sentiment.models import AppState, ContributorId, GistConfig, GPGConfig, MyStat, SSHConfig
 from cc_sentiment.repo import Repository
 from cc_sentiment.signing import GPGKeyInfo, SSHKeyInfo
-from cc_sentiment.tui import (
-    CCSentimentApp,
+from cc_sentiment.tui import CCSentimentApp
+from cc_sentiment.tui.boot_view import EngineBootView
+from cc_sentiment.tui.format import TimeFormat
+from cc_sentiment.tui.screens import (
     CostReviewScreen,
+    PlatformErrorScreen,
+    SetupScreen,
+    StatShareScreen,
+)
+from cc_sentiment.tui.stages import (
     Discovering,
-    EngineBootView,
-    HourlyChart,
     IdleAfterUpload,
     IdleCaughtUp,
     IdleEmpty,
-    PlatformErrorScreen,
     RescanConfirm,
     Scoring,
-    SetupScreen,
-    SpinnerLine,
     Stage,
-    StatShareScreen,
     Uploading,
-    format_duration,
 )
+from cc_sentiment.tui.widgets import HourlyChart, SpinnerLine
 from cc_sentiment.upload import (
     AuthOk,
     AuthServerError,
@@ -58,8 +59,8 @@ class SetupHarness(App[None]):
 
 @pytest.fixture
 def no_auto_setup():
-    with patch("cc_sentiment.tui.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch("cc_sentiment.tui.AutoSetup.find_git_username", return_value=None), \
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch("cc_sentiment.tui.screens.setup.AutoSetup.find_git_username", return_value=None), \
          patch("cc_sentiment.upload.Uploader.probe_credentials", new_callable=AsyncMock, return_value=AuthOk()):
         yield
 
@@ -104,8 +105,8 @@ async def test_setup_empty_username_blocked(no_auto_setup):
 
 
 async def test_setup_auto_detect_prepopulates_username():
-    with patch("cc_sentiment.tui.AutoSetup.run", new_callable=AsyncMock, return_value=(False, "testuser")), \
-         patch("cc_sentiment.tui.AutoSetup.find_git_username", return_value="testuser"):
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, "testuser")), \
+         patch("cc_sentiment.tui.screens.setup.AutoSetup.find_git_username", return_value="testuser"):
         async with SetupHarness(AppState()).run_test() as pilot:
             await pilot.pause(delay=0.3)
             assert pilot.app.screen.query_one("#username-input", Input).value == "testuser"
@@ -118,7 +119,7 @@ async def test_setup_auto_success_jumps_to_done():
         self.state.config = SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519"))
         return True, "testuser"
 
-    with patch("cc_sentiment.tui.AutoSetup.run", new=fake_run), \
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new=fake_run), \
          patch.object(AppState, "save"):
         async with SetupHarness(state).run_test() as pilot:
             await pilot.pause(delay=0.3)
@@ -128,8 +129,8 @@ async def test_setup_auto_success_jumps_to_done():
 async def test_setup_key_discovery_populates_table(no_auto_setup):
     ssh_keys = (SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host"),)
 
-    with patch("cc_sentiment.tui.KeyDiscovery.find_ssh_keys", return_value=ssh_keys), \
-         patch("cc_sentiment.tui.KeyDiscovery.find_gpg_keys", return_value=()):
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=ssh_keys), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()):
         async with SetupHarness(AppState()).run_test() as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
@@ -142,10 +143,10 @@ async def test_setup_key_discovery_populates_table(no_auto_setup):
 
 
 async def test_setup_no_keys_without_gpg_disables_next(no_auto_setup):
-    with patch("cc_sentiment.tui.KeyDiscovery.find_ssh_keys", return_value=()), \
-         patch("cc_sentiment.tui.KeyDiscovery.find_gpg_keys", return_value=()), \
-         patch("cc_sentiment.tui.KeyDiscovery.has_tool", return_value=False), \
-         patch("cc_sentiment.tui.KeyDiscovery.gh_authenticated", return_value=False):
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.has_tool", return_value=False), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=False):
         async with SetupHarness(AppState()).run_test() as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
@@ -160,8 +161,8 @@ async def test_setup_no_keys_without_gpg_disables_next(no_auto_setup):
 async def test_setup_remote_check_ssh_found(no_auto_setup):
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
 
-    with patch("cc_sentiment.tui.KeyDiscovery.fetch_github_ssh_keys", return_value=("ssh-ed25519 AAAA key1",)), \
-         patch("cc_sentiment.tui.SSHBackend.fingerprint", return_value="ssh-ed25519 AAAA"):
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.fetch_github_ssh_keys", return_value=("ssh-ed25519 AAAA key1",)), \
+         patch("cc_sentiment.tui.screens.setup.SSHBackend.fingerprint", return_value="ssh-ed25519 AAAA"):
         async with SetupHarness(AppState()).run_test() as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
@@ -178,8 +179,8 @@ async def test_setup_remote_check_ssh_found(no_auto_setup):
 async def test_setup_remote_check_ssh_not_found(no_auto_setup):
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
 
-    with patch("cc_sentiment.tui.KeyDiscovery.fetch_github_ssh_keys", return_value=("ssh-ed25519 BBBB other",)), \
-         patch("cc_sentiment.tui.SSHBackend.fingerprint", return_value="ssh-ed25519 AAAA"):
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.fetch_github_ssh_keys", return_value=("ssh-ed25519 BBBB other",)), \
+         patch("cc_sentiment.tui.screens.setup.SSHBackend.fingerprint", return_value="ssh-ed25519 AAAA"):
         async with SetupHarness(AppState()).run_test() as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
@@ -262,8 +263,8 @@ async def test_setup_cancel_dismisses_false(no_auto_setup):
 async def test_setup_upload_options_with_gh(no_auto_setup):
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
 
-    with patch("cc_sentiment.tui.shutil.which", return_value="/usr/bin/gh"), \
-         patch("cc_sentiment.tui.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"):
+    with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
+         patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"):
         async with SetupHarness(AppState()).run_test() as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
@@ -279,7 +280,7 @@ async def test_setup_upload_options_with_gh(no_auto_setup):
 
 
 async def test_try_existing_gist_returns_config_when_found():
-    from cc_sentiment.tui import AutoSetup, StatusEmitter
+    from cc_sentiment.tui.status import AutoSetup, StatusEmitter
     from textual.widgets import Static
 
     state = AppState()
@@ -287,9 +288,9 @@ async def test_try_existing_gist_returns_config_when_found():
     emit = StatusEmitter(widget=widget)
     setup = AutoSetup(state, emit)
 
-    with patch("cc_sentiment.tui.KeyDiscovery.find_gist_keypair", return_value=Path("/home/.cc-sentiment/keys/id_ed25519")), \
-         patch("cc_sentiment.tui.KeyDiscovery.gh_authenticated", return_value=True), \
-         patch("cc_sentiment.tui.KeyDiscovery.find_cc_sentiment_gist_id", return_value="abcdef1234567890abcd"):
+    with patch("cc_sentiment.tui.status.KeyDiscovery.find_gist_keypair", return_value=Path("/home/.cc-sentiment/keys/id_ed25519")), \
+         patch("cc_sentiment.tui.status.KeyDiscovery.gh_authenticated", return_value=True), \
+         patch("cc_sentiment.tui.status.KeyDiscovery.find_cc_sentiment_gist_id", return_value="abcdef1234567890abcd"):
         result = await setup.try_existing_gist("octocat")
 
     assert isinstance(result, GistConfig)
@@ -298,7 +299,7 @@ async def test_try_existing_gist_returns_config_when_found():
 
 
 async def test_try_existing_gist_returns_none_when_no_local_keypair():
-    from cc_sentiment.tui import AutoSetup, StatusEmitter
+    from cc_sentiment.tui.status import AutoSetup, StatusEmitter
     from textual.widgets import Static
 
     state = AppState()
@@ -306,12 +307,12 @@ async def test_try_existing_gist_returns_none_when_no_local_keypair():
     emit = StatusEmitter(widget=widget)
     setup = AutoSetup(state, emit)
 
-    with patch("cc_sentiment.tui.KeyDiscovery.find_gist_keypair", return_value=None):
+    with patch("cc_sentiment.tui.status.KeyDiscovery.find_gist_keypair", return_value=None):
         assert await setup.try_existing_gist("octocat") is None
 
 
 async def test_try_existing_gist_returns_none_when_gh_not_authed():
-    from cc_sentiment.tui import AutoSetup, StatusEmitter
+    from cc_sentiment.tui.status import AutoSetup, StatusEmitter
     from textual.widgets import Static
 
     state = AppState()
@@ -319,13 +320,13 @@ async def test_try_existing_gist_returns_none_when_gh_not_authed():
     emit = StatusEmitter(widget=widget)
     setup = AutoSetup(state, emit)
 
-    with patch("cc_sentiment.tui.KeyDiscovery.find_gist_keypair", return_value=Path("/home/.cc-sentiment/keys/id_ed25519")), \
-         patch("cc_sentiment.tui.KeyDiscovery.gh_authenticated", return_value=False):
+    with patch("cc_sentiment.tui.status.KeyDiscovery.find_gist_keypair", return_value=Path("/home/.cc-sentiment/keys/id_ed25519")), \
+         patch("cc_sentiment.tui.status.KeyDiscovery.gh_authenticated", return_value=False):
         assert await setup.try_existing_gist("octocat") is None
 
 
 async def test_try_existing_gist_returns_none_when_no_gist_found():
-    from cc_sentiment.tui import AutoSetup, StatusEmitter
+    from cc_sentiment.tui.status import AutoSetup, StatusEmitter
     from textual.widgets import Static
 
     state = AppState()
@@ -333,16 +334,16 @@ async def test_try_existing_gist_returns_none_when_no_gist_found():
     emit = StatusEmitter(widget=widget)
     setup = AutoSetup(state, emit)
 
-    with patch("cc_sentiment.tui.KeyDiscovery.find_gist_keypair", return_value=Path("/home/.cc-sentiment/keys/id_ed25519")), \
-         patch("cc_sentiment.tui.KeyDiscovery.gh_authenticated", return_value=True), \
-         patch("cc_sentiment.tui.KeyDiscovery.find_cc_sentiment_gist_id", return_value=None):
+    with patch("cc_sentiment.tui.status.KeyDiscovery.find_gist_keypair", return_value=Path("/home/.cc-sentiment/keys/id_ed25519")), \
+         patch("cc_sentiment.tui.status.KeyDiscovery.gh_authenticated", return_value=True), \
+         patch("cc_sentiment.tui.status.KeyDiscovery.find_cc_sentiment_gist_id", return_value=None):
         assert await setup.try_existing_gist("octocat") is None
 
 
 async def test_setup_no_keys_with_gh_auth_uses_gist_mode(no_auto_setup):
-    with patch("cc_sentiment.tui.KeyDiscovery.find_ssh_keys", return_value=()), \
-         patch("cc_sentiment.tui.KeyDiscovery.find_gpg_keys", return_value=()), \
-         patch("cc_sentiment.tui.KeyDiscovery.gh_authenticated", return_value=True):
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True):
         async with SetupHarness(AppState()).run_test() as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
@@ -360,11 +361,11 @@ async def test_generate_gist_key_saves_gist_config(tmp_path: Path, no_auto_setup
     key_path = tmp_path / "id_ed25519"
 
     with patch.object(AppState, "state_path", return_value=state_file), \
-         patch("cc_sentiment.tui.KeyDiscovery.generate_gist_keypair", return_value=key_path), \
-         patch("cc_sentiment.tui.KeyDiscovery.create_gist", return_value="abcdef1234567890abcd"), \
-         patch("cc_sentiment.tui.KeyDiscovery.find_ssh_keys", return_value=()), \
-         patch("cc_sentiment.tui.KeyDiscovery.find_gpg_keys", return_value=()), \
-         patch("cc_sentiment.tui.KeyDiscovery.gh_authenticated", return_value=True):
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.generate_gist_keypair", return_value=key_path), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.create_gist", return_value="abcdef1234567890abcd"), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True):
         async with SetupHarness(state).run_test() as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
@@ -384,8 +385,8 @@ async def test_generate_gist_key_saves_gist_config(tmp_path: Path, no_auto_setup
 async def test_setup_upload_options_gpg_shows_openpgp(no_auto_setup):
     gpg_key = GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096")
 
-    with patch("cc_sentiment.tui.shutil.which", return_value="/usr/bin/gh"), \
-         patch("cc_sentiment.tui.GPGBackend.public_key_text", return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----"):
+    with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
+         patch("cc_sentiment.tui.screens.setup.GPGBackend.public_key_text", return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----"):
         async with SetupHarness(AppState()).run_test() as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
@@ -483,7 +484,7 @@ async def test_platform_error_quit_dismisses():
 async def test_ccsentiment_app_engine_failure_shows_error_and_exits(tmp_path: Path):
     state = AppState()
     db_path = tmp_path / "records.db"
-    with patch("cc_sentiment.tui.resolve_engine", side_effect=RuntimeError("no engine")), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", side_effect=RuntimeError("no engine")), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -495,10 +496,10 @@ async def test_ccsentiment_app_pushes_setup_when_no_config(tmp_path: Path):
     state = AppState()
     db_path = tmp_path / "records.db"
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 1))), \
-         patch("cc_sentiment.tui.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch("cc_sentiment.tui.AutoSetup.find_git_username", return_value=None):
+         patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch("cc_sentiment.tui.screens.setup.AutoSetup.find_git_username", return_value=None):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.5)
@@ -509,7 +510,7 @@ async def test_ccsentiment_app_claude_engine_shows_cost_review(tmp_path: Path, a
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="claude"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="claude"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 50))):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -523,7 +524,7 @@ async def test_ccsentiment_app_cost_cancel_exits(tmp_path: Path, auth_ok):
     db_path = tmp_path / "records.db"
 
     mock_pipeline_run = AsyncMock(return_value=[])
-    with patch("cc_sentiment.tui.resolve_engine", return_value="claude"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="claude"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 50))), \
          patch("cc_sentiment.pipeline.Pipeline.run", mock_pipeline_run):
         app = CCSentimentApp(state=state, db_path=db_path)
@@ -539,7 +540,7 @@ async def test_ccsentiment_app_idle_when_no_work(tmp_path: Path, auth_ok):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -556,7 +557,7 @@ async def test_ccsentiment_app_rescan_clears_state(tmp_path: Path, auth_ok, no_s
     seed.save_records("/fake.jsonl", 1.0, [make_record()])
     seed.close()
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch("cc_sentiment.upload.Uploader.upload", new_callable=AsyncMock):
         app = CCSentimentApp(state=state, db_path=db_path)
@@ -590,7 +591,7 @@ async def test_ccsentiment_app_runs_pipeline_and_uploads(tmp_path: Path, auth_ok
 
     mock_upload = AsyncMock()
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 2))), \
          patch("cc_sentiment.pipeline.Pipeline.run", side_effect=fake_run), \
          patch("cc_sentiment.upload.Uploader.upload", mock_upload):
@@ -605,7 +606,7 @@ async def test_authenticate_returns_true_when_creds_valid(tmp_path: Path, auth_o
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -617,7 +618,7 @@ async def test_authenticate_returns_false_on_unreachable(tmp_path: Path):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch(
              "cc_sentiment.upload.Uploader.probe_credentials",
@@ -634,7 +635,7 @@ async def test_authenticate_returns_false_on_server_error(tmp_path: Path):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch(
              "cc_sentiment.upload.Uploader.probe_credentials",
@@ -654,7 +655,7 @@ async def test_authenticate_unauthorized_clears_config_and_pushes_setup(tmp_path
     async def user_cancels_setup(screen) -> bool:
         return False
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch(
              "cc_sentiment.upload.Uploader.probe_credentials",
@@ -676,7 +677,7 @@ async def test_run_flow_aborts_when_authenticate_returns_false(tmp_path: Path):
     db_path = tmp_path / "records.db"
 
     mock_run = AsyncMock(return_value=[])
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 1))), \
          patch("cc_sentiment.pipeline.Pipeline.run", mock_run), \
          patch(
@@ -691,18 +692,18 @@ async def test_run_flow_aborts_when_authenticate_returns_false(tmp_path: Path):
 
 
 def test_format_duration_under_30_seconds():
-    assert format_duration(0) == "a few seconds"
-    assert format_duration(29) == "a few seconds"
+    assert TimeFormat.format_duration(0) == "a few seconds"
+    assert TimeFormat.format_duration(29) == "a few seconds"
 
 
 def test_format_duration_minutes():
-    assert format_duration(60) == "~1 min"
-    assert format_duration(900) == "~15 min"
+    assert TimeFormat.format_duration(60) == "~1 min"
+    assert TimeFormat.format_duration(900) == "~15 min"
 
 
 def test_format_duration_hours():
-    assert format_duration(3600) == "~1 hour"
-    assert format_duration(7200) == "~2 hours"
+    assert TimeFormat.format_duration(3600) == "~1 hour"
+    assert TimeFormat.format_duration(7200) == "~2 hours"
 
 
 def test_sample_payload_fields_match_real_record_schema():
@@ -729,7 +730,7 @@ async def test_set_total_renders_eta_when_hardware_estimates(tmp_path: Path, aut
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch("cc_sentiment.hardware.Hardware.estimate_buckets_per_sec", return_value=10.0):
         app = CCSentimentApp(state=state, db_path=db_path)
@@ -746,7 +747,7 @@ async def test_set_total_omits_eta_when_hardware_unknown(tmp_path: Path, auth_ok
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch("cc_sentiment.hardware.Hardware.estimate_buckets_per_sec", return_value=None):
         app = CCSentimentApp(state=state, db_path=db_path)
@@ -762,7 +763,7 @@ async def test_add_buckets_updates_progress(tmp_path: Path, auth_ok):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -777,9 +778,9 @@ async def test_action_open_dashboard_opens_browser(tmp_path: Path, auth_ok):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
-         patch("cc_sentiment.tui.webbrowser.open") as mock_open:
+         patch("cc_sentiment.tui.app.webbrowser.open") as mock_open:
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
@@ -797,7 +798,7 @@ async def test_enter_idle_after_upload_mentions_dashboard(tmp_path: Path, auth_o
     seed.save_records("/fake.jsonl", 1.0, [make_record()])
     seed.close()
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -818,7 +819,7 @@ async def test_enter_idle_empty_state_mentions_dashboard(tmp_path: Path, auth_ok
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -839,7 +840,7 @@ async def test_successful_upload_lands_in_idle_after_upload(tmp_path: Path, auth
         on_transcript_complete(records)
         return records
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 2))), \
          patch("cc_sentiment.pipeline.Pipeline.run", side_effect=fake_run), \
          patch("cc_sentiment.upload.Uploader.upload", new_callable=AsyncMock):
@@ -862,7 +863,7 @@ async def test_stage_transitions_across_successful_run(tmp_path: Path, auth_ok, 
 
     seen: list[type[Stage]] = []
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 1))), \
          patch("cc_sentiment.pipeline.Pipeline.run", side_effect=fake_run), \
          patch("cc_sentiment.upload.Uploader.upload", new_callable=AsyncMock):
@@ -893,7 +894,7 @@ async def test_rescan_confirm_restores_previous_stage_on_cancel(tmp_path: Path, 
     seed.save_records("/fake.jsonl", 1.0, [make_record()])
     seed.close()
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch("cc_sentiment.upload.Uploader.upload", new_callable=AsyncMock):
         app = CCSentimentApp(state=state, db_path=db_path)
@@ -1129,7 +1130,7 @@ async def test_stat_share_renders_stat_text():
 async def test_stat_share_tweet_button_opens_twitter_with_username():
     harness = StatShareHarness(GITHUB_CONFIG)
     with patch("cc_sentiment.upload.Uploader.fetch_my_stat", new_callable=AsyncMock, return_value=STAT), \
-         patch("cc_sentiment.tui.webbrowser.open") as mock_open:
+         patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await pilot.click("#stat-tweet")
@@ -1145,7 +1146,7 @@ async def test_stat_share_tweet_button_opens_twitter_with_username():
 async def test_stat_share_gpg_user_omits_username_from_share_url():
     harness = StatShareHarness(GPG_CONFIG)
     with patch("cc_sentiment.upload.Uploader.fetch_my_stat", new_callable=AsyncMock, return_value=STAT), \
-         patch("cc_sentiment.tui.webbrowser.open") as mock_open:
+         patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await pilot.click("#stat-tweet")
@@ -1161,7 +1162,7 @@ async def test_stat_share_gpg_user_omits_username_from_share_url():
 async def test_stat_share_skip_dismisses_without_opening_browser():
     harness = StatShareHarness(GITHUB_CONFIG)
     with patch("cc_sentiment.upload.Uploader.fetch_my_stat", new_callable=AsyncMock, return_value=STAT), \
-         patch("cc_sentiment.tui.webbrowser.open") as mock_open:
+         patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await pilot.click("#stat-skip")
@@ -1173,7 +1174,7 @@ async def test_stat_share_skip_dismisses_without_opening_browser():
 async def test_stat_share_escape_dismisses_while_polling():
     harness = StatShareHarness(GITHUB_CONFIG)
     with patch("cc_sentiment.upload.Uploader.fetch_my_stat", new_callable=AsyncMock, return_value=None), \
-         patch("cc_sentiment.tui.webbrowser.open") as mock_open:
+         patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
         async with harness.run_test() as pilot:
             await pilot.pause()
             await pilot.press("escape")
@@ -1186,7 +1187,7 @@ async def test_offer_stat_share_pushes_modal_on_http_error(tmp_path: Path, auth_
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch(
              "cc_sentiment.upload.Uploader.fetch_my_stat",
@@ -1209,7 +1210,7 @@ async def test_offer_stat_share_pushes_modal_when_stat_not_ready(tmp_path: Path,
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch(
              "cc_sentiment.upload.Uploader.fetch_my_stat",

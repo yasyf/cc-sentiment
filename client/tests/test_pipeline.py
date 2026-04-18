@@ -227,7 +227,7 @@ class TestPipelineStateUpdate:
         mock_classifier.score = AsyncMock(return_value=[])
         mock_classifier.close = AsyncMock()
 
-        with patch("cc_sentiment.pipeline.build_engine", AsyncMock(return_value=mock_classifier)), \
+        with patch("cc_sentiment.pipeline.EngineFactory.build", AsyncMock(return_value=mock_classifier)), \
              patch.object(TranscriptParser, "stream_transcripts", new=_stub_stream([parsed])), \
              patch.object(Pipeline, "score_transcript", new_callable=AsyncMock, return_value=[record]):
 
@@ -285,7 +285,7 @@ class TestOnBucketPlumbing:
         )
 
         async def run() -> None:
-            with patch("cc_sentiment.pipeline.build_engine", AsyncMock(return_value=classifier)), \
+            with patch("cc_sentiment.pipeline.EngineFactory.build", AsyncMock(return_value=classifier)), \
                  patch.object(TranscriptParser, "stream_transcripts", new=_stub_stream([parsed])), \
                  patch.object(Pipeline, "score_transcript", new=fake_score):
                 await Pipeline.run(repo, scan_result, engine="omlx", on_bucket=cb)
