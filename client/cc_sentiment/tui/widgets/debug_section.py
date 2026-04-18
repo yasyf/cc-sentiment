@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import ClassVar
+
 from textual.app import ComposeResult
 from textual.widgets import Static
 
@@ -8,8 +10,8 @@ from cc_sentiment.tui.widgets.section import Section
 
 
 class DebugSection(Section):
-    BORDER_SUBTITLE = "debug"
-    DEFAULT_CSS = """
+    BORDER_SUBTITLE: ClassVar[str] = "debug"
+    DEFAULT_CSS: ClassVar[str] = """
     DebugSection { border: round $surface; }
     DebugSection > #debug-body { color: $text-muted; height: auto; }
     """
