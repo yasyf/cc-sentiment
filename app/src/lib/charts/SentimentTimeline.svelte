@@ -10,6 +10,7 @@
 	import {
 		bucketByDayPart,
 		bucketByDay,
+		fillMissingDayParts,
 		smoothSeries,
 		filterWindow,
 		dayBoundaryAnnotations,
@@ -28,8 +29,9 @@
 	const buckets = $derived.by(() => {
 		if (range === 'week') {
 			const all = bucketByDayPart(raw, DISPLAY_TZ);
-			const smoothed = smoothSeries(all, (b) => b.avg_score, { halfWindow: 1, priorWeight: 1.0, priorValue: 3 });
-			const merged = all.map((b, i) => ({ ...b, smoothed_score: smoothed[i] }));
+			const filled = fillMissingDayParts(all, 7, DISPLAY_TZ);
+			const smoothed = smoothSeries(filled, (b) => b.avg_score, { halfWindow: 1, priorWeight: 1.0, priorValue: 3 });
+			const merged = filled.map((b, i) => ({ ...b, smoothed_score: smoothed[i] }));
 			return filterWindow(merged, 7, DISPLAY_TZ);
 		}
 		const all = bucketByDay(raw, DISPLAY_TZ);
@@ -98,7 +100,7 @@
 			{
 				type: 'line' as const,
 				label: 'Sentiment',
-				data: buckets.map((d) => d.smoothed_score),
+				data: buckets.map((d) => d.smoothed_score ?? d.avg_score),
 				borderColor: ACCENT,
 				fill: false,
 				tension: 0,
@@ -159,7 +161,7 @@
 					}
 				},
 				border: { display: false },
-				title: { display: true, text: 'sentiment', color: TICK, font: { size: 10 } }
+				title: { display: false }
 			},
 			volume: {
 				position: 'right' as const,

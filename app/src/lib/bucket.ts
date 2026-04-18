@@ -225,6 +225,65 @@ export function bucketByDayPart(points: TimelinePoint[], zone: string): DayPartB
 		.toSorted((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
 }
 
+export function fillMissingDayParts(
+	buckets: readonly DayPartBucket[],
+	days: number,
+	zone: string
+): DayPartBucket[] {
+	if (buckets.length === 0) return [];
+	const lastTime = DateTime.fromISO(buckets[buckets.length - 1].time, { zone });
+	if (!lastTime.isValid) return [...buckets];
+	const lastDate = lastTime.startOf('day');
+	const firstDate = lastDate.minus({ days: days - 1 });
+
+	const byKey = new Map(buckets.map((b) => [`${b.date}::${b.part}`, b]));
+	const lastByPart = new Map<DayPartKey, DayPartBucket>();
+	const result: DayPartBucket[] = [];
+
+	for (const b of buckets) {
+		if (DateTime.fromISO(b.date, { zone }) < firstDate) {
+			result.push(b);
+			lastByPart.set(b.part, b);
+		}
+	}
+
+	let cursor = firstDate;
+	while (cursor <= lastDate) {
+		const date = cursor.toISODate();
+		if (!date) {
+			cursor = cursor.plus({ days: 1 });
+			continue;
+		}
+		for (const part of DAY_PARTS) {
+			const existing = byKey.get(`${date}::${part.key}`);
+			if (existing) {
+				result.push(existing);
+				lastByPart.set(part.key, existing);
+				continue;
+			}
+			const prior = lastByPart.get(part.key);
+			if (!prior) continue;
+			const ts = part.key === 'late'
+				? cursor.plus({ days: 1 }).set({ hour: part.mid, minute: 0, second: 0, millisecond: 0 })
+				: cursor.set({ hour: part.mid, minute: 0, second: 0, millisecond: 0 });
+			result.push({
+				time: ts.toISO() ?? '',
+				date,
+				part: part.key,
+				label: part.label,
+				avg_score: prior.avg_score,
+				count: 0,
+				avg_read_edit_ratio: null,
+				avg_edits_without_prior_read_ratio: null,
+				avg_tool_calls_per_turn: null
+			});
+		}
+		cursor = cursor.plus({ days: 1 });
+	}
+
+	return result.toSorted((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+}
+
 export function dayBoundaryAnnotations(points: { time: string }[], zone: string): Record<string, object> {
 	if (points.length === 0) return {};
 	const first = DateTime.fromISO(points[0].time, { zone });
