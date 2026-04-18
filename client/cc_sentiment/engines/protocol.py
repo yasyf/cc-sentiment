@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from cc_sentiment.models import ConversationBucket, SentimentScore
@@ -23,7 +23,13 @@ STRUCTURED_OUTPUTS_CHOICE = ["1", "2", "3", "4", "5"]
 
 
 NOOP_PROGRESS: Callable[[int], None] = lambda _: None
-NOOP_SNIPPET: Callable[[str, int], None] = lambda _s, _i: None
+
+
+async def noop_snippet(_s: str, _i: int) -> None:
+    return None
+
+
+NOOP_SNIPPET: Callable[[str, int], Awaitable[None]] = noop_snippet
 
 
 class InferenceEngine(Protocol):

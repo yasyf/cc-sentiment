@@ -14,7 +14,6 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.reactive import reactive
-from textual.screen import Screen
 from textual.widgets import (
     Button,
     ContentSwitcher,
@@ -45,26 +44,26 @@ from cc_sentiment.signing import (
 from cc_sentiment.transcripts import TranscriptDiscovery
 
 from cc_sentiment.tui.format import TimeFormat
+from cc_sentiment.tui.screens.dialog import Dialog
 from cc_sentiment.tui.status import AutoSetup, StatusEmitter
 
 
-class SetupScreen(Screen[bool]):
+class SetupScreen(Dialog[bool]):
     ROUGH_BUCKETS_PER_FILE: ClassVar[int] = 6
 
-    DEFAULT_CSS = """
-    SetupScreen { align: center middle; }
-    #wizard { width: 80; height: auto; max-height: 90%; border: heavy $accent; padding: 1 2; overflow-y: auto; }
-    #wizard Label { margin: 1 0 0 0; }
-    #wizard .step-title { text-style: bold; color: $text; margin: 0 0 1 0; }
-    #wizard Input { margin: 0 0 1 0; }
-    #wizard Button { margin: 1 0 0 0; }
-    #wizard .status { color: $text-muted; margin: 0 0 1 0; }
-    #wizard .faq { color: $text-muted; margin: 1 0 0 0; }
-    #wizard .error { color: $error; }
-    #wizard .success { color: $success; }
-    #wizard DataTable { height: auto; max-height: 10; margin: 0 0 1 0; }
-    #wizard RadioSet { margin: 0 0 1 0; }
-    #wizard .key-text { color: $text-muted; margin: 0 0 1 0; max-height: 3; overflow-y: auto; }
+    DEFAULT_CSS = Dialog.DEFAULT_CSS + """
+    SetupScreen > #dialog-box { width: 80; max-height: 90%; overflow-y: auto; }
+    SetupScreen > #dialog-box Label { margin: 1 0 0 0; }
+    SetupScreen > #dialog-box .step-title { text-style: bold; color: $text; margin: 0 0 1 0; }
+    SetupScreen > #dialog-box Input { margin: 0 0 1 0; }
+    SetupScreen > #dialog-box Button { margin: 1 0 0 0; }
+    SetupScreen > #dialog-box .status { color: $text-muted; margin: 0 0 1 0; }
+    SetupScreen > #dialog-box .faq { color: $text-muted; margin: 1 0 0 0; }
+    SetupScreen > #dialog-box .error { color: $error; }
+    SetupScreen > #dialog-box .success { color: $success; }
+    SetupScreen > #dialog-box DataTable { height: auto; max-height: 10; margin: 0 0 1 0; }
+    SetupScreen > #dialog-box RadioSet { margin: 0 0 1 0; }
+    SetupScreen > #dialog-box .key-text { color: $text-muted; margin: 0 0 1 0; max-height: 3; overflow-y: auto; }
     """
 
     BINDINGS = [
@@ -80,7 +79,7 @@ class SetupScreen(Screen[bool]):
         self.state = state
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="wizard"):
+        with Vertical(id="dialog-box"):
             with ContentSwitcher(initial="step-loading"):
                 yield from self.compose_loading_step()
                 yield from self.compose_username_step()

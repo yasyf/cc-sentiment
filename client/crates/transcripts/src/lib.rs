@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use walkdir::WalkDir;
 
-const BUCKET_SECONDS: i64 = 300;
+const BUCKET_SECONDS: i64 = 180;
 const ASSISTANT_TRUNCATION: usize = 1024;
 const MIN_USER_TURNS_PER_SESSION: usize = 2;
 const AVG_LINE_BYTES: usize = 1400;

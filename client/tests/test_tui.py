@@ -33,6 +33,7 @@ from cc_sentiment.tui.stages import (
 )
 from cc_sentiment.tui.widgets import HourlyChart, SpinnerLine
 from cc_sentiment.upload import (
+    DASHBOARD_URL,
     AuthOk,
     AuthServerError,
     AuthUnauthorized,
@@ -77,7 +78,7 @@ def auth_ok():
 
 @pytest.fixture
 def no_stat_share():
-    with patch.object(CCSentimentApp, "_offer_stat_share", new_callable=AsyncMock), \
+    with patch.object(CCSentimentApp, "_poll_card", new_callable=AsyncMock), \
          patch.object(CCSentimentApp, "_offer_daemon_install", new_callable=AsyncMock):
         yield
 
@@ -786,8 +787,8 @@ async def test_action_open_dashboard_opens_browser(tmp_path: Path, auth_ok):
             await pilot.pause(delay=0.3)
             await pilot.press("o")
             await pilot.pause(delay=0.2)
-            mock_open.assert_called_once_with(CCSentimentApp.DASHBOARD_URL)
-            assert CCSentimentApp.DASHBOARD_URL in app.status_text
+            mock_open.assert_called_once_with(DASHBOARD_URL)
+            assert DASHBOARD_URL in app.status_text
 
 
 async def test_enter_idle_after_upload_mentions_dashboard(tmp_path: Path, auth_ok, no_stat_share):
@@ -1078,25 +1079,16 @@ async def test_engine_boot_snippet_survives_bracket_heavy_content():
             log=pilot.app.query_one("#log", Static),
         )
         boot.show("test-engine")
-        boot.add_snippet(
+        await boot.add_snippet(
             "2026-04-03T11:14:13.287367+0000 +13m26s [🐞][DSPyCompilationServer.compile] 'ignore'",
             1,
         )
         boot.last_snippet_at = 0.0
-        boot.add_snippet("prefix text [dim", 1)
+        await boot.add_snippet("prefix text [dim", 1)
         boot.last_snippet_at = 0.0
-        boot.add_snippet("<task-notification> <task-id>abc</task-id> body", 5)
+        await boot.add_snippet("<task-notification> <task-id>abc</task-id> body", 5)
         await pilot.pause()
         assert len(boot.lines) >= 1
-
-
-class StatShareHarness(App[None]):
-    def __init__(self, config: SSHConfig | GPGConfig | GistConfig) -> None:
-        super().__init__()
-        self.config = config
-
-    def on_mount(self) -> None:
-        self.push_screen(StatShareScreen(self.config))
 
 
 STAT = MyStat(
@@ -1118,19 +1110,27 @@ GPG_CONFIG = GPGConfig(
 )
 
 
+class StatShareHarness(App[None]):
+    def __init__(self, config: SSHConfig | GPGConfig | GistConfig, stat: MyStat) -> None:
+        super().__init__()
+        self.config = config
+        self.stat = stat
+
+    def on_mount(self) -> None:
+        self.push_screen(StatShareScreen(self.config, self.stat))
+
+
 async def test_stat_share_renders_stat_text():
-    harness = StatShareHarness(GITHUB_CONFIG)
-    with patch("cc_sentiment.upload.Uploader.fetch_my_stat", new_callable=AsyncMock, return_value=STAT):
-        async with harness.run_test() as pilot:
-            await pilot.pause(delay=0.3)
-            text = " ".join(str(lbl.content) for lbl in pilot.app.screen.query(Label))
-            assert "nicer to Claude than 72% of developers" in text
+    harness = StatShareHarness(GITHUB_CONFIG, STAT)
+    async with harness.run_test() as pilot:
+        await pilot.pause(delay=0.3)
+        text = " ".join(str(lbl.content) for lbl in pilot.app.screen.query(Label))
+        assert "nicer to Claude than 72% of developers" in text
 
 
 async def test_stat_share_tweet_button_opens_twitter_with_username():
-    harness = StatShareHarness(GITHUB_CONFIG)
-    with patch("cc_sentiment.upload.Uploader.fetch_my_stat", new_callable=AsyncMock, return_value=STAT), \
-         patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
+    harness = StatShareHarness(GITHUB_CONFIG, STAT)
+    with patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await pilot.click("#stat-tweet")
@@ -1144,9 +1144,8 @@ async def test_stat_share_tweet_button_opens_twitter_with_username():
 
 
 async def test_stat_share_gpg_user_omits_username_from_share_url():
-    harness = StatShareHarness(GPG_CONFIG)
-    with patch("cc_sentiment.upload.Uploader.fetch_my_stat", new_callable=AsyncMock, return_value=STAT), \
-         patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
+    harness = StatShareHarness(GPG_CONFIG, STAT)
+    with patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await pilot.click("#stat-tweet")
@@ -1160,9 +1159,8 @@ async def test_stat_share_gpg_user_omits_username_from_share_url():
 
 
 async def test_stat_share_skip_dismisses_without_opening_browser():
-    harness = StatShareHarness(GITHUB_CONFIG)
-    with patch("cc_sentiment.upload.Uploader.fetch_my_stat", new_callable=AsyncMock, return_value=STAT), \
-         patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
+    harness = StatShareHarness(GITHUB_CONFIG, STAT)
+    with patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await pilot.click("#stat-skip")
@@ -1171,59 +1169,56 @@ async def test_stat_share_skip_dismisses_without_opening_browser():
     mock_open.assert_not_called()
 
 
-async def test_stat_share_escape_dismisses_while_polling():
-    harness = StatShareHarness(GITHUB_CONFIG)
-    with patch("cc_sentiment.upload.Uploader.fetch_my_stat", new_callable=AsyncMock, return_value=None), \
-         patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
+async def test_stat_share_escape_dismisses():
+    harness = StatShareHarness(GITHUB_CONFIG, STAT)
+    with patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
         async with harness.run_test() as pilot:
-            await pilot.pause()
+            await pilot.pause(delay=0.3)
             await pilot.press("escape")
             await pilot.pause(delay=0.2)
 
     mock_open.assert_not_called()
 
 
-async def test_offer_stat_share_pushes_modal_on_http_error(tmp_path: Path, auth_ok):
-    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
-    db_path = tmp_path / "records.db"
+async def test_card_poller_invokes_on_ready_when_stat_arrives():
+    from cc_sentiment.tui.screens.stat_share import CardPoller
 
-    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
-         patch(
-             "cc_sentiment.upload.Uploader.fetch_my_stat",
-             new_callable=AsyncMock,
-             side_effect=httpx.ConnectError("no net"),
-         ), \
-         patch.object(CCSentimentApp, "push_screen_wait", new_callable=AsyncMock) as mock_push:
-        app = CCSentimentApp(state=state, db_path=db_path)
-        async with app.run_test() as pilot:
-            await pilot.pause(delay=0.3)
-            await app._offer_stat_share()
+    calls: list[MyStat] = []
+    states: list[tuple[int, str, float, str | None]] = []
 
-    assert any(
-        call.args and isinstance(call.args[0], StatShareScreen)
-        for call in mock_push.call_args_list
-    )
+    with patch(
+        "cc_sentiment.upload.Uploader.fetch_my_stat",
+        new_callable=AsyncMock,
+        return_value=STAT,
+    ):
+        poller = CardPoller(
+            config=GITHUB_CONFIG,
+            on_ready=calls.append,
+            on_state=lambda a, s, e, stop: states.append((a, s, e, stop)),
+        )
+        await poller.run()
+
+    assert calls == [STAT]
+    assert any(state[3] == "ready" for state in states)
 
 
-async def test_offer_stat_share_pushes_modal_when_stat_not_ready(tmp_path: Path, auth_ok):
-    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
-    db_path = tmp_path / "records.db"
+async def test_card_poller_gives_up_when_max_duration_exceeded():
+    from cc_sentiment.tui.screens.stat_share import CardPoller
 
-    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
-         patch(
-             "cc_sentiment.upload.Uploader.fetch_my_stat",
-             new_callable=AsyncMock,
-             return_value=None,
-         ), \
-         patch.object(CCSentimentApp, "push_screen_wait", new_callable=AsyncMock) as mock_push:
-        app = CCSentimentApp(state=state, db_path=db_path)
-        async with app.run_test() as pilot:
-            await pilot.pause(delay=0.3)
-            await app._offer_stat_share()
+    calls: list[MyStat] = []
+    states: list[tuple[int, str, float, str | None]] = []
 
-    assert any(
-        call.args and isinstance(call.args[0], StatShareScreen)
-        for call in mock_push.call_args_list
-    )
+    with patch(
+        "cc_sentiment.upload.Uploader.fetch_my_stat",
+        new_callable=AsyncMock,
+        side_effect=httpx.ConnectError("no net"),
+    ), patch.object(CardPoller, "MAX_POLL_SECONDS", 0.0):
+        poller = CardPoller(
+            config=GITHUB_CONFIG,
+            on_ready=calls.append,
+            on_state=lambda a, s, e, stop: states.append((a, s, e, stop)),
+        )
+        await poller.run()
+
+    assert calls == []
+    assert any(state[3] == "timeout" for state in states)

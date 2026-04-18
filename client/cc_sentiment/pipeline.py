@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from functools import cached_property, partial
 from pathlib import Path
@@ -13,6 +13,7 @@ from cc_sentiment.engines import (
     NOOP_PROGRESS,
     NOOP_SNIPPET,
     EngineFactory,
+    FrustrationFilter,
     InferenceEngine,
 )
 from cc_sentiment.models import (
@@ -124,20 +125,28 @@ class Pipeline:
         return new_buckets, metrics_by_key
 
     @staticmethod
-    def snippet_for(bucket: ConversationBucket) -> str:
+    def clean_snippet(text: str) -> str:
+        stripped = SNIPPET_FENCED_CODE.sub(" ", text)
+        stripped = SNIPPET_INLINE_CODE.sub(" ", stripped)
+        stripped = "\n".join(
+            line for line in stripped.splitlines() if not line.lstrip().startswith(">")
+        )
+        stripped = SNIPPET_LONG_PATH.sub(" ", stripped)
+        cleaned = SNIPPET_WHITESPACE.sub(" ", stripped).strip()
+        if not cleaned:
+            return ""
+        return cleaned[:SNIPPET_MAX_LEN - 1] + "…" if len(cleaned) > SNIPPET_MAX_LEN else cleaned
+
+    @classmethod
+    def snippet_for(cls, bucket: ConversationBucket, score: int) -> str:
+        if score == 1 and (matched := FrustrationFilter.matched_user_message(bucket)) is not None:
+            if cleaned := cls.clean_snippet(matched):
+                return cleaned
         for msg in bucket.messages:
             if msg.role != "user":
                 continue
-            stripped = SNIPPET_FENCED_CODE.sub(" ", msg.content)
-            stripped = SNIPPET_INLINE_CODE.sub(" ", stripped)
-            stripped = "\n".join(
-                line for line in stripped.splitlines() if not line.lstrip().startswith(">")
-            )
-            stripped = SNIPPET_LONG_PATH.sub(" ", stripped)
-            text = SNIPPET_WHITESPACE.sub(" ", stripped).strip()
-            if not text:
-                continue
-            return text[:SNIPPET_MAX_LEN - 1] + "…" if len(text) > SNIPPET_MAX_LEN else text
+            if cleaned := cls.clean_snippet(msg.content):
+                return cleaned
         return ""
 
     @staticmethod
@@ -168,7 +177,7 @@ class Pipeline:
         classifier: InferenceEngine,
         scored_buckets: frozenset[BucketKey] = frozenset(),
         on_bucket: Callable[[int], None] = NOOP_PROGRESS,
-        on_snippet: Callable[[str, int], None] = NOOP_SNIPPET,
+        on_snippet: Callable[[str, int], Awaitable[None]] = NOOP_SNIPPET,
         on_records: Callable[[list[SentimentRecord]], None] = lambda _: None,
     ) -> list[SentimentRecord]:
         new_buckets, metrics_by_key = cls.buckets_with_metrics(
@@ -182,8 +191,8 @@ class Pipeline:
             chunk = new_buckets[start:start + STREAM_CHUNK_SIZE]
             scores = await classifier.score(chunk, on_progress=on_bucket)
             for bucket, score in zip(chunk, scores):
-                if snippet := cls.snippet_for(bucket):
-                    on_snippet(snippet, int(score))
+                if snippet := cls.snippet_for(bucket, int(score)):
+                    await on_snippet(snippet, int(score))
             chunk_records = [
                 cls.to_record(
                     bucket,
@@ -209,7 +218,7 @@ class Pipeline:
         on_records: Callable[[list[SentimentRecord]], None] = lambda _: None,
         on_bucket: Callable[[int], None] = NOOP_PROGRESS,
         on_engine_log: Callable[[str], None] | None = None,
-        on_snippet: Callable[[str, int], None] = NOOP_SNIPPET,
+        on_snippet: Callable[[str, int], Awaitable[None]] = NOOP_SNIPPET,
         on_transcript_complete: Callable[[list[SentimentRecord]], None] = lambda _: None,
     ) -> list[SentimentRecord]:
         classifier = await EngineFactory.build(engine, model_repo, on_engine_log)

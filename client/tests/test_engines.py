@@ -108,20 +108,32 @@ class TestFrustrationDetection:
     def test_detects_wtf(self) -> None:
         assert FrustrationFilter.check_frustration(make_bucket("wtf is this"))
 
-    def test_detects_this_sucks(self) -> None:
-        assert FrustrationFilter.check_frustration(make_bucket("this sucks"))
-
     def test_detects_fucking_broken(self) -> None:
         assert FrustrationFilter.check_frustration(make_bucket("this is fucking broken"))
 
-    def test_detects_correction_phrase(self) -> None:
-        assert FrustrationFilter.check_frustration(make_bucket("no, that's wrong"))
+    def test_detects_fuck_you(self) -> None:
+        assert FrustrationFilter.check_frustration(make_bucket("fuck you"))
 
-    def test_detects_not_what_i_asked(self) -> None:
-        assert FrustrationFilter.check_frustration(make_bucket("that's not what I asked"))
+    def test_detects_piece_of_shit(self) -> None:
+        assert FrustrationFilter.check_frustration(make_bucket("this is a piece of shit"))
+
+    def test_detects_completely_useless(self) -> None:
+        assert FrustrationFilter.check_frustration(make_bucket("you are completely useless"))
 
     def test_detects_giving_up(self) -> None:
         assert FrustrationFilter.check_frustration(make_bucket("I give up"))
+
+    def test_does_not_flag_this_sucks(self) -> None:
+        assert not FrustrationFilter.check_frustration(make_bucket("this sucks"))
+
+    def test_does_not_flag_try_again(self) -> None:
+        assert not FrustrationFilter.check_frustration(make_bucket("try again with a different approach"))
+
+    def test_does_not_flag_no_thats_wrong(self) -> None:
+        assert not FrustrationFilter.check_frustration(make_bucket("no, that's wrong"))
+
+    def test_does_not_flag_undo(self) -> None:
+        assert not FrustrationFilter.check_frustration(make_bucket("undo that"))
 
     def test_no_false_positive_on_neutral(self) -> None:
         assert not FrustrationFilter.check_frustration(make_bucket("please fix the login form"))
@@ -134,9 +146,25 @@ class TestFrustrationDetection:
             session_id=SessionId("test"),
             bucket_index=BucketIndex(0),
             bucket_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            messages=(make_message("assistant", "wtf this sucks"),),
+            messages=(make_message("assistant", "wtf fuck you"),),
         )
         assert not FrustrationFilter.check_frustration(bucket)
+
+    def test_matched_user_message_returns_matching_text(self) -> None:
+        bucket = ConversationBucket(
+            session_id=SessionId("test"),
+            bucket_index=BucketIndex(0),
+            bucket_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            messages=(
+                make_message("user", "commit that"),
+                make_message("user", "wtf is this fucking broken"),
+                make_message("user", "ok proceed"),
+            ),
+        )
+        assert FrustrationFilter.matched_user_message(bucket) == "wtf is this fucking broken"
+
+    def test_matched_user_message_returns_none_when_absent(self) -> None:
+        assert FrustrationFilter.matched_user_message(make_bucket("looks good")) is None
 
 
 class TestEstimateClaudeCost:

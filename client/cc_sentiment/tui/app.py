@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import subprocess
 import webbrowser
+from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar
 
@@ -12,6 +13,7 @@ import httpx
 from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widgets import (
     Digits,
@@ -23,17 +25,23 @@ from textual.widgets import (
 )
 
 from cc_sentiment.daemon import LaunchAgent
-from cc_sentiment.engines import ClaudeCLIEngine, EngineFactory
+from cc_sentiment.engines import OMLX_UVX_SPEC, ClaudeCLIEngine, EngineFactory
+from cc_sentiment.engines.protocol import DEFAULT_MODEL
 from cc_sentiment.hardware import Hardware
 from cc_sentiment.models import (
     CLIENT_VERSION,
     AppState,
+    GistConfig,
+    GPGConfig,
+    MyStat,
     SentimentRecord,
+    SSHConfig,
 )
 from cc_sentiment.nlp import NLP
 from cc_sentiment.repo import Repository
 from cc_sentiment.transcripts import TranscriptParser
 from cc_sentiment.upload import (
+    DASHBOARD_URL,
     UPLOAD_POOL_TIMEOUT_SECONDS,
     AuthOk,
     AuthServerError,
@@ -46,7 +54,7 @@ from cc_sentiment.upload import (
 
 from cc_sentiment.tui.boot_view import EngineBootView
 from cc_sentiment.tui.format import TimeFormat
-from cc_sentiment.tui.progress import ScoringProgress
+from cc_sentiment.tui.progress import DebugState, ScoringProgress
 from cc_sentiment.tui.screens import (
     BootingScreen,
     CostReviewScreen,
@@ -55,6 +63,7 @@ from cc_sentiment.tui.screens import (
     SetupScreen,
     StatShareScreen,
 )
+from cc_sentiment.tui.screens.stat_share import CardPoller
 from cc_sentiment.tui.stages import (
     Authenticating,
     Booting,
@@ -69,11 +78,17 @@ from cc_sentiment.tui.stages import (
     Uploading,
 )
 from cc_sentiment.tui.view import ProcessingView
-from cc_sentiment.tui.widgets import HourlyChart, ScoreBar, SpinnerLine
+from cc_sentiment.tui.widgets import (
+    DebugSection,
+    HourlyChart,
+    ScoreBar,
+    Section,
+    SpinnerLine,
+    StatCard,
+)
 
 
 class CCSentimentApp(App[None]):
-    DASHBOARD_URL: ClassVar[str] = "https://sentiments.cc"
     RESCAN_CONFIRM_SECONDS: ClassVar[float] = 5.0
 
     CSS = """
@@ -85,32 +100,20 @@ class CCSentimentApp(App[None]):
     #score-digits { width: auto; min-width: 20; }
     #score-label { text-align: right; height: 1; color: $text-muted; }
     #score-digits.inactive, #score-label.inactive { display: none; }
-    #progress-section { height: auto; margin: 1 0 0 0; padding: 0 1; border: round $primary-background; }
-    #progress-row { height: auto; }
-    #progress-label { width: auto; min-width: 24; }
+    #progress-label { height: 1; }
     #scan-progress { width: 1fr; }
-    #chart-section { height: auto; margin: 1 0 0 0; padding: 0 1; border: round $primary-background; }
-    #chart-section.inactive, #stats-section.inactive { display: none; }
-    #charts-row { height: auto; }
-    #hourly-column { width: 1fr; height: auto; margin: 0 2 0 0; }
-    #hourly-chart-label { height: 1; color: $text-muted; }
-    #hourly-chart { height: 7; }
-    #distribution { width: 1fr; height: auto; }
-    #engine-boot-section { height: auto; margin: 1 0 0 0; padding: 0 1; border: round $primary-background; display: none; }
-    #engine-boot-section.active { display: block; }
-    #engine-boot-status { height: 1; }
-    #engine-boot-log { height: auto; max-height: 8; color: $text-muted; }
-    #stats-section { height: auto; margin: 1 0 0 0; padding: 0 1; border: round $primary-background; }
-    #stats-row { height: 4; }
-    .stat-card { width: 1fr; height: 4; padding: 0 1; border: tall $primary-background; }
-    .stat-card .stat-value { text-style: bold; }
-    .stat-card .stat-label { color: $text-muted; text-style: bold; }
-    #insights-section { height: 1; margin: 1 0 0 0; }
-    #insights-section.inactive { display: none; }
-    #upload-section { height: auto; margin: 1 0 0 0; padding: 0 1; border: round $primary-background; }
-    #upload-section.inactive { display: none; }
     #upload-label { height: 1; }
     #upload-progress { width: 1fr; }
+    #charts-row { height: 8; }
+    #hourly-column { width: 1fr; height: 100%; margin: 0 2 0 0; }
+    #hourly-chart-label { height: 1; color: $text-muted; }
+    #hourly-chart { height: 7; }
+    #distribution { width: 1fr; height: 100%; align: left middle; }
+    #engine-boot-status { height: 1; }
+    #engine-boot-log { height: auto; max-height: 8; color: $text-muted; }
+    #stats-insights { height: 1; color: $text-muted; margin: 0 0 1 0; }
+    #stats-insights.inactive { display: none; }
+    #stats-row { height: 4; }
     #status-line { height: auto; margin: 1 0 0 0; }
     """
 
@@ -126,6 +129,7 @@ class CCSentimentApp(App[None]):
     uploaded_count: reactive[int] = reactive(0)
     status_text: reactive[str] = reactive("Initializing...")
     stage: reactive[Stage] = reactive(Booting())
+    debug_state: reactive[DebugState | None] = reactive(None)
 
     def __init__(
         self,
@@ -147,7 +151,9 @@ class CCSentimentApp(App[None]):
         self.view = ProcessingView(self)
         self._scoring = ScoringProgress()
         self._upload = UploadProgress()
+        self._debug_state = DebugState()
         self._boot_screen: BootingScreen | None = None
+        self._prewarmed = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -158,19 +164,18 @@ class CCSentimentApp(App[None]):
                     yield Digits("-.--", id="score-digits", classes="inactive")
                 yield Static("[dim]average sentiment[/]", id="score-label", classes="inactive")
 
-            with Vertical(id="progress-section"):
-                with Horizontal(id="progress-row"):
-                    yield Label("Preparing...", id="progress-label")
-                    yield ProgressBar(id="scan-progress", total=100, show_eta=False, show_percentage=True)
+            with Section(id="progress"):
+                yield Label("Preparing...", id="progress-label")
+                yield ProgressBar(id="scan-progress", total=100, show_eta=False, show_percentage=True)
 
-            with Vertical(id="upload-section", classes="inactive"):
+            with Section(id="upload", classes="inactive"):
                 yield Label("", id="upload-label")
                 yield ProgressBar(id="upload-progress", total=100, show_eta=False, show_percentage=True)
 
-            with Vertical(id="chart-section", classes="inactive"):
+            with Section(id="chart", classes="inactive"):
                 with Horizontal(id="charts-row"):
                     with Vertical(id="hourly-column"):
-                        yield Static("[dim]Tough moments through the day[/]", id="hourly-chart-label")
+                        yield Static("[dim]Sentiment through the day[/]", id="hourly-chart-label")
                         yield HourlyChart(id="hourly-chart")
                     with Vertical(id="distribution"):
                         for s in range(1, 6):
@@ -179,33 +184,28 @@ class CCSentimentApp(App[None]):
                             self.view.register_score_bar(s, bar)
                             yield bar
 
-            with Vertical(id="engine-boot-section"):
+            with Section(id="engine-boot", classes="inactive"):
                 yield SpinnerLine(id="engine-boot-status")
                 yield Static("", id="engine-boot-log")
 
-            with Vertical(id="stats-section", classes="inactive"):
+            with Section(id="stats", classes="inactive"):
+                yield Static("", id="stats-insights", classes="inactive")
                 with Horizontal(id="stats-row"):
-                    with Vertical(classes="stat-card"):
-                        yield Static("--", id="stat-buckets", classes="stat-value")
-                        yield Static("moments", classes="stat-label")
-                    with Vertical(classes="stat-card"):
-                        yield Static("--", id="stat-sessions", classes="stat-value")
-                        yield Static("chats", classes="stat-label")
-                    with Vertical(classes="stat-card"):
-                        yield Static("--", id="stat-files", classes="stat-value")
-                        yield Static("transcripts", classes="stat-label")
-                    with Vertical(classes="stat-card"):
-                        yield Static("--", id="stat-rate", classes="stat-value")
-                        yield Static("moments/sec", classes="stat-label")
+                    yield StatCard(value_id="stat-buckets", label="moments")
+                    yield StatCard(value_id="stat-sessions", label="chats")
+                    yield StatCard(value_id="stat-files", label="transcripts")
+                    yield StatCard(value_id="stat-rate", label="moments/sec")
 
-            yield Static("", id="insights-section", classes="inactive")
+            if self.debug_mode:
+                yield DebugSection(id="debug")
 
             yield Label("", id="status-line")
         yield Footer()
 
     async def on_mount(self) -> None:
         self.title = "cc-sentiment"
-        self.run_worker(NLP.ensure_ready(), name="spacy-load", exclusive=True, exit_on_error=False)
+        self._set_debug(nlp_state="loading")
+        self.run_worker(self._load_nlp(), name="spacy-load", exclusive=True, exit_on_error=False)
         self._boot_screen = BootingScreen()
         await self.push_screen(self._boot_screen)
         self._boot_screen.status = "Loading local cache..."
@@ -217,6 +217,47 @@ class CCSentimentApp(App[None]):
             self.exit()
             return
         self.run_flow()
+
+    async def _load_nlp(self) -> None:
+        try:
+            await NLP.ensure_ready()
+        except (OSError, RuntimeError, ImportError) as exc:
+            self._set_debug(nlp_state=f"failed: {exc.__class__.__name__}")
+            return
+        self._set_debug(nlp_state="ready")
+
+    def _maybe_prewarm(self) -> None:
+        if self._prewarmed:
+            return
+        if EngineFactory.default() != "omlx":
+            return
+        self._prewarmed = True
+        self.run_worker(self._prewarm_uvx(), name="prewarm-uvx", exit_on_error=False)
+        self.run_worker(self._prewarm_model(), name="prewarm-model", exit_on_error=False)
+
+    async def _prewarm_uvx(self) -> None:
+        self._set_debug(prewarm_uvx="running")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "uvx", "--from", OMLX_UVX_SPEC, "omlx", "--help",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
+        except OSError as exc:
+            self._set_debug(prewarm_uvx=f"failed: {exc.__class__.__name__}")
+            return
+        self._set_debug(prewarm_uvx="done")
+
+    async def _prewarm_model(self) -> None:
+        self._set_debug(prewarm_model="running")
+        try:
+            from huggingface_hub import snapshot_download
+            await anyio.to_thread.run_sync(snapshot_download, DEFAULT_MODEL)
+        except (OSError, httpx.HTTPError) as exc:
+            self._set_debug(prewarm_model=f"failed: {exc.__class__.__name__}")
+            return
+        self._set_debug(prewarm_model="done")
 
     async def _dismiss_boot_screen(self) -> None:
         if self._boot_screen is None:
@@ -234,7 +275,21 @@ class CCSentimentApp(App[None]):
         if self._boot_screen is not None:
             self._boot_screen.append_detail(f"debug: {msg}")
             return
-        ProcessingView.append_line(self.query_one("#status-line", Label), f"[red dim]debug:[/] {msg}")
+        self.view.append_status(f"[red dim]debug:[/] {msg}")
+
+    def _set_debug(self, **fields: object) -> None:
+        for name, value in fields.items():
+            setattr(self._debug_state, name, value)
+        self.debug_state = replace(self._debug_state)
+
+    def watch_debug_state(self, value: DebugState | None) -> None:
+        if value is None or not self.debug_mode:
+            return
+        try:
+            section = self.query_one("#debug", DebugSection)
+        except NoMatches:
+            return
+        section.render_state(value)
 
     async def on_unmount(self) -> None:
         if self.repo:
@@ -271,6 +326,7 @@ class CCSentimentApp(App[None]):
                     "[green]All set. No conversations yet. Come back after using Claude Code.[/] "
                     "[dim]Press O to browse the dashboard.[/]"
                 )
+                self._maybe_prewarm()
             case IdleCaughtUp(total_buckets=b, total_sessions=s, total_files=f):
                 self.view.show_stats(b, s, f)
                 self._update_status(
@@ -281,17 +337,22 @@ class CCSentimentApp(App[None]):
                 )
             case IdleAfterUpload(total_buckets=b, total_sessions=s, total_files=f):
                 self.view.show_stats(b, s, f)
-                self._update_status(
-                    "[green]Uploaded.[/] See your data at "
-                    "[link='https://sentiments.cc'][b]sentiments.cc[/b][/link]. "
-                    "[dim]Press O to open.[/]"
-                )
+                self._update_status(self._uploaded_status_text())
             case Error(message=m):
                 self._update_status(m)
             case RescanConfirm():
                 self._update_status(
                     "[yellow]Press R again within 5s to clear all state and rescan from scratch.[/]"
                 )
+
+    def _uploaded_status_text(self) -> str:
+        polling = self._debug_state.card_last_status in ("polling", "idle") and self._debug_state.card_stopped is None
+        suffix = "[dim]Generating your card…[/]" if polling else "[dim]Press O to open.[/]"
+        return (
+            "[green]Uploaded.[/] See your data at "
+            f"[link='{DASHBOARD_URL}'][b]sentiments.cc[/b][/link]. "
+            f"{suffix}"
+        )
 
     def _scoring_status_text(self) -> str:
         if self.uploaded_count == 0:
@@ -348,6 +409,7 @@ class CCSentimentApp(App[None]):
             await self.push_screen_wait(PlatformErrorScreen(str(e)))
             self.exit()
             return
+        self._set_debug(engine_name=engine)
         self._debug(f"engine={engine}")
         self._debug(f"transcript-backend: {TranscriptParser.backend_name()}")
 
@@ -409,10 +471,11 @@ class CCSentimentApp(App[None]):
                     self._begin_scoring(bucket_count, engine, existing_files + len(scan.transcripts))
                     boot = EngineBootView(
                         app=self,
-                        section=self.query_one("#engine-boot-section"),
+                        section=self.query_one("#engine-boot"),
                         status=self.query_one("#engine-boot-status", SpinnerLine),
                         log=self.query_one("#engine-boot-log", Static),
                     )
+                    await NLP.ensure_ready()
                     boot.show(engine)
                     try:
                         await Pipeline.run(
@@ -469,16 +532,38 @@ class CCSentimentApp(App[None]):
         await self._enter_idle(uploaded=uploaded)
 
         if uploaded:
-            await self._offer_stat_share()
+            assert self.state.config is not None
+            self.run_worker(self._poll_card(self.state.config), name="card-poll", exclusive=True, exit_on_error=False)
             await self._offer_daemon_install()
 
     def _on_upload_progress_change(self, progress: UploadProgress) -> None:
         self.uploaded_count = progress.uploaded_records
         self.view.update_upload(progress)
 
-    async def _offer_stat_share(self) -> None:
-        assert self.state.config is not None
-        await self.push_screen_wait(StatShareScreen(self.state.config))
+    async def _poll_card(self, config: SSHConfig | GPGConfig | GistConfig) -> None:
+        poller = CardPoller(
+            config=config,
+            on_ready=self._on_card_ready,
+            on_state=self._on_card_state,
+        )
+        await poller.run()
+        if isinstance(self.stage, IdleAfterUpload) and self._debug_state.card_stopped != "ready":
+            self._update_status(self._uploaded_status_text())
+
+    def _on_card_ready(self, stat: MyStat) -> None:
+        if self.state.config is None:
+            return
+        self.push_screen(StatShareScreen(self.state.config, stat))
+        if isinstance(self.stage, IdleAfterUpload):
+            self._update_status(self._uploaded_status_text())
+
+    def _on_card_state(self, attempts: int, status: str, elapsed: float, stopped: str | None) -> None:
+        self._set_debug(
+            card_attempts=attempts,
+            card_last_status=status,
+            card_elapsed=elapsed,
+            card_stopped=stopped,
+        )
 
     async def _offer_daemon_install(self) -> None:
         if self.state.daemon_prompt_dismissed or LaunchAgent.is_installed():
@@ -521,8 +606,8 @@ class CCSentimentApp(App[None]):
             )
 
     async def action_open_dashboard(self) -> None:
-        await anyio.to_thread.run_sync(webbrowser.open, self.DASHBOARD_URL)
-        self._update_status(f"[dim]Opened {self.DASHBOARD_URL}.[/]")
+        await anyio.to_thread.run_sync(webbrowser.open, DASHBOARD_URL)
+        self._update_status(f"[dim]Opened {DASHBOARD_URL}.[/]")
         self.set_timer(3.0, lambda: self.watch_stage(self.stage))
 
     async def action_rescan(self) -> None:
@@ -548,6 +633,7 @@ class CCSentimentApp(App[None]):
         self.uploaded_count = 0
         self._scoring.reset()
         self._upload.reset()
+        self._debug_state.reset()
         self.view.reset()
 
     def _begin_scoring(self, total: int, engine: str, total_files: int) -> None:
@@ -570,7 +656,7 @@ class CCSentimentApp(App[None]):
 
     def _update_status(self, text: str) -> None:
         self.status_text = text
-        self.query_one("#status-line", Label).update(text)
+        self.view.update_status(text)
 
     def _append_status(self, addition: str) -> None:
         self._update_status(f"{self.status_text}\n{addition}".strip())

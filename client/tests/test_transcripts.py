@@ -18,6 +18,7 @@ from cc_sentiment.models import (
 )
 from cc_sentiment.transcripts import (
     ASSISTANT_TRUNCATION,
+    BUCKET_MINUTES,
     ConversationBucketer,
     ParsedTranscript,
     PythonBackend,
@@ -252,7 +253,7 @@ class TestConversationBucketer:
         for bucket in buckets:
             assert bucket.bucket_start.second == 0
             assert bucket.bucket_start.microsecond == 0
-            assert bucket.bucket_start.minute % 5 == 0
+            assert bucket.bucket_start.minute % BUCKET_MINUTES == 0
 
     def test_messages_in_correct_buckets(self) -> None:
         messages = parse_file(FIXTURE_PATH)

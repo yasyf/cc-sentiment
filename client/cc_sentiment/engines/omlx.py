@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import anyio.to_thread
 import httpx
 
 from cc_sentiment.models import ConversationBucket, SentimentScore
@@ -27,6 +28,7 @@ class StallDetected(Exception):
     pass
 
 
+OMLX_UVX_SPEC = "omlx[grammar] @ git+https://github.com/jundot/omlx.git"
 SILENT_LOG: Callable[[str], None] = lambda _: None
 
 
@@ -71,7 +73,7 @@ class OMLXEngine:
     def _spawn_server(self, port: int, capture_log: bool) -> subprocess.Popen:
         proc = subprocess.Popen(
             [
-                "uvx", "--from", "omlx[grammar] @ git+https://github.com/jundot/omlx.git",
+                "uvx", "--from", OMLX_UVX_SPEC,
                 "omlx", "serve",
                 "--port", str(port),
                 "--model-dir", str(self.omlx_dir),
@@ -133,7 +135,7 @@ class OMLXEngine:
 
     async def _cold_restart_server(self) -> None:
         await self._stop_current()
-        self._start_server()
+        await anyio.to_thread.run_sync(self._start_server)
 
     async def _switch_to_next_server(self) -> None:
         await self._stop_current()
@@ -144,7 +146,7 @@ class OMLXEngine:
         self.port = next_server.port
         self.base_url = next_server.base_url
         self.model_name = None
-        self._wait_for_ready()
+        await anyio.to_thread.run_sync(self._wait_for_ready)
         self.client = httpx.AsyncClient(base_url=self.base_url, timeout=300.0)
 
     @staticmethod

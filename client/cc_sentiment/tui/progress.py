@@ -1,7 +1,23 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+
+
+@dataclass
+class DebugState:
+    engine_name: str = "—"
+    nlp_state: str = "—"
+    prewarm_uvx: str = "—"
+    prewarm_model: str = "—"
+    card_attempts: int = 0
+    card_last_status: str = "idle"
+    card_elapsed: float = 0.0
+    card_stopped: str | None = None
+
+    def reset(self) -> None:
+        for f in fields(self):
+            setattr(self, f.name, f.default)
 
 
 @dataclass

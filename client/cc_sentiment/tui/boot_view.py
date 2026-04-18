@@ -7,6 +7,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import ClassVar
 
+import anyio
+import anyio.to_thread
 from rich.text import Text
 from textual.app import App
 from textual.widget import Widget
@@ -65,16 +67,16 @@ class EngineBootView:
         self.last_snippet_at = 0.0
         self.last_snippet_score = None
         self.snippet_started = False
-        self.section.add_class("active")
+        self.section.remove_class("inactive")
 
     def hide(self) -> None:
-        self.section.remove_class("active")
+        self.section.add_class("inactive")
 
     def write_from_thread(self, line: str) -> None:
         self.lines.append(Text(line, style="dim"))
         self.app.call_from_thread(self.log.update, Text("\n").join(self.lines))
 
-    def add_snippet(self, snippet: str, score: int) -> None:
+    async def add_snippet(self, snippet: str, score: int) -> None:
         now = time.monotonic()
         if now - self.last_snippet_at < self.SNIPPET_RATE_LIMIT:
             return
@@ -90,9 +92,10 @@ class EngineBootView:
             self.status.display = False
         comment = random.choice(self.WITTY_COMMENTS[score])
         truncated = snippet if len(snippet) <= self.MAX_SNIPPET_CHARS else snippet[:self.MAX_SNIPPET_CHARS - 1] + "…"
+        highlighted = await anyio.to_thread.run_sync(self.highlight_snippet, truncated)
         self.lines.append(Text.assemble(
             f"{ScoreBar.ICONS[score]} {score}  \"",
-            self.highlight_snippet(truncated),
+            highlighted,
             "\"  ",
             (comment, "dim"),
         ))

@@ -175,7 +175,7 @@ class TestCrossBucketReadHistory:
         [parsed] = anyio.run(load)
         new_buckets, metrics_by_key = Pipeline.buckets_with_metrics(parsed.messages, frozenset())
         assert len(new_buckets) == 2
-        bucket_1_key = BucketKey(session_id=SessionId("session-cross"), bucket_index=BucketIndex(2))
+        bucket_1_key = BucketKey(session_id=SessionId("session-cross"), bucket_index=BucketIndex(3))
         assert metrics_by_key[bucket_1_key].edits_without_prior_read_ratio == 0.0
 
     def test_edit_without_any_prior_read_marked(self, tmp_path: Path) -> None:

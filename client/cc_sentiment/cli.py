@@ -3,8 +3,11 @@ from __future__ import annotations
 import os
 import sys
 
+os.environ.setdefault("PYTHONNODEBUGRANGES", "1")
+
 import anyio
 import click
+from rich.console import Console
 
 from cc_sentiment.models import AppState
 
@@ -24,15 +27,19 @@ def main(ctx: click.Context, model_repo: str | None, debug: bool) -> None:
     if ctx.invoked_subcommand is not None:
         return
 
-    from cc_sentiment.tui import CCSentimentApp
-    CCSentimentApp(state=AppState.load(), model_repo=model_repo, debug=debug).run()
+    with Console().status("[dim]Starting cc-sentiment…[/]"):
+        from cc_sentiment.tui import CCSentimentApp
+        app = CCSentimentApp(state=AppState.load(), model_repo=model_repo, debug=debug)
+    app.run()
 
 
 @main.command()
 @click.pass_context
 def setup(ctx: click.Context) -> None:
-    from cc_sentiment.tui import CCSentimentApp
-    CCSentimentApp(state=AppState.load(), setup_only=True, debug=ctx.obj["debug"]).run()
+    with Console().status("[dim]Starting cc-sentiment…[/]"):
+        from cc_sentiment.tui import CCSentimentApp
+        app = CCSentimentApp(state=AppState.load(), setup_only=True, debug=ctx.obj["debug"])
+    app.run()
 
 
 @main.command()

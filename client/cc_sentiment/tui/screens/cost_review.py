@@ -3,22 +3,13 @@ from __future__ import annotations
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.screen import Screen
 from textual.widgets import Button, Label
 
 from cc_sentiment.engines import ClaudeCLIEngine
+from cc_sentiment.tui.screens.dialog import Dialog
 
 
-class CostReviewScreen(Screen[bool]):
-    DEFAULT_CSS = """
-    CostReviewScreen { align: center middle; }
-    #cost-box { width: 76; height: auto; border: heavy $accent; padding: 2 3; }
-    #cost-box .title { text-style: bold; color: $text; margin: 0 0 1 0; }
-    #cost-box .detail { color: $text-muted; margin: 0 0 1 0; }
-    #cost-box .emphasis { color: $text; margin: 0 0 2 0; }
-    #cost-box Button { margin: 1 1 0 0; }
-    """
-
+class CostReviewScreen(Dialog[bool]):
     BINDINGS = [("escape", "cancel", "Cancel")]
 
     def __init__(self, bucket_count: int, model: str) -> None:
@@ -28,7 +19,7 @@ class CostReviewScreen(Screen[bool]):
         self.cost = ClaudeCLIEngine.estimate_cost_usd(bucket_count)
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="cost-box"):
+        with Vertical(id="dialog-box"):
             yield Label(f"Use {self.model} for scoring?", classes="title")
             yield Label(
                 f"This machine can't run local inference, so we'll use the Claude API "

@@ -32,6 +32,12 @@ class ProcessingView:
         existing = str(widget.render())
         widget.update(f"{existing}\n{addition}".strip())
 
+    def update_status(self, text: str) -> None:
+        self.app.query_one("#status-line", Label).update(text)
+
+    def append_status(self, addition: str) -> None:
+        self.append_line(self.app.query_one("#status-line", Label), addition)
+
     def reset(self) -> None:
         self.app.query_one("#scan-progress", ProgressBar).update(total=100, progress=0)
         self.app.query_one("#progress-label", Label).update("Preparing...")
@@ -41,14 +47,14 @@ class ProcessingView:
             self.score_bars[s].update("")
         for stat_id in ("#stat-buckets", "#stat-sessions", "#stat-files", "#stat-rate"):
             self.app.query_one(stat_id, Static).update("--")
-        self.app.query_one("#chart-section").add_class("inactive")
-        self.app.query_one("#stats-section").add_class("inactive")
+        self.app.query_one("#chart").add_class("inactive")
+        self.app.query_one("#stats").add_class("inactive")
         self.app.query_one("#score-digits").add_class("inactive")
         self.app.query_one("#score-label").add_class("inactive")
-        self.app.query_one("#upload-section").add_class("inactive")
+        self.app.query_one("#upload").add_class("inactive")
         self.app.query_one("#upload-progress", ProgressBar).update(total=100, progress=0)
         self.app.query_one("#upload-label", Label).update("")
-        self.app.query_one("#insights-section").add_class("inactive")
+        self.app.query_one("#stats-insights").add_class("inactive")
 
     def begin_scoring(self, total: int, total_files: int) -> None:
         self.app.query_one("#scan-progress", ProgressBar).update(total=total, progress=0)
@@ -56,7 +62,7 @@ class ProcessingView:
 
     def show_total_files(self, total_files: int) -> None:
         self.app.query_one("#stat-files", Static).update(f"[b]{total_files:,}[/]")
-        self.app.query_one("#stats-section").remove_class("inactive")
+        self.app.query_one("#stats").remove_class("inactive")
 
     def update_progress_label(self, scoring: ScoringProgress, scored: int, total: int) -> None:
         elapsed = scoring.elapsed()
@@ -71,7 +77,7 @@ class ProcessingView:
         self.app.query_one("#stat-rate", Static).update(f"{scoring.rate(scored):.1f}")
 
     def update_upload(self, progress: UploadProgress) -> None:
-        section = self.app.query_one("#upload-section")
+        section = self.app.query_one("#upload")
         bar = self.app.query_one("#upload-progress", ProgressBar)
         label = self.app.query_one("#upload-label", Label)
         if progress.queued_records == 0:
@@ -89,15 +95,15 @@ class ProcessingView:
         self.app.query_one("#stat-buckets", Static).update(f"[b]{buckets:,}[/]")
         self.app.query_one("#stat-sessions", Static).update(f"[b]{sessions:,}[/]")
         self.app.query_one("#stat-files", Static).update(f"[b]{files:,}[/]")
-        self.app.query_one("#stats-section").remove_class("inactive")
+        self.app.query_one("#stats").remove_class("inactive")
 
     def hide_engine_boot(self) -> None:
-        self.app.query_one("#engine-boot-section").remove_class("active")
+        self.app.query_one("#engine-boot").add_class("inactive")
 
     def render_scores(self, records: list[SentimentRecord]) -> None:
         if not records:
             return
-        self.app.query_one("#chart-section").remove_class("inactive")
+        self.app.query_one("#chart").remove_class("inactive")
         self.app.query_one("#score-digits").remove_class("inactive")
         self.app.query_one("#score-label").remove_class("inactive")
         scores = [int(r.sentiment_score) for r in records]
@@ -128,7 +134,7 @@ class ProcessingView:
         )
 
     def render_insights(self, records: list[SentimentRecord]) -> None:
-        insights = self.app.query_one("#insights-section", Static)
+        insights = self.app.query_one("#stats-insights", Static)
         if len(records) < self.INSIGHTS_MIN_RECORDS:
             insights.add_class("inactive")
             return

@@ -25,6 +25,8 @@ from cc_sentiment.signing import GPGBackend, PayloadSigner, SigningBackend, SSHB
 
 DEFAULT_SERVER_URL = "https://anetaco--cc-sentiment-api-serve.modal.run"
 
+DASHBOARD_URL = "https://sentiments.cc"
+
 TEST_PAYLOAD = "cc-sentiment-verify"
 
 RETRYABLE_STATUS_CODES = {429, 502, 503, 504}

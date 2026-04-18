@@ -26,7 +26,7 @@ from cc_sentiment.models import (
 from .backend import Backend, ParsedTranscript
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
-BUCKET_MINUTES = 5
+BUCKET_MINUTES = 3
 ASSISTANT_TRUNCATION = 1024
 EPHEMERAL_ENTRYPOINTS: frozenset[str] = frozenset({"sdk-cli"})
 MIN_USER_TURNS_PER_SESSION = 2

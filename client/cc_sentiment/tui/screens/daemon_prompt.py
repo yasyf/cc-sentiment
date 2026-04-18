@@ -3,22 +3,16 @@ from __future__ import annotations
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.screen import ModalScreen
 from textual.widgets import Button, Label
 
+from cc_sentiment.tui.screens.dialog import Dialog
 
-class DaemonPromptScreen(ModalScreen[bool]):
-    DEFAULT_CSS = """
-    #daemon-box { width: 76; height: auto; border: heavy $accent; padding: 2 3; }
-    #daemon-box .title { text-style: bold; color: $text; margin: 0 0 1 0; }
-    #daemon-box .detail { color: $text-muted; margin: 0 0 1 0; }
-    #daemon-box Button { margin: 1 1 0 0; }
-    """
 
+class DaemonPromptScreen(Dialog[bool]):
     BINDINGS = [("escape", "cancel", "Skip")]
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="daemon-box"):
+        with Vertical(id="dialog-box"):
             yield Label("Run this automatically each day?", classes="title")
             yield Label(
                 "We can schedule a background job that refreshes your numbers daily. "

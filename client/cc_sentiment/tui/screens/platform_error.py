@@ -3,16 +3,15 @@ from __future__ import annotations
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.screen import Screen
 from textual.widgets import Button, Label
 
+from cc_sentiment.tui.screens.dialog import Dialog
 
-class PlatformErrorScreen(Screen[None]):
-    DEFAULT_CSS = """
-    PlatformErrorScreen { align: center middle; }
-    #error-box { width: 76; height: auto; border: heavy $error; padding: 2 3; }
-    #error-box .title { text-style: bold; color: $error; margin: 0 0 1 0; }
-    #error-box .detail { color: $text; margin: 0 0 2 0; }
+
+class PlatformErrorScreen(Dialog[None]):
+    DEFAULT_CSS = Dialog.DEFAULT_CSS + """
+    PlatformErrorScreen > #dialog-box { border: heavy $error; }
+    PlatformErrorScreen > #dialog-box .title { color: $error; }
     """
 
     BINDINGS = [("q", "done", "Quit"), ("escape", "done", "Quit"), ("enter", "done", "Quit")]
@@ -22,7 +21,7 @@ class PlatformErrorScreen(Screen[None]):
         self.message = message
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="error-box"):
+        with Vertical(id="dialog-box"):
             yield Label("Sorry, this machine can't run cc-sentiment.", classes="title")
             yield Label(self.message, classes="detail")
             yield Button("Quit", id="quit-btn", variant="primary")

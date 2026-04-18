@@ -10,16 +10,14 @@ from cc_sentiment.engines.protocol import NOOP_PROGRESS, InferenceEngine
 FRUSTRATION_PATTERN = re.compile(
     r"\b("
     r"wtf|wth|ffs|omfg|"
-    r"shit(?:ty|tiest)?|dumbass|horrible|awful|"
-    r"piss(?:ed|ing)?off|piece\s*of\s*(?:shit|crap|junk)|"
-    r"what\s*the\s*(?:fuck|hell)|"
-    r"fuck(?:ing?)?\s*(?:broken|useless|terrible|awful|horrible)|"
-    r"fuck\s*you|screw\s*(?:this|you)|"
-    r"so\s*frustrating|this\s*sucks|damnit|damn\s*it|"
-    r"no,?\s*that'?s\s*wrong|not\s*what\s*i\s*asked|"
-    r"you\s*misunderstood|that'?s\s*not\s*right|"
-    r"undo\s*that|why\s*did\s*you|try\s*again|"
-    r"useless|this\s*is\s*terrible|completely\s*wrong|"
+    r"fuck(?:ing)?\s*(?:broken|useless|stupid|terrible|awful|horrible|piece\s*of\s*shit)|"
+    r"fuck\s*(?:you|this|it|off)|"
+    r"screw\s*(?:you|this)|"
+    r"piece\s*of\s*(?:shit|crap|junk)|"
+    r"dumbass|"
+    r"you'?re\s*(?:fucking\s*)?(?:useless|stupid|broken|terrible|awful)|"
+    r"this\s*(?:is\s*)?(?:fucking\s*)?(?:terrible|awful|horrible|useless|garbage)|"
+    r"completely\s*useless|"
     r"i\s*give\s*up|giving\s*up"
     r")\b",
     re.IGNORECASE,
@@ -31,11 +29,19 @@ class FrustrationFilter:
         self.inner = inner
 
     @staticmethod
-    def check_frustration(bucket: ConversationBucket) -> bool:
-        return any(
-            msg.role == "user" and FRUSTRATION_PATTERN.search(msg.content)
-            for msg in bucket.messages
+    def matched_user_message(bucket: ConversationBucket) -> str | None:
+        return next(
+            (
+                msg.content
+                for msg in bucket.messages
+                if msg.role == "user" and FRUSTRATION_PATTERN.search(msg.content)
+            ),
+            None,
         )
+
+    @classmethod
+    def check_frustration(cls, bucket: ConversationBucket) -> bool:
+        return cls.matched_user_message(bucket) is not None
 
     async def score(
         self,

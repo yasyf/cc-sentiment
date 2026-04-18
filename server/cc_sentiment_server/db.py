@@ -258,14 +258,28 @@ class StatCandidate:
         (SELECT COUNT(*)::int FROM per_user) AS total
     """
 
+    SOLO_QUERY_TEMPLATE: ClassVar[str] = """
+    SELECT ({metric})::float AS metric,
+           COUNT(*)::int AS total
+    FROM sentiment
+    WHERE contributor_id = %(contributor_id)s
+    """
+
     kind: str
     metric_sql: str
     high_text: str
     low_text: str
+    requires_peers: bool = True
+    solo_text: str | None = None
+    solo_tweet: str | None = None
 
     @property
     def query(self) -> str:
         return self.QUERY_TEMPLATE.format(metric=self.metric_sql)
+
+    @property
+    def solo_query(self) -> str:
+        return self.SOLO_QUERY_TEMPLATE.format(metric=self.metric_sql)
 
     def build(self, pr: float, total: int) -> MyStatResponse:
         high_pct = round(pr * 100)
@@ -278,6 +292,16 @@ class StatCandidate:
             text=text,
             tweet_text=f"I'm {text}.",
             total_contributors=total,
+        )
+
+    def build_solo(self, metric: float, total: int) -> MyStatResponse:
+        assert self.solo_text is not None and self.solo_tweet is not None
+        return MyStatResponse(
+            kind=self.kind,
+            percentile=0,
+            text=self.solo_text.format(metric=metric),
+            tweet_text=self.solo_tweet,
+            total_contributors=max(total, 1),
         )
 
 
@@ -324,6 +348,18 @@ class Database:
             metric_sql="COUNT(DISTINCT conversation_id)::float",
             high_text="running more Claude Code sessions than {p}% of developers",
             low_text="running more focused sessions than {p}% of developers",
+        ),
+        StatCandidate(
+            kind="welcome",
+            metric_sql="COUNT(DISTINCT conversation_id)::float",
+            high_text="",
+            low_text="",
+            requires_peers=False,
+            solo_text=(
+                "You've scored {metric:.0f} Claude Code conversations. "
+                "Check back as more developers contribute to see how you compare."
+            ),
+            solo_tweet="I just started tracking my Claude Code sentiment with cc-sentiment.",
         ),
     )
 
@@ -451,9 +487,13 @@ class Database:
     async def _score_candidate(
         self, candidate: StatCandidate, contributor_id: str
     ) -> tuple[StatCandidate, float, int] | None:
-        match await self._fetch_one(candidate.query, {"contributor_id": contributor_id}):
-            case (float(pr), int(total)) if total >= 2:
-                return (candidate, pr, total)
+        query = candidate.query if candidate.requires_peers else candidate.solo_query
+        row = await self._fetch_one(query, {"contributor_id": contributor_id})
+        match (row, candidate.requires_peers):
+            case ((float(metric), int(total)), True) if total >= 2:
+                return (candidate, metric, total)
+            case ((float(metric), int(total)), False) if total >= 1:
+                return (candidate, metric, total)
             case _:
                 return None
 
@@ -461,11 +501,16 @@ class Database:
         scored = await asyncio.gather(
             *(self._score_candidate(c, contributor_id) for c in self.STAT_CANDIDATES)
         )
-        match max(filter(None, scored), key=lambda r: abs(r[1] - 0.5), default=None):
-            case None:
+        qualified = [r for r in scored if r is not None]
+        peer_results = [r for r in qualified if r[0].requires_peers]
+        if peer_results:
+            candidate, pr, total = max(peer_results, key=lambda r: abs(r[1] - 0.5))
+            return candidate.build(pr, total)
+        match [r for r in qualified if not r[0].requires_peers]:
+            case [(candidate, metric, total), *_]:
+                return candidate.build_solo(metric, total)
+            case _:
                 return None
-            case (candidate, pr, total):
-                return candidate.build(pr, total)
 
     async def query_all(self, days: int) -> DataResponse:
         window, trends, lifetime = await asyncio.gather(

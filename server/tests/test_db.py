@@ -232,6 +232,33 @@ class TestQueryMyStat:
         assert result.percentile >= 50
 
     @pytest.mark.asyncio
-    async def test_single_contributor_returns_none(self, db: Database) -> None:
-        await db.ingest([make_record(score=4)], "onlyuser", "github")
-        assert await db.query_my_stat("onlyuser") is None
+    async def test_solo_contributor_returns_welcome(self, db: Database) -> None:
+        await db.ingest(
+            [
+                make_record(score=4, conv_id="a"),
+                make_record(score=3, conv_id="b", bucket=1),
+            ],
+            "onlyuser",
+            "github",
+        )
+
+        result = await db.query_my_stat("onlyuser")
+
+        assert result is not None
+        assert result.kind == "welcome"
+        assert "2 Claude Code conversations" in result.text
+        assert result.tweet_text.startswith("I just started tracking")
+        assert result.percentile == 0
+        assert result.total_contributors >= 1
+
+    @pytest.mark.asyncio
+    async def test_welcome_skipped_when_peer_candidate_qualifies(
+        self, db: Database
+    ) -> None:
+        await db.ingest([make_record(score=5, conv_id="a")], "alice", "github")
+        await db.ingest([make_record(score=2, conv_id="b")], "bob", "github")
+
+        result = await db.query_my_stat("alice")
+
+        assert result is not None
+        assert result.kind != "welcome"
