@@ -3,7 +3,7 @@ from __future__ import annotations
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Label
+from textual.widgets import Button, Label, Static
 
 from cc_sentiment.tui.screens.dialog import Dialog
 
@@ -14,12 +14,12 @@ class DaemonPromptScreen(Dialog[bool]):
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog-box"):
             yield Label("Run this automatically each day?", classes="title")
-            yield Label(
+            yield Static(
                 "We can schedule a background job that refreshes your numbers daily. "
                 "No need to remember to run this.",
                 classes="detail",
             )
-            yield Label(
+            yield Static(
                 "Nothing else changes. Undo any time with [b]cc-sentiment uninstall[/].",
                 classes="detail",
             )

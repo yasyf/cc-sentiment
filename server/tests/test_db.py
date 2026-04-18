@@ -182,7 +182,8 @@ class TestQueryMyStat:
             "read_before_edit", "subagents", "volume",
         }
         assert result.text
-        assert result.tweet_text.startswith("I'm ")
+        assert result.tweet_text.startswith("Turns out I'm ")
+        assert result.tweet_text.endswith("Check out yours at")
         assert 0 <= result.percentile <= 100
 
     @pytest.mark.asyncio
@@ -232,7 +233,7 @@ class TestQueryMyStat:
         assert result.percentile >= 50
 
     @pytest.mark.asyncio
-    async def test_solo_contributor_returns_welcome(self, db: Database) -> None:
+    async def test_solo_contributor_returns_self_stat(self, db: Database) -> None:
         await db.ingest(
             [
                 make_record(score=4, conv_id="a"),
@@ -245,14 +246,15 @@ class TestQueryMyStat:
         result = await db.query_my_stat("onlyuser")
 
         assert result is not None
-        assert result.kind == "welcome"
-        assert "2 Claude Code conversations" in result.text
-        assert result.tweet_text.startswith("I just started tracking")
+        assert result.kind == "angriest_hour"
+        assert result.text.startswith("angriest at Claude around ")
+        assert result.tweet_text.startswith("Turns out I'm angriest at Claude around ")
+        assert result.tweet_text.endswith("! Check out yours at")
         assert result.percentile == 0
         assert result.total_contributors >= 1
 
     @pytest.mark.asyncio
-    async def test_welcome_skipped_when_peer_candidate_qualifies(
+    async def test_self_stat_skipped_when_peer_candidate_qualifies(
         self, db: Database
     ) -> None:
         await db.ingest([make_record(score=5, conv_id="a")], "alice", "github")
@@ -261,4 +263,4 @@ class TestQueryMyStat:
         result = await db.query_my_stat("alice")
 
         assert result is not None
-        assert result.kind != "welcome"
+        assert result.kind != "angriest_hour"

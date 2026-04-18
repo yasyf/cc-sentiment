@@ -7,14 +7,9 @@ from textual.widgets import Static
 
 class StatCard(Vertical):
     DEFAULT_CSS = """
-    StatCard {
-        width: 1fr;
-        height: 4;
-        padding: 0 1;
-        border: tall $primary-background;
-    }
-    StatCard > .stat-value { text-style: bold; }
-    StatCard > .stat-label { color: $text-muted; text-style: bold; }
+    StatCard { width: 1fr; height: 2; padding: 0 1; }
+    StatCard > .stat-value { text-style: bold; color: $accent; }
+    StatCard > .stat-label { color: $text-muted; }
     """
 
     def __init__(self, *, value_id: str, label: str, **kwargs) -> None:

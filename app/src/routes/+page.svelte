@@ -119,8 +119,8 @@
 
 	const ogImage = $derived(
 		data.share
-			? `/og?${new URLSearchParams({ u: data.share.u, t: data.share.t }).toString()}`
-			: '/og'
+			? `https://sentiments.cc/og?${new URLSearchParams({ u: data.share.u, t: data.share.t }).toString()}`
+			: 'https://sentiments.cc/og'
 	);
 
 	const shareDescription = $derived(
@@ -134,8 +134,10 @@
 	<meta property="og:title" content="cc-sentiment" />
 	<meta property="og:description" content="{shareDescription ?? `${verdict.text} ${overallAvg.toFixed(1)}/5 across ${data.total_sessions.toLocaleString()} sessions. ${trendDescription}.`}" />
 	<meta property="og:image" content="{ogImage}" />
+	<meta name="twitter:card" content="summary_large_image" />
 	<meta name="twitter:title" content="cc-sentiment" />
 	<meta name="twitter:description" content="{shareDescription ?? `${verdict.text} ${overallAvg.toFixed(1)}/5 across ${data.total_sessions.toLocaleString()} sessions. ${trendDescription}.`}" />
+	<meta name="twitter:image" content="{ogImage}" />
 </svelte:head>
 
 <div class="min-h-screen bg-bg">

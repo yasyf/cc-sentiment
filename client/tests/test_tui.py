@@ -420,7 +420,9 @@ async def test_cost_review_renders_bucket_count_and_cost():
     harness = CostHarness(500, "claude-haiku-4-5")
     async with harness.run_test() as pilot:
         await pilot.pause()
-        text = " ".join(str(lbl.content) for lbl in pilot.app.screen.query(Label))
+        text = " ".join(
+            str(w.render()) for w in pilot.app.screen.query("Label, Static")
+        )
         assert "500" in text
         assert "claude-haiku-4-5" in text
 
@@ -1124,7 +1126,9 @@ async def test_stat_share_renders_stat_text():
     harness = StatShareHarness(GITHUB_CONFIG, STAT)
     async with harness.run_test() as pilot:
         await pilot.pause(delay=0.3)
-        text = " ".join(str(lbl.content) for lbl in pilot.app.screen.query(Label))
+        text = " ".join(
+            str(w.render()) for w in pilot.app.screen.query("Label, Static")
+        )
         assert "nicer to Claude than 72% of developers" in text
 
 

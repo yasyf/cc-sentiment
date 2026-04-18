@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import random
-import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -14,6 +13,7 @@ from textual.app import App
 from textual.widget import Widget
 from textual.widgets import Static
 
+from cc_sentiment.engines.filter import FRUSTRATION_PATTERN
 from cc_sentiment.nlp import NLP
 
 from cc_sentiment.tui.widgets import ScoreBar, SpinnerLine
@@ -24,24 +24,17 @@ class EngineBootView:
     MAX_SNIPPET_CHARS: ClassVar[int] = 60
     SNIPPET_RATE_LIMIT: ClassVar[float] = 2.5
     SNIPPET_WEIGHTS: ClassVar[dict[int, float]] = {1: 0.7, 2: 0.5, 3: 0.02, 4: 0.5, 5: 0.7}
-    NEGATIVE_WORDS: ClassVar[frozenset[str]] = frozenset({
-        "broken", "wrong", "fails", "fail", "failed", "failing", "error", "errors",
-        "stuck", "confused", "nope", "useless", "terrible", "awful", "frustrating",
-        "hate", "hated", "hates", "sucks", "annoying",
+    NEGATIVE_LEMMAS: ClassVar[frozenset[str]] = frozenset({
+        "break", "wrong", "fail", "error", "stuck", "confuse", "nope", "useless",
+        "terrible", "awful", "frustrate", "hate", "suck", "annoy", "broken",
+        "confused", "frustrating", "annoying",
     })
-    POSITIVE_WORDS: ClassVar[frozenset[str]] = frozenset({
+    POSITIVE_LEMMAS: ClassVar[frozenset[str]] = frozenset({
         "perfect", "great", "nice", "awesome", "exactly", "beautiful", "love",
-        "loved", "loves", "finally", "amazing", "incredible", "brilliant",
-        "excellent", "wonderful", "fantastic",
+        "finally", "amazing", "incredible", "brilliant", "excellent", "wonderful",
+        "fantastic", "thank",
     })
     SENTIMENT_POS: ClassVar[frozenset[str]] = frozenset({"ADJ", "ADV", "VERB", "INTJ"})
-    CODE_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
-        r"(\b[\w.-]+\.(py|ts|tsx|js|jsx|md|json|yml|yaml|toml|rs|go|sh|sql)\b"
-        r"|\b[a-z][a-z0-9]*_[a-z0-9_]+\b"
-        r"|\b[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*\b"
-        r"|\b\w+\(\)"
-        r"|(?:/|\./)[\w./-]+)"
-    )
     WITTY_COMMENTS: ClassVar[dict[int, tuple[str, ...]]] = {
         1: ("oof", "yikes", "time to take a walk", "we've all been there", "send help", "cursed"),
         2: ("mood", "same energy", "try again later", "nope nope nope", "sigh", "bargaining stage"),
@@ -92,7 +85,7 @@ class EngineBootView:
             self.status.display = False
         comment = random.choice(self.WITTY_COMMENTS[score])
         truncated = snippet if len(snippet) <= self.MAX_SNIPPET_CHARS else snippet[:self.MAX_SNIPPET_CHARS - 1] + "…"
-        highlighted = await anyio.to_thread.run_sync(self.highlight_snippet, truncated)
+        highlighted = await anyio.to_thread.run_sync(self.highlight_snippet, truncated, score)
         self.lines.append(Text.assemble(
             f"{ScoreBar.ICONS[score]} {score}  \"",
             highlighted,
@@ -102,17 +95,26 @@ class EngineBootView:
         self.log.update(Text("\n").join(self.lines))
 
     @classmethod
-    def highlight_snippet(cls, snippet: str) -> Text:
+    def highlight_snippet(cls, snippet: str, score: int) -> Text:
         text = Text(snippet)
         claimed = [False] * len(snippet)
+        if score <= 2:
+            for m in FRUSTRATION_PATTERN.finditer(snippet):
+                start, end = m.start(), m.end()
+                text.stylize("red", start, end)
+                for i in range(start, end):
+                    claimed[i] = True
         nlp = NLP.get()
         if nlp is not None:
             for tok in nlp(snippet):
                 if tok.pos_ not in cls.SENTIMENT_POS:
                     continue
-                lower = tok.text.lower()
-                color = "red" if lower in cls.NEGATIVE_WORDS else "green" if lower in cls.POSITIVE_WORDS else None
-                if color is None:
+                lemma = tok.lemma_.lower()
+                if score >= 4 and lemma in cls.POSITIVE_LEMMAS:
+                    color = "green"
+                elif score <= 2 and lemma in cls.NEGATIVE_LEMMAS:
+                    color = "red"
+                else:
                     continue
                 start, end = tok.idx, tok.idx + len(tok.text)
                 if any(claimed[start:end]):
@@ -120,11 +122,4 @@ class EngineBootView:
                 text.stylize(color, start, end)
                 for i in range(start, end):
                     claimed[i] = True
-        for m in cls.CODE_PATTERN.finditer(snippet):
-            start, end = m.start(), m.end()
-            if any(claimed[start:end]):
-                continue
-            text.stylize("cyan", start, end)
-            for i in range(start, end):
-                claimed[i] = True
         return text

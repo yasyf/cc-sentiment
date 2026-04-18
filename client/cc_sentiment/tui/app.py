@@ -98,9 +98,12 @@ class CCSentimentApp(App[None]):
     #header-section { height: auto; }
     #title-row { height: 3; }
     #title-text { width: 1fr; }
-    #score-digits { width: auto; min-width: 20; }
+    #score-digits { width: auto; min-width: 20; color: $accent; }
     #score-label { text-align: right; height: 1; color: $text-muted; }
     #score-digits.inactive, #score-label.inactive { display: none; }
+    .section-header { height: 1; color: $text-muted; text-style: bold; }
+    ProgressBar Bar > .bar--bar { color: $accent; }
+    ProgressBar Bar > .bar--complete { color: $accent; }
     #progress-label { height: 1; }
     #scan-progress { width: 1fr; }
     #upload-label { height: 1; }
@@ -109,12 +112,13 @@ class CCSentimentApp(App[None]):
     #hourly-column { width: 1fr; height: 100%; margin: 0 2 0 0; }
     #hourly-chart-label { height: 1; color: $text-muted; }
     #hourly-chart { height: 7; }
-    #distribution { width: 1fr; height: 100%; align: left middle; }
+    #distribution { width: 1fr; height: 100%; }
+    #distribution-label { height: 1; color: $text-muted; }
     #engine-boot-status { height: 1; }
     #engine-boot-log { height: auto; max-height: 8; color: $text-muted; }
     #stats-insights { height: 1; color: $text-muted; margin: 0 0 1 0; }
     #stats-insights.inactive { display: none; }
-    #stats-row { height: 4; }
+    #stats-row { height: 2; }
     #status-line { height: auto; margin: 1 0 0 0; }
     """
 
@@ -167,31 +171,37 @@ class CCSentimentApp(App[None]):
                 yield Static("[dim]average sentiment[/]", id="score-label", classes="inactive")
 
             with Section(id="progress"):
+                yield Static("SCORING", classes="section-header")
                 yield Label("Preparing...", id="progress-label")
                 yield ProgressBar(id="scan-progress", total=100, show_eta=False, show_percentage=True)
 
             with Section(id="upload", classes="inactive"):
+                yield Static("UPLOADING", classes="section-header")
                 yield Label("", id="upload-label")
                 yield ProgressBar(id="upload-progress", total=100, show_eta=False, show_percentage=True)
 
             with Section(id="chart", classes="inactive"):
+                yield Static("SENTIMENT", classes="section-header")
                 with Horizontal(id="charts-row"):
                     with Vertical(id="hourly-column"):
-                        yield Static("[dim]Sentiment through the day[/]", id="hourly-chart-label")
+                        yield Static("[dim]Through the day[/]", id="hourly-chart-label")
                         yield HourlyChart(id="hourly-chart")
                     with Vertical(id="distribution"):
-                        for s in range(1, 6):
+                        yield Static("[dim]Distribution[/]", id="distribution-label")
+                        for s in range(5, 0, -1):
                             bar = ScoreBar(s)
                             bar.id = f"bar-{s}"
                             self.view.register_score_bar(s, bar)
                             yield bar
 
             with Section(id="engine-boot", classes="inactive"):
+                yield Static("ENGINE", classes="section-header")
                 yield SpinnerLine(id="engine-boot-status")
                 yield Static("", id="engine-boot-log")
                 yield LiveFunBox(id="live-fun")
 
             with Section(id="stats", classes="inactive"):
+                yield Static("STATS", classes="section-header")
                 yield Static("", id="stats-insights", classes="inactive")
                 with Horizontal(id="stats-row"):
                     yield StatCard(value_id="stat-buckets", label="moments")
@@ -256,6 +266,8 @@ class CCSentimentApp(App[None]):
         self._set_debug(prewarm_model="running")
         try:
             from huggingface_hub import snapshot_download
+            from huggingface_hub.utils import disable_progress_bars
+            disable_progress_bars()
             await anyio.to_thread.run_sync(snapshot_download, DEFAULT_MODEL)
         except (OSError, httpx.HTTPError) as exc:
             self._set_debug(prewarm_model=f"failed: {exc.__class__.__name__}")

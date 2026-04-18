@@ -197,7 +197,12 @@ class SetupScreen(Dialog[bool]):
                     "Transcripts go to the Claude API, never to our dashboard."
                 )
         self.query_one("#done-payload", Static).update(self.render_sample_payload())
-        files = len(TranscriptDiscovery.find_transcripts())
+        self._finalize_done_screen()
+
+    @work()
+    async def _finalize_done_screen(self) -> None:
+        transcripts = await anyio.to_thread.run_sync(TranscriptDiscovery.find_transcripts)
+        files = len(transcripts)
         rate = Hardware.estimate_buckets_per_sec(EngineFactory.default())
         self.query_one("#done-eta", Static).update(
             f"[dim]Found [b]{files:,}[/] transcripts. "

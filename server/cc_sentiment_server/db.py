@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import ClassVar
@@ -18,7 +19,7 @@ from cc_sentiment_server.models import (
     TrendComparison,
 )
 
-__all__ = ["Database", "WindowStats", "TrendsStats", "LifetimeStats", "StatCandidate"]
+__all__ = ["Database", "WindowStats", "TrendsStats", "LifetimeStats", "StatCandidate", "PeerStat", "AngriestHourStat"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,7 +266,27 @@ WHERE time > NOW() - make_interval(days => %(days)s)
 
 
 @dataclass(frozen=True, slots=True)
+class ScoredStat:
+    response: MyStatResponse
+    priority: float
+
+
+@dataclass(frozen=True, slots=True)
 class StatCandidate:
+    kind: str
+
+    @property
+    def query(self) -> str:
+        raise NotImplementedError
+
+    async def score(
+        self, fetch_one: Callable[[str, dict], Awaitable[tuple]], contributor_id: str
+    ) -> ScoredStat | None:
+        raise NotImplementedError
+
+
+@dataclass(frozen=True, slots=True)
+class PeerStat(StatCandidate):
     QUERY_TEMPLATE: ClassVar[str] = """
     WITH per_user AS (
         SELECT contributor_id, ({metric}) AS val
@@ -282,109 +303,193 @@ class StatCandidate:
         (SELECT COUNT(*)::int FROM per_user) AS total
     """
 
-    SOLO_QUERY_TEMPLATE: ClassVar[str] = """
-    SELECT ({metric})::float AS metric,
-           COUNT(*)::int AS total
-    FROM sentiment
-    WHERE contributor_id = %(contributor_id)s
-    """
-
-    kind: str
     metric_sql: str
     high_text: str
     low_text: str
-    requires_peers: bool = True
-    solo_text: str | None = None
-    solo_tweet: str | None = None
+    high_tweet: str
+    low_tweet: str
 
     @property
     def query(self) -> str:
         return self.QUERY_TEMPLATE.format(metric=self.metric_sql)
 
+    async def score(
+        self, fetch_one: Callable[[str, dict], Awaitable[tuple]], contributor_id: str
+    ) -> ScoredStat | None:
+        row = await fetch_one(self.query, {"contributor_id": contributor_id})
+        match row:
+            case (float(pr), int(total)) if total >= 2:
+                high_pct = round(pr * 100)
+                percentile = high_pct if high_pct >= 50 else 100 - high_pct
+                high = high_pct >= 50
+                text = (self.high_text if high else self.low_text).format(p=percentile)
+                tweet = (self.high_tweet if high else self.low_tweet).format(p=percentile)
+                return ScoredStat(
+                    MyStatResponse(
+                        kind=self.kind,
+                        percentile=percentile,
+                        text=text,
+                        tweet_text=tweet,
+                        total_contributors=total,
+                    ),
+                    priority=abs(pr - 0.5),
+                )
+            case _:
+                return None
+
+
+@dataclass(frozen=True, slots=True)
+class AngriestHourStat(StatCandidate):
+    QUERY: ClassVar[str] = """
+    SELECT EXTRACT(HOUR FROM time AT TIME ZONE 'America/Los_Angeles')::int AS hour,
+           AVG(sentiment_score)::float AS avg_score,
+           COUNT(*)::int AS count
+    FROM sentiment
+    WHERE contributor_id = %(contributor_id)s
+    GROUP BY hour
+    ORDER BY avg_score ASC, count DESC
+    LIMIT 1
+    """
+    FALLBACK_PRIORITY: ClassVar[float] = -1.0
+    TEXT: ClassVar[str] = "angriest at Claude around {hour}"
+    TWEET: ClassVar[str] = (
+        "Turns out I'm angriest at Claude around {hour}! Check out yours at"
+    )
+
     @property
-    def solo_query(self) -> str:
-        return self.SOLO_QUERY_TEMPLATE.format(metric=self.metric_sql)
+    def query(self) -> str:
+        return self.QUERY
 
-    def build(self, pr: float, total: int) -> MyStatResponse:
-        high_pct = round(pr * 100)
-        percentile = high_pct if high_pct >= 50 else 100 - high_pct
-        template = self.high_text if high_pct >= 50 else self.low_text
-        text = template.format(p=percentile)
-        return MyStatResponse(
-            kind=self.kind,
-            percentile=percentile,
-            text=text,
-            tweet_text=f"I'm {text}.",
-            total_contributors=total,
-        )
+    @staticmethod
+    def format_hour(hour: int) -> str:
+        match hour:
+            case 0: return "midnight"
+            case 12: return "noon"
+            case h if h < 12: return f"{h}am"
+            case h: return f"{h - 12}pm"
 
-    def build_solo(self, metric: float, total: int) -> MyStatResponse:
-        assert self.solo_text is not None and self.solo_tweet is not None
-        return MyStatResponse(
-            kind=self.kind,
-            percentile=0,
-            text=self.solo_text.format(metric=metric),
-            tweet_text=self.solo_tweet,
-            total_contributors=max(total, 1),
-        )
+    async def score(
+        self, fetch_one: Callable[[str, dict], Awaitable[tuple]], contributor_id: str
+    ) -> ScoredStat | None:
+        row = await fetch_one(self.query, {"contributor_id": contributor_id})
+        match row:
+            case (int(hour), float(_), int(count)) if count >= 1:
+                formatted = self.format_hour(hour)
+                return ScoredStat(
+                    MyStatResponse(
+                        kind=self.kind,
+                        percentile=0,
+                        text=self.TEXT.format(hour=formatted),
+                        tweet_text=self.TWEET.format(hour=formatted),
+                        total_contributors=max(count, 1),
+                    ),
+                    priority=self.FALLBACK_PRIORITY,
+                )
+            case _:
+                return None
 
 
 class Database:
     STAT_CANDIDATES: ClassVar[tuple[StatCandidate, ...]] = (
-        StatCandidate(
+        PeerStat(
             kind="kindness",
             metric_sql="AVG(sentiment_score::float)",
             high_text="nicer to Claude than {p}% of developers",
             low_text="tougher on Claude than {p}% of developers",
+            high_tweet=(
+                "Turns out I'm nicer to Claude than {p}% of developers! "
+                "Check out yours at"
+            ),
+            low_tweet=(
+                "Turns out I'm tougher on Claude than {p}% of developers! "
+                "Check out yours at"
+            ),
         ),
-        StatCandidate(
+        PeerStat(
             kind="thinking",
             metric_sql="AVG(thinking_chars::float)",
-            high_text="getting Claude to think harder than {p}% of developers",
-            low_text="getting straight answers from Claude more than {p}% of developers",
+            high_text="making Claude overthink things more than {p}% of developers",
+            low_text="getting quick answers out of Claude more than {p}% of developers",
+            high_tweet=(
+                "Turns out I'm making Claude overthink things more than "
+                "{p}% of developers! Check out yours at"
+            ),
+            low_tweet=(
+                "Turns out I'm getting quick answers out of Claude more than "
+                "{p}% of developers! Check out yours at"
+            ),
         ),
-        StatCandidate(
+        PeerStat(
             kind="tool_calls",
             metric_sql="AVG(tool_calls_per_turn)",
-            high_text="keeping Claude busier per turn than {p}% of developers",
-            low_text="running leaner turns than {p}% of developers",
+            high_text="working Claude harder per turn than {p}% of developers",
+            low_text="going easier on Claude per turn than {p}% of developers",
+            high_tweet=(
+                "Turns out I'm working Claude harder per turn than "
+                "{p}% of developers! Check out yours at"
+            ),
+            low_tweet=(
+                "Turns out I'm going easier on Claude per turn than "
+                "{p}% of developers! Check out yours at"
+            ),
         ),
-        StatCandidate(
+        PeerStat(
             kind="turn_length",
             metric_sql="AVG(turn_count::float)",
-            high_text="running longer sessions than {p}% of developers",
-            low_text="running snappier sessions than {p}% of developers",
+            high_text="having marathon chats with Claude more than {p}% of developers",
+            low_text="wrapping up with Claude faster than {p}% of developers",
+            high_tweet=(
+                "Turns out I'm having marathon chats with Claude more than "
+                "{p}% of developers! Check out yours at"
+            ),
+            low_tweet=(
+                "Turns out I'm wrapping up with Claude faster than "
+                "{p}% of developers! Check out yours at"
+            ),
         ),
-        StatCandidate(
+        PeerStat(
             kind="read_before_edit",
             metric_sql="AVG(read_edit_ratio)",
-            high_text="reading before editing more than {p}% of developers",
-            low_text="editing bolder than {p}% of developers",
+            high_text="making Claude look before it leaps more than {p}% of developers",
+            low_text="letting Claude leap before it looks more than {p}% of developers",
+            high_tweet=(
+                "Turns out I'm making Claude look before it leaps more than "
+                "{p}% of developers! Check out yours at"
+            ),
+            low_tweet=(
+                "Turns out I'm letting Claude leap before it looks more than "
+                "{p}% of developers! Check out yours at"
+            ),
         ),
-        StatCandidate(
+        PeerStat(
             kind="subagents",
             metric_sql="AVG(subagent_count::float)",
-            high_text="delegating to subagents more than {p}% of developers",
-            low_text="keeping it single-threaded more than {p}% of developers",
+            high_text="running Claude agents in parallel more than {p}% of developers",
+            low_text="keeping Claude single-threaded more than {p}% of developers",
+            high_tweet=(
+                "Turns out I'm running Claude agents in parallel more than "
+                "{p}% of developers! Check out yours at"
+            ),
+            low_tweet=(
+                "Turns out I'm keeping Claude single-threaded more than "
+                "{p}% of developers! Check out yours at"
+            ),
         ),
-        StatCandidate(
+        PeerStat(
             kind="volume",
             metric_sql="COUNT(DISTINCT conversation_id)::float",
-            high_text="running more Claude Code sessions than {p}% of developers",
-            low_text="running more focused sessions than {p}% of developers",
-        ),
-        StatCandidate(
-            kind="welcome",
-            metric_sql="COUNT(DISTINCT conversation_id)::float",
-            high_text="",
-            low_text="",
-            requires_peers=False,
-            solo_text=(
-                "You've scored {metric:.0f} Claude Code conversations. "
-                "Check back as more developers contribute to see how you compare."
+            high_text="wearing Claude out more than {p}% of developers",
+            low_text="rationing Claude more than {p}% of developers",
+            high_tweet=(
+                "Turns out I'm wearing Claude out more than "
+                "{p}% of developers! Check out yours at"
             ),
-            solo_tweet="I just started tracking my Claude Code sentiment with cc-sentiment.",
+            low_tweet=(
+                "Turns out I'm rationing Claude more than "
+                "{p}% of developers! Check out yours at"
+            ),
         ),
+        AngriestHourStat(kind="angriest_hour"),
     )
 
     def __init__(self, dsn: str) -> None:
@@ -523,33 +628,15 @@ class Database:
             last_updated=last_updated_row[0] or datetime.now(timezone.utc),
         )
 
-    async def _score_candidate(
-        self, candidate: StatCandidate, contributor_id: str
-    ) -> tuple[StatCandidate, float, int] | None:
-        query = candidate.query if candidate.requires_peers else candidate.solo_query
-        row = await self._fetch_one(query, {"contributor_id": contributor_id})
-        match (row, candidate.requires_peers):
-            case ((float(metric), int(total)), True) if total >= 2:
-                return (candidate, metric, total)
-            case ((float(metric), int(total)), False) if total >= 1:
-                return (candidate, metric, total)
-            case _:
-                return None
-
     async def query_my_stat(self, contributor_id: str) -> MyStatResponse | None:
         scored = await asyncio.gather(
-            *(self._score_candidate(c, contributor_id) for c in self.STAT_CANDIDATES)
+            *(c.score(self._fetch_one, contributor_id) for c in self.STAT_CANDIDATES)
         )
-        qualified = [r for r in scored if r is not None]
-        peer_results = [r for r in qualified if r[0].requires_peers]
-        if peer_results:
-            candidate, pr, total = max(peer_results, key=lambda r: abs(r[1] - 0.5))
-            return candidate.build(pr, total)
-        match [r for r in qualified if not r[0].requires_peers]:
-            case [(candidate, metric, total), *_]:
-                return candidate.build_solo(metric, total)
-            case _:
+        match [s for s in scored if s is not None]:
+            case []:
                 return None
+            case qualified:
+                return max(qualified, key=lambda s: s.priority).response
 
     async def query_all(self, days: int) -> DataResponse:
         window, trends, lifetime = await asyncio.gather(

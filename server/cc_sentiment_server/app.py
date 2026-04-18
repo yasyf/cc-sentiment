@@ -50,6 +50,10 @@ class RevalidateSpawner(Protocol):
     async def __call__(self, tag: str) -> None: ...
 
 
+class OgWarmSpawner(Protocol):
+    async def __call__(self, u: str, t: str) -> None: ...
+
+
 @dataclass
 class DictCache:
     data: dict[str, object] = field(default_factory=dict)
@@ -135,6 +139,7 @@ def create_app(
     spawn: RefreshSpawner,
     spawn_my_stat: MyStatSpawner,
     revalidate: RevalidateSpawner,
+    warm_og: OgWarmSpawner,
     allowed_origins: list[str],
     data_api_token: str = "",
 ) -> FastAPI:
@@ -226,6 +231,8 @@ def create_app(
         payload = await my_stat_cache.get_or_compute(contributor_id)
         if payload is None:
             return JSONResponse({"detail": "Not enough data yet"}, status_code=404)
+        if payload.get("text"):
+            await warm_og(contributor_id, payload["text"])
         return JSONResponse(
             payload,
             headers={"Cache-Control": "public, max-age=86400"},
@@ -292,8 +299,11 @@ class API:
             await refresh_my_stat.spawn.aio(contributor_id)
         async def revalidate(tag: str) -> None:
             await revalidate_dashboard.spawn.aio(tag)
+        async def warm_og(u: str, t: str) -> None:
+            await warm_og_image.spawn.aio(u, t)
         return create_app(
             self.db, self.verifier, self.data_cache, spawn, spawn_my_stat, revalidate,
+            warm_og,
             os.environ["ALLOWED_ORIGINS"].split(","),
             os.environ["DATA_API_TOKEN"],
         )
@@ -334,6 +344,16 @@ async def refresh_my_stat(contributor_ids: list[str]) -> list[None]:
     finally:
         await db.close()
     return [None] * len(contributor_ids)
+
+
+@app.function(image=image, enable_memory_snapshot=True)
+async def warm_og_image(u: str, t: str) -> None:
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(
+            "https://sentiments.cc/og",
+            params={"u": u, "t": t},
+        )
+    print(f"warm_og u={u!r} t={t!r} status={response.status_code}")
 
 
 @app.function(image=image, secrets=[modal.Secret.from_name("cc-sentiment-vercel")], enable_memory_snapshot=True)

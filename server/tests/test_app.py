@@ -55,6 +55,8 @@ async def client(db: Database, verifier: AsyncMock) -> httpx.AsyncClient:
         pass
     async def noop_revalidate(tag: str) -> None:
         pass
+    async def noop_warm_og(u: str, t: str) -> None:
+        pass
     app = create_app(
         db=db,
         verifier=verifier,
@@ -62,6 +64,7 @@ async def client(db: Database, verifier: AsyncMock) -> httpx.AsyncClient:
         spawn=noop_spawn,
         spawn_my_stat=noop_spawn_my_stat,
         revalidate=noop_revalidate,
+        warm_og=noop_warm_og,
         allowed_origins=["http://localhost:3000"],
         data_api_token="test-token",
     )

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
+import sys
 from typing import TYPE_CHECKING, ClassVar
 
 import anyio.to_thread
@@ -9,7 +11,7 @@ if TYPE_CHECKING:
     import spacy.language
 
 MODEL_NAME = "en_core_web_sm"
-DISABLED_PIPES = ["parser", "lemmatizer"]
+DISABLED_PIPES = ["parser"]
 
 
 class NLP:
@@ -34,10 +36,12 @@ class NLP:
     @staticmethod
     def load_or_download() -> spacy.language.Language:
         import spacy
-        from spacy.cli.download import download as spacy_download
 
         try:
             return spacy.load(MODEL_NAME, disable=DISABLED_PIPES)
         except OSError:
-            spacy_download(MODEL_NAME)
+            subprocess.run(
+                [sys.executable, "-m", "spacy", "download", MODEL_NAME],
+                check=True, capture_output=True,
+            )
             return spacy.load(MODEL_NAME, disable=DISABLED_PIPES)

@@ -13,7 +13,7 @@ import httpx
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Label
+from textual.widgets import Button, Label, Static
 
 from cc_sentiment.models import GistConfig, GPGConfig, MyStat, SSHConfig
 from cc_sentiment.upload import DASHBOARD_URL, Uploader
@@ -84,7 +84,8 @@ class CardPoller:
 
 class StatShareScreen(Dialog[None]):
     DEFAULT_CSS = Dialog.DEFAULT_CSS + """
-    StatShareScreen > #dialog-box .stat { color: $accent; text-style: bold; margin: 0 0 1 0; }
+    StatShareScreen > #dialog-box .stat { width: 100%; color: $accent; text-style: bold; margin: 0 0 1 0; }
+    StatShareScreen > #dialog-box .detail { width: 100%; }
     """
 
     BINDINGS = [("escape", "skip", "Skip")]
@@ -118,8 +119,8 @@ class StatShareScreen(Dialog[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog-box"):
             yield Label("Your cc-sentiment snapshot", classes="title")
-            yield Label(f"You are {self.stat.text}.", classes="stat")
-            yield Label(
+            yield Static(f"You are {self.stat.text}.", classes="stat")
+            yield Static(
                 "Share it? The card on Twitter will show your GitHub avatar and this stat.",
                 classes="detail",
             )
