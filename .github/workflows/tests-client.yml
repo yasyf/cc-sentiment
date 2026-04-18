@@ -16,7 +16,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  tests:
+  tests-rust:
+    name: Tests (rust backend)
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v6.0.2
@@ -43,13 +44,7 @@ jobs:
 
       - name: Run tests (rust backend)
         working-directory: client
-        run: uv run pytest -q
-
-      - name: Run tests (python backend)
-        working-directory: client
-        env:
-          CC_SENTIMENT_DISABLE_RUST: "1"
-        run: uv run pytest -q
+        run: uv run pytest -n auto -q
 
       - name: Build wheel
         working-directory: client
@@ -62,3 +57,25 @@ jobs:
           uv venv --seed .wheel-smoke
           uv pip install --python .wheel-smoke/bin/python dist/*.whl
           .wheel-smoke/bin/cc-sentiment --help
+
+  tests-python:
+    name: Tests (python fallback backend)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.13"
+          cache-dependency-glob: client/uv.lock
+
+      - name: Sync (no Rust toolchain — setuptools-rust skips when cargo absent)
+        working-directory: client
+        run: uv sync --extra mlx
+
+      - name: Run tests (python fallback backend)
+        working-directory: client
+        env:
+          CC_SENTIMENT_DISABLE_RUST: "1"
+        run: uv run pytest -n auto -q
