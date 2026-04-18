@@ -9,12 +9,14 @@ T = TypeVar("T")
 
 class Dialog(ModalScreen[T]):
     DEFAULT_CSS = """
-    Dialog { align: center middle; }
+    Dialog { align: center middle; background: transparent; }
     Dialog > #dialog-box {
-        width: 76;
+        width: auto;
+        max-width: 60;
+        min-width: 40;
         height: auto;
         border: heavy $accent;
-        padding: 2 3;
+        padding: 1 2;
         background: $panel;
     }
     Dialog > #dialog-box Button { margin: 1 1 0 0; }

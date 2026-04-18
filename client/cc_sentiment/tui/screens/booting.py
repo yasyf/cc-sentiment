@@ -14,7 +14,6 @@ from cc_sentiment.tui.widgets import SpinnerLine
 
 class BootingScreen(Dialog[None]):
     DEFAULT_CSS = Dialog.DEFAULT_CSS + """
-    BootingScreen > #dialog-box { width: 60; padding: 1 2; }
     BootingScreen > #dialog-box #boot-title { text-align: center; text-style: bold; color: $text; }
     BootingScreen > #dialog-box #boot-version { text-align: center; color: $text-muted; margin: 0 0 1 0; }
     BootingScreen > #dialog-box #boot-spinner-row { height: 1; align-horizontal: center; margin: 1 0 0 0; }

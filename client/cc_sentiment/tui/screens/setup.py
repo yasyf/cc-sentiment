@@ -52,7 +52,7 @@ class SetupScreen(Dialog[bool]):
     ROUGH_BUCKETS_PER_FILE: ClassVar[int] = 6
 
     DEFAULT_CSS = Dialog.DEFAULT_CSS + """
-    SetupScreen > #dialog-box { width: 80; max-height: 90%; overflow-y: auto; }
+    SetupScreen > #dialog-box { width: auto; max-width: 70; max-height: 70%; overflow-y: auto; }
     SetupScreen > #dialog-box Label { margin: 1 0 0 0; }
     SetupScreen > #dialog-box .step-title { text-style: bold; color: $text; margin: 0 0 1 0; }
     SetupScreen > #dialog-box Input { margin: 0 0 1 0; }
