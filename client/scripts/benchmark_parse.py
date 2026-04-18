@@ -134,13 +134,6 @@ def main() -> None:
         Timing("scan_bucket_keys", wall, total_bytes, len(scan_keys)),
         read_p.wall,
     )
-    t0 = time.perf_counter()
-    scan_parsed = TranscriptParser.scan_parse_files(CLAUDE_PROJECTS_DIR)
-    wall = time.perf_counter() - t0
-    print_row(
-        Timing("scan_parse_files", wall, total_bytes, len(scan_parsed)),
-        read_p.wall,
-    )
 
     print("\n=== Per-file parse_file distribution (serial, ms) ===")
     per_file: list[float] = []

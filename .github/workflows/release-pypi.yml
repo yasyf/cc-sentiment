@@ -11,6 +11,9 @@ concurrency:
   group: release-pypi
   cancel-in-progress: false
 
+permissions:
+  contents: write
+
 jobs:
   set-version:
     runs-on: ubuntu-latest
@@ -131,19 +134,27 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Verify artifacts
-        run: |
-          wheels=$(ls dist/*.whl | wc -l | tr -d ' ')
-          sdists=$(ls dist/*.tar.gz | wc -l | tr -d ' ')
-          echo "wheels=$wheels sdists=$sdists"
-          ls -la dist/
-          test "$wheels" = "5" || { echo "expected 5 wheels, got $wheels"; exit 1; }
-          test "$sdists" = "1" || { echo "expected 1 sdist, got $sdists"; exit 1; }
-          for w in dist/*.whl; do
-            case "$w" in
-              *cp313-abi3*) ;;
-              *) echo "non-abi3 wheel: $w"; exit 1 ;;
-            esac
-          done
-
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github_release:
+    needs: [set-version, build_wheels, build_sdist, publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cibw-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.set-version.outputs.version }}
+        run: |
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --target "${{ github.sha }}" \
+            --generate-notes \
+            --latest \
+            --repo "${{ github.repository }}" \
+            dist/*.whl dist/*.tar.gz

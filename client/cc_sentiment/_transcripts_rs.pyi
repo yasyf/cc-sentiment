@@ -10,11 +10,3 @@ def scan_bucket_keys(
     limit: int | None = None,
     known_mtimes: dict[str, float] | None = None,
 ) -> list[tuple[str, float, list[tuple[str, int]]]]: ...
-def scan_parse_files(
-    dir: str,
-    *,
-    name_contains: str | None = None,
-    limit: int | None = None,
-    known_mtimes: dict[str, float] | None = None,
-) -> list[tuple[str, float, list[dict[str, Any]]]]: ...
-def is_release_build() -> bool: ...

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -15,7 +14,7 @@ from cc_sentiment.models import (
     SentimentScore,
     SessionId,
 )
-from cc_sentiment.pipeline import Pipeline
+from cc_sentiment.pipeline import Pipeline, ScannedTranscript, ScanResult
 from cc_sentiment.repo import Repository
 from tests.helpers import make_record
 
@@ -31,29 +30,46 @@ def repo(tmp_path: Path) -> Iterator[Repository]:
         r.close()
 
 
-class TestDiscoverNewTranscripts:
+class TestScan:
     def test_finds_new_files(self, repo: Repository) -> None:
         fake_path = Path("/fake/transcript.jsonl")
-        with patch("cc_sentiment.transcripts.TranscriptDiscovery.find_transcripts", return_value=[fake_path]), \
-             patch("cc_sentiment.transcripts.TranscriptDiscovery.transcript_mtime", return_value=100.0):
-            result = Pipeline.discover_new_transcripts(repo)
-        assert len(result) == 1
-        assert result[0] == (fake_path, 100.0)
+        key = BucketKey(session_id=SessionId("s1"), bucket_index=BucketIndex(0))
+        with patch(
+            "cc_sentiment.pipeline.TranscriptParser.scan_bucket_keys",
+            return_value=[(str(fake_path), 100.0, [key])],
+        ):
+            result = anyio.run(lambda: Pipeline.scan(repo))
+        assert len(result.transcripts) == 1
+        assert result.transcripts[0].path == fake_path
+        assert result.transcripts[0].mtime == 100.0
+        assert result.transcripts[0].new_bucket_keys == (key,)
+        assert result.total_new_buckets == 1
 
-    def test_skips_unchanged_files(self, repo: Repository) -> None:
-        repo.save_records("/fake/transcript.jsonl", 100.0, [])
-        with patch("cc_sentiment.transcripts.TranscriptDiscovery.find_transcripts", return_value=[Path("/fake/transcript.jsonl")]), \
-             patch("cc_sentiment.transcripts.TranscriptDiscovery.transcript_mtime", return_value=100.0):
-            result = Pipeline.discover_new_transcripts(repo)
-        assert result == []
+    def test_skips_fully_scored_files(self, repo: Repository) -> None:
+        key = BucketKey(session_id=SessionId("s1"), bucket_index=BucketIndex(0))
+        repo.save_records("/fake/transcript.jsonl", 100.0, [
+            make_record(session_id="s1", bucket_index=0)
+        ])
+        with patch(
+            "cc_sentiment.pipeline.TranscriptParser.scan_bucket_keys",
+            return_value=[("/fake/transcript.jsonl", 100.0, [key])],
+        ):
+            result = anyio.run(lambda: Pipeline.scan(repo))
+        assert result.transcripts == ()
 
-    def test_reprocesses_updated_files(self, repo: Repository) -> None:
-        repo.save_records("/fake/transcript.jsonl", 100.0, [])
-        with patch("cc_sentiment.transcripts.TranscriptDiscovery.find_transcripts", return_value=[Path("/fake/transcript.jsonl")]), \
-             patch("cc_sentiment.transcripts.TranscriptDiscovery.transcript_mtime", return_value=200.0):
-            result = Pipeline.discover_new_transcripts(repo)
-        assert len(result) == 1
-        assert result[0][1] == 200.0
+    def test_includes_partially_new_files(self, repo: Repository) -> None:
+        scored_key = BucketKey(session_id=SessionId("s1"), bucket_index=BucketIndex(0))
+        new_key = BucketKey(session_id=SessionId("s1"), bucket_index=BucketIndex(1))
+        repo.save_records("/fake/transcript.jsonl", 100.0, [
+            make_record(session_id="s1", bucket_index=0)
+        ])
+        with patch(
+            "cc_sentiment.pipeline.TranscriptParser.scan_bucket_keys",
+            return_value=[("/fake/transcript.jsonl", 200.0, [scored_key, new_key])],
+        ):
+            result = anyio.run(lambda: Pipeline.scan(repo))
+        assert len(result.transcripts) == 1
+        assert result.transcripts[0].new_bucket_keys == (new_key,)
 
 
 class TestProcessTranscript:
@@ -151,7 +167,7 @@ class TestCrossBucketReadHistory:
             ])
         )
 
-        new_buckets, metrics_by_key = Pipeline._parse_buckets_with_metrics(path, frozenset())
+        new_buckets, metrics_by_key = Pipeline.parse_buckets_with_metrics(path, frozenset())
         assert len(new_buckets) == 2
         bucket_1_key = BucketKey(session_id=SessionId("session-cross"), bucket_index=BucketIndex(2))
         assert metrics_by_key[bucket_1_key].edits_without_prior_read_ratio == 0.0
@@ -167,7 +183,7 @@ class TestCrossBucketReadHistory:
             ])
         )
 
-        _, metrics_by_key = Pipeline._parse_buckets_with_metrics(path, frozenset())
+        _, metrics_by_key = Pipeline.parse_buckets_with_metrics(path, frozenset())
         bucket_key = BucketKey(session_id=SessionId("session-x"), bucket_index=BucketIndex(0))
         assert metrics_by_key[bucket_key].edits_without_prior_read_ratio == 1.0
 
@@ -175,20 +191,28 @@ class TestCrossBucketReadHistory:
 class TestPipelineStateUpdate:
     def test_repo_updated_with_records(self, repo: Repository) -> None:
         record = make_record()
+        scan_result = ScanResult(
+            transcripts=(
+                ScannedTranscript(
+                    path=Path("/fake.jsonl"),
+                    mtime=100.0,
+                    new_bucket_keys=(BucketKey(
+                        session_id=SessionId("session-1"), bucket_index=BucketIndex(0)
+                    ),),
+                ),
+            ),
+            scored_by_path={},
+        )
 
         mock_classifier = MagicMock()
         mock_classifier.score = AsyncMock(return_value=[])
         mock_classifier.close = AsyncMock()
 
-        mock_sentiment_mod = MagicMock()
-        mock_sentiment_mod.SentimentClassifier.return_value = mock_classifier
-
-        with patch.dict(sys.modules, {"cc_sentiment.sentiment": mock_sentiment_mod}), \
-             patch.object(Pipeline, "discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 100.0)]), \
+        with patch("cc_sentiment.pipeline.build_engine", AsyncMock(return_value=mock_classifier)), \
              patch.object(Pipeline, "process_transcript", new_callable=AsyncMock, return_value=[record]):
 
             async def do_run() -> list[SentimentRecord]:
-                return await Pipeline.run(repo, engine="mlx")
+                return await Pipeline.run(repo, scan_result, engine="mlx")
 
             result = anyio.run(do_run)
 
@@ -227,16 +251,23 @@ class TestOnBucketPlumbing:
 
         classifier = MagicMock()
         classifier.close = AsyncMock()
+        scan_result = ScanResult(
+            transcripts=(
+                ScannedTranscript(
+                    path=FIXTURE_PATH,
+                    mtime=1.0,
+                    new_bucket_keys=(BucketKey(
+                        session_id=SessionId("session-aaa"), bucket_index=BucketIndex(0)
+                    ),),
+                ),
+            ),
+            scored_by_path={},
+        )
 
         async def run() -> None:
             with patch("cc_sentiment.pipeline.build_engine", AsyncMock(return_value=classifier)), \
                  patch.object(Pipeline, "process_transcript", new=fake_process):
-                await Pipeline.run(
-                    repo,
-                    engine="omlx",
-                    new_transcripts=[(FIXTURE_PATH, 1.0)],
-                    on_bucket=cb,
-                )
+                await Pipeline.run(repo, scan_result, engine="omlx", on_bucket=cb)
 
         anyio.run(run)
         assert captured["on_bucket"] is cb

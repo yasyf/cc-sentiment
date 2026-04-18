@@ -54,7 +54,7 @@ cc_sentiment = ["*.pyi", "py.typed"]
 target = "cc_sentiment._transcripts_rs"
 path = "crates/transcripts/Cargo.toml"
 optional = true
-py-limited-api = "auto"
+py-limited-api = "cp313"
 debug = false
 
 [tool.pytest.ini_options]

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 from cc_sentiment.models import (
     BucketIndex,
+    BucketKey,
     SentimentRecord,
     SentimentScore,
     SessionId,
 )
+from cc_sentiment.pipeline import ScannedTranscript, ScanResult
 
 
 def make_record(
@@ -32,4 +35,25 @@ def make_record(
         thinking_present=False,
         thinking_chars=0,
         cc_version="2.1.92",
+    )
+
+
+def make_scan(path: Path | None = None, buckets: int = 0) -> ScanResult:
+    if path is None:
+        return ScanResult(transcripts=(), scored_by_path={})
+    return ScanResult(
+        transcripts=(
+            ScannedTranscript(
+                path=path,
+                mtime=0.0,
+                new_bucket_keys=tuple(
+                    BucketKey(
+                        session_id=SessionId(f"s{i}"),
+                        bucket_index=BucketIndex(i),
+                    )
+                    for i in range(buckets)
+                ),
+            ),
+        ),
+        scored_by_path={},
     )

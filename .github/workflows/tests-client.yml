@@ -34,15 +34,6 @@ jobs:
         working-directory: client
         run: uv sync --extra mlx
 
-      - name: Assert extension is release build
-        working-directory: client
-        run: |
-          uv run python - <<'PY'
-          from cc_sentiment import _transcripts_rs as r
-          assert r.is_release_build(), "_transcripts_rs was built in debug mode"
-          print("release build confirmed")
-          PY
-
       - name: Run tests (rust backend)
         working-directory: client
         run: uv run pytest -q

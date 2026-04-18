@@ -40,7 +40,7 @@ from cc_sentiment.upload import (
     UploadProgress,
     Uploader,
 )
-from tests.helpers import make_record
+from tests.helpers import make_record, make_scan
 
 
 class SetupHarness(App[None]):
@@ -477,7 +477,7 @@ async def test_ccsentiment_app_engine_failure_shows_error_and_exits(tmp_path: Pa
     state = AppState()
     db_path = tmp_path / "records.db"
     with patch("cc_sentiment.tui.resolve_engine", side_effect=RuntimeError("no engine")), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
@@ -489,7 +489,7 @@ async def test_ccsentiment_app_pushes_setup_when_no_config(tmp_path: Path):
     db_path = tmp_path / "records.db"
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 0.0)]), \
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 1))), \
          patch("cc_sentiment.tui.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
          patch("cc_sentiment.tui.AutoSetup.find_git_username", return_value=None):
         app = CCSentimentApp(state=state, db_path=db_path)
@@ -503,8 +503,7 @@ async def test_ccsentiment_app_claude_engine_shows_cost_review(tmp_path: Path, a
     db_path = tmp_path / "records.db"
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="claude"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 0.0)]), \
-         patch("cc_sentiment.pipeline.Pipeline.count_new_buckets", return_value=50):
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 50))):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.5)
@@ -518,8 +517,7 @@ async def test_ccsentiment_app_cost_cancel_exits(tmp_path: Path, auth_ok):
 
     mock_pipeline_run = AsyncMock(return_value=[])
     with patch("cc_sentiment.tui.resolve_engine", return_value="claude"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 0.0)]), \
-         patch("cc_sentiment.pipeline.Pipeline.count_new_buckets", return_value=50), \
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 50))), \
          patch("cc_sentiment.pipeline.Pipeline.run", mock_pipeline_run):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -535,7 +533,7 @@ async def test_ccsentiment_app_idle_when_no_work(tmp_path: Path, auth_ok):
     db_path = tmp_path / "records.db"
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.5)
@@ -552,7 +550,7 @@ async def test_ccsentiment_app_rescan_clears_state(tmp_path: Path, auth_ok):
     seed.close()
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch("cc_sentiment.upload.Uploader.upload", new_callable=AsyncMock):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -586,8 +584,7 @@ async def test_ccsentiment_app_runs_pipeline_and_uploads(tmp_path: Path, auth_ok
     mock_upload = AsyncMock()
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 0.0)]), \
-         patch("cc_sentiment.pipeline.Pipeline.count_new_buckets", return_value=2), \
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 2))), \
          patch("cc_sentiment.pipeline.Pipeline.run", side_effect=fake_run), \
          patch("cc_sentiment.upload.Uploader.upload", mock_upload):
         app = CCSentimentApp(state=state, db_path=db_path)
@@ -602,7 +599,7 @@ async def test_authenticate_returns_true_when_creds_valid(tmp_path: Path, auth_o
     db_path = tmp_path / "records.db"
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
@@ -614,7 +611,7 @@ async def test_authenticate_returns_false_on_unreachable(tmp_path: Path):
     db_path = tmp_path / "records.db"
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch(
              "cc_sentiment.upload.Uploader.probe_credentials",
              new_callable=AsyncMock,
@@ -631,7 +628,7 @@ async def test_authenticate_returns_false_on_server_error(tmp_path: Path):
     db_path = tmp_path / "records.db"
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch(
              "cc_sentiment.upload.Uploader.probe_credentials",
              new_callable=AsyncMock,
@@ -651,7 +648,7 @@ async def test_authenticate_unauthorized_clears_config_and_pushes_setup(tmp_path
         return False
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch(
              "cc_sentiment.upload.Uploader.probe_credentials",
              new_callable=AsyncMock,
@@ -673,7 +670,7 @@ async def test_run_flow_aborts_when_authenticate_returns_false(tmp_path: Path):
 
     mock_run = AsyncMock(return_value=[])
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 0.0)]), \
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 1))), \
          patch("cc_sentiment.pipeline.Pipeline.run", mock_run), \
          patch(
              "cc_sentiment.upload.Uploader.probe_credentials",
@@ -726,7 +723,7 @@ async def test_set_total_renders_eta_when_hardware_estimates(tmp_path: Path, aut
     db_path = tmp_path / "records.db"
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch("cc_sentiment.hardware.Hardware.estimate_buckets_per_sec", return_value=10.0):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -743,7 +740,7 @@ async def test_set_total_omits_eta_when_hardware_unknown(tmp_path: Path, auth_ok
     db_path = tmp_path / "records.db"
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch("cc_sentiment.hardware.Hardware.estimate_buckets_per_sec", return_value=None):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -759,7 +756,7 @@ async def test_add_buckets_updates_progress(tmp_path: Path, auth_ok):
     db_path = tmp_path / "records.db"
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
@@ -774,7 +771,7 @@ async def test_action_open_dashboard_opens_browser(tmp_path: Path, auth_ok):
     db_path = tmp_path / "records.db"
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch("cc_sentiment.tui.webbrowser.open") as mock_open:
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -794,7 +791,7 @@ async def test_enter_idle_after_upload_mentions_dashboard(tmp_path: Path, auth_o
     seed.close()
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
@@ -815,7 +812,7 @@ async def test_enter_idle_empty_state_mentions_dashboard(tmp_path: Path, auth_ok
     db_path = tmp_path / "records.db"
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]):
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
@@ -836,8 +833,7 @@ async def test_successful_upload_lands_in_idle_after_upload(tmp_path: Path, auth
         return records
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 0.0)]), \
-         patch("cc_sentiment.pipeline.Pipeline.count_new_buckets", return_value=2), \
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 2))), \
          patch("cc_sentiment.pipeline.Pipeline.run", side_effect=fake_run), \
          patch("cc_sentiment.upload.Uploader.upload", new_callable=AsyncMock):
         app = CCSentimentApp(state=state, db_path=db_path)
@@ -860,8 +856,7 @@ async def test_stage_transitions_across_successful_run(tmp_path: Path, auth_ok):
     seen: list[type[Stage]] = []
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[(Path("/fake.jsonl"), 0.0)]), \
-         patch("cc_sentiment.pipeline.Pipeline.count_new_buckets", return_value=1), \
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 1))), \
          patch("cc_sentiment.pipeline.Pipeline.run", side_effect=fake_run), \
          patch("cc_sentiment.upload.Uploader.upload", new_callable=AsyncMock):
         app = CCSentimentApp(state=state, db_path=db_path)
@@ -892,7 +887,7 @@ async def test_rescan_confirm_restores_previous_stage_on_cancel(tmp_path: Path, 
     seed.close()
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch("cc_sentiment.upload.Uploader.upload", new_callable=AsyncMock):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -1172,7 +1167,7 @@ async def test_offer_stat_share_skipped_on_http_error(tmp_path: Path, auth_ok):
     db_path = tmp_path / "records.db"
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch(
              "cc_sentiment.upload.Uploader.fetch_my_stat",
              new_callable=AsyncMock,
@@ -1195,7 +1190,7 @@ async def test_offer_stat_share_skipped_when_none(tmp_path: Path, auth_ok):
     db_path = tmp_path / "records.db"
 
     with patch("cc_sentiment.tui.resolve_engine", return_value="omlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.discover_new_transcripts", return_value=[]), \
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch(
              "cc_sentiment.upload.Uploader.fetch_my_stat",
              new_callable=AsyncMock,

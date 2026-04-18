@@ -94,12 +94,10 @@ class HeadlessRunner:
         if engine == "claude":
             return HeadlessClaudeEngineBlocked()
 
-        transcripts = await anyio.to_thread.run_sync(
-            Pipeline.discover_new_transcripts, repo
-        )
+        scan = await Pipeline.scan(repo)
         pending = await anyio.to_thread.run_sync(repo.pending_records)
-        cls.trace(debug, f"transcripts={len(transcripts)} pending={len(pending)}")
-        if not transcripts and not pending:
+        cls.trace(debug, f"transcripts={len(scan.transcripts)} pending={len(pending)}")
+        if not scan.transcripts and not pending:
             return HeadlessNothingToDo()
 
         uploader = Uploader()
@@ -116,8 +114,8 @@ class HeadlessRunner:
                 return HeadlessAuthError(detail=f"server error verifying key ({s})")
 
         scored = 0
-        if transcripts:
-            records = await Pipeline.run(repo, engine, None, transcripts)
+        if scan.transcripts:
+            records = await Pipeline.run(repo, scan, engine=engine)
             scored = len(records)
 
         pending = await anyio.to_thread.run_sync(repo.pending_records)

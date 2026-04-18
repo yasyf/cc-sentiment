@@ -44,12 +44,12 @@ client/
 
 ## Optional Rust Parser
 
-`cc_sentiment._transcripts_rs` is a PyO3 extension under `crates/transcripts/` that provides a ~5× faster implementation of `parse_line` / `parse_file` / `bucket_keys_for`. It's **optional** — distributed as prebuilt abi3 wheels per `(os, arch)`, with the Python implementation in `transcripts.py` as a permanent fallback.
+`cc_sentiment._transcripts_rs` is a PyO3 extension under `crates/transcripts/` that provides a ~5× faster implementation of `parse_line` / `parse_file` / `bucket_keys_for` / `scan_bucket_keys`. It's **optional** — distributed as prebuilt abi3 wheels per `(os, arch)`, with a Python implementation as a permanent fallback.
 
-- Dispatch lives in `transcripts.py`: `try: from cc_sentiment import _transcripts_rs as rust` → `BACKEND` constant. If the extension is missing, `PythonParser` handles everything.
-- `CC_SENTIMENT_DISABLE_RUST=1` forces the Python path at runtime (used by CI to run parity tests over both backends).
+- Backends live in the `cc_sentiment.transcripts/` package: `parser.py` holds the `TranscriptParser` classmethod façade plus `TranscriptDiscovery` / `ConversationBucketer` and module constants. `backend.py` defines the `Backend` Protocol. `python.py` and `rust.py` each export a backend class implementing that Protocol. `__init__.py` selects one at import time and binds it to `TranscriptParser.BACKEND`.
+- Selection is: respect `CC_SENTIMENT_DISABLE_RUST=1` → `PythonBackend()`; else try to import `RustBackend` and fall back to `PythonBackend()` on `ImportError`. Call `TranscriptParser.backend_name()` to see which one is live.
 - `setuptools-rust` with `optional = true` means an sdist install on a platform without `cargo` produces a pure-Python install — no Rust toolchain required.
-- `setup.cfg` sets `[bdist_wheel] py_limited_api = cp313` so wheels are abi3-tagged (`cp313-abi3`).
+- abi3 tagging depends on three things agreeing on the same floor (cp313): Cargo feature `abi3-py313` on the `pyo3` dep, `py-limited-api = "cp313"` in `[[tool.setuptools-rust.ext-modules]]` in `pyproject.toml`, and `[bdist_wheel] py_limited_api = cp313` in `setup.cfg`. The Cargo feature picks which stable-ABI symbol set to compile against; the setuptools-rust pin wires the pyo3 feature; `setup.cfg` is the thing that actually makes `bdist_wheel` stamp `cp313-abi3` onto the wheel filename. Dropping any one of the three produces a non-abi3 wheel.
 
 **Contributors who only touch Python code need nothing extra** — `uv sync && uv run pytest` works and exercises the Python path. The native extension is built lazily only when `cargo` is on `$PATH`.
 
@@ -61,7 +61,7 @@ uv pip install -e . --force-reinstall   # rebuilds the extension
 cd crates/transcripts && cargo test      # unit tests for the Rust side
 ```
 
-Parity tests in `tests/test_transcripts.py` are parametrized over both backends via a `backend` fixture that monkeypatches `transcripts_module.rust` — any change to the Python parser must be mirrored in the Rust crate, and vice versa.
+Parity tests in `tests/test_transcripts.py` are parametrized over both backends via a `backend` fixture that monkeypatches `TranscriptParser.BACKEND` with `PythonBackend()` / `RustBackend()` (skipping the rust param when the extension isn't importable). Any change to the Python parser must be mirrored in the Rust crate, and vice versa.
 
 ## Transcript Discovery
 

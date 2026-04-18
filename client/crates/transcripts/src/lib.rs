@@ -436,57 +436,12 @@ fn scan_bucket_keys(
     }))
 }
 
-#[pyfunction]
-#[pyo3(signature = (dir, *, name_contains=None, limit=None, known_mtimes=None))]
-fn scan_parse_files(
-    py: Python<'_>,
-    dir: &str,
-    name_contains: Option<&str>,
-    limit: Option<usize>,
-    known_mtimes: Option<HashMap<String, f64>>,
-) -> PyResult<Vec<(String, f64, Vec<Py<PyDict>>)>> {
-    let dir = PathBuf::from(dir);
-    let parsed_files: Vec<(String, f64, Vec<Parsed>)> = py.detach(move || {
-        let filter = FileFilter {
-            name_contains,
-            limit,
-            known_mtimes: known_mtimes.as_ref(),
-        };
-        let files = discover(&dir, filter);
-        files
-            .into_par_iter()
-            .filter_map(|(path, mtime)| {
-                let content = std::fs::read_to_string(&path).ok()?;
-                let parsed = parse_lines(&content);
-                Some((path.to_string_lossy().into_owned(), mtime, parsed))
-            })
-            .collect()
-    });
-    parsed_files
-        .into_iter()
-        .map(|(path, mtime, parsed)| {
-            let dicts: PyResult<Vec<Py<PyDict>>> = parsed
-                .into_iter()
-                .map(|p| Ok(parsed_to_dict(py, p)?.unbind()))
-                .collect();
-            Ok((path, mtime, dicts?))
-        })
-        .collect()
-}
-
-#[pyfunction]
-fn is_release_build() -> bool {
-    !cfg!(debug_assertions)
-}
-
 #[pymodule]
 fn _transcripts_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_line, m)?)?;
     m.add_function(wrap_pyfunction!(parse_file, m)?)?;
     m.add_function(wrap_pyfunction!(bucket_keys_for, m)?)?;
     m.add_function(wrap_pyfunction!(scan_bucket_keys, m)?)?;
-    m.add_function(wrap_pyfunction!(scan_parse_files, m)?)?;
-    m.add_function(wrap_pyfunction!(is_release_build, m)?)?;
     Ok(())
 }
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from functools import cached_property, partial
 from pathlib import Path
 
 import anyio
@@ -25,7 +27,6 @@ from cc_sentiment.repo import Repository
 from cc_sentiment.transcripts import (
     CLAUDE_PROJECTS_DIR,
     ConversationBucketer,
-    TranscriptDiscovery,
     TranscriptParser,
 )
 
@@ -37,39 +38,53 @@ SNIPPET_MAX_LEN = 80
 STREAM_CHUNK_SIZE = 16
 
 
+@dataclass(frozen=True)
+class ScannedTranscript:
+    path: Path
+    mtime: float
+    new_bucket_keys: tuple[BucketKey, ...]
+
+
+@dataclass(frozen=True)
+class ScanResult:
+    transcripts: tuple[ScannedTranscript, ...]
+    scored_by_path: Mapping[str, frozenset[BucketKey]]
+
+    @cached_property
+    def total_new_buckets(self) -> int:
+        return sum(len(t.new_bucket_keys) for t in self.transcripts)
+
+    @cached_property
+    def paths(self) -> list[tuple[Path, float]]:
+        return [(t.path, t.mtime) for t in self.transcripts]
+
+
 class Pipeline:
     @staticmethod
-    def discover_new_transcripts(repo: Repository) -> list[tuple[Path, float]]:
-        known = repo.file_mtimes()
-        return [
-            (path, mtime)
-            for path in TranscriptDiscovery.find_transcripts()
-            if (mtime := TranscriptDiscovery.transcript_mtime(path))
-            and (str(path) not in known or known[str(path)] < mtime)
-        ]
-
-    @staticmethod
-    async def count_new_buckets(repo: Repository, transcripts: list[tuple[Path, float]]) -> int:
-        if not transcripts:
-            return 0
+    async def scan(repo: Repository) -> ScanResult:
         known = await anyio.to_thread.run_sync(repo.file_mtimes)
         scored_by_path = await anyio.to_thread.run_sync(repo.scored_buckets_for_all)
-
-        def do_scan() -> int:
-            scan = TranscriptParser.scan_bucket_keys(
-                CLAUDE_PROJECTS_DIR, known_mtimes=known
-            )
-            return sum(
-                1
-                for path, _, keys in scan
-                for key in keys
-                if key not in scored_by_path.get(str(path), frozenset())
-            )
-
-        return await anyio.to_thread.run_sync(do_scan)
+        raw = await anyio.to_thread.run_sync(
+            partial(TranscriptParser.scan_bucket_keys, CLAUDE_PROJECTS_DIR, known_mtimes=known)
+        )
+        return ScanResult(
+            transcripts=tuple(
+                ScannedTranscript(
+                    path=Path(path),
+                    mtime=mtime,
+                    new_bucket_keys=tuple(new_keys),
+                )
+                for path, mtime, keys in raw
+                if (new_keys := [
+                    k for k in keys
+                    if k not in scored_by_path.get(str(path), frozenset())
+                ])
+            ),
+            scored_by_path=scored_by_path,
+        )
 
     @staticmethod
-    def _parse_buckets_with_metrics(
+    def parse_buckets_with_metrics(
         path: Path, scored_buckets: frozenset[BucketKey]
     ) -> tuple[list[ConversationBucket], dict[BucketKey, BucketMetrics]]:
         messages = TranscriptParser.parse_file(path)
@@ -155,7 +170,7 @@ class Pipeline:
         on_records: Callable[[list[SentimentRecord]], None] = lambda _: None,
     ) -> list[SentimentRecord]:
         new_buckets, metrics_by_key = await anyio.to_thread.run_sync(
-            cls._parse_buckets_with_metrics, path, scored_buckets
+            cls.parse_buckets_with_metrics, path, scored_buckets
         )
         if not new_buckets:
             return []
@@ -186,9 +201,9 @@ class Pipeline:
     async def run(
         cls,
         repo: Repository,
+        scan: ScanResult,
         engine: str = "omlx",
         model_repo: str | None = None,
-        new_transcripts: list[tuple[Path, float]] | None = None,
         on_records: Callable[[list[SentimentRecord]], None] = lambda _: None,
         on_bucket: Callable[[int], None] = NOOP_PROGRESS,
         on_engine_log: Callable[[str], None] | None = None,
@@ -198,25 +213,24 @@ class Pipeline:
         classifier = await build_engine(engine, model_repo, on_engine_log)
 
         try:
-            transcripts = new_transcripts or await anyio.to_thread.run_sync(
-                cls.discover_new_transcripts, repo
-            )
-            if not transcripts:
+            if not scan.transcripts:
                 return []
 
             all_records: list[SentimentRecord] = []
 
-            for path, mtime in transcripts:
-                scored_buckets = await anyio.to_thread.run_sync(
-                    repo.scored_buckets_for, str(path)
+            for scanned in scan.transcripts:
+                scored_buckets = scan.scored_by_path.get(
+                    str(scanned.path), frozenset()
                 )
                 records = await cls.process_transcript(
-                    path, classifier, scored_buckets,
+                    scanned.path, classifier, scored_buckets,
                     on_bucket=on_bucket, on_snippet=on_snippet,
                     on_records=on_records,
                 )
                 all_records.extend(records)
-                await anyio.to_thread.run_sync(repo.save_records, str(path), mtime, records)
+                await anyio.to_thread.run_sync(
+                    repo.save_records, str(scanned.path), scanned.mtime, records
+                )
                 if records:
                     on_transcript_complete(records)
 

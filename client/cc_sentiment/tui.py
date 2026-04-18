@@ -1876,19 +1876,18 @@ class CCSentimentApp(App[None]):
 
         self.stage = Discovering()
         self._set_boot_status("Discovering transcripts...")
-        transcripts = await anyio.to_thread.run_sync(Pipeline.discover_new_transcripts, self.repo)
+        scan = await Pipeline.scan(self.repo)
         pending = await anyio.to_thread.run_sync(self.repo.pending_records)
-        self._debug(f"transcripts={len(transcripts)} pending={len(pending)}")
+        self._debug(f"transcripts={len(scan.transcripts)} pending={len(pending)}")
 
-        if (transcripts or pending) and not await self._authenticate():
+        if (scan.transcripts or pending) and not await self._authenticate():
             await self._dismiss_boot_screen()
             self.exit()
             return
 
-        bucket_count = 0
-        if transcripts:
+        bucket_count = scan.total_new_buckets
+        if scan.transcripts:
             self._set_boot_status("Sizing things up...")
-            bucket_count = await Pipeline.count_new_buckets(self.repo, transcripts)
             self._debug(f"bucket_count={bucket_count}")
             rate = Hardware.estimate_buckets_per_sec(engine)
             if rate and rate > 0:
@@ -1911,7 +1910,7 @@ class CCSentimentApp(App[None]):
         await self._dismiss_boot_screen()
 
         pre_seed = await anyio.to_thread.run_sync(self.repo.pending_records)
-        has_work = (transcripts and bucket_count > 0) or bool(pre_seed)
+        has_work = (scan.transcripts and bucket_count > 0) or bool(pre_seed)
         self._upload.reset()
         self._upload.preseed_count = len(pre_seed)
 
@@ -1928,9 +1927,9 @@ class CCSentimentApp(App[None]):
             async def producer() -> None:
                 if pre_seed:
                     pool.queue_batch(pre_seed)
-                if transcripts and bucket_count > 0:
+                if scan.transcripts and bucket_count > 0:
                     _, _, existing_files = await anyio.to_thread.run_sync(self.repo.stats)
-                    self._begin_scoring(bucket_count, engine, existing_files + len(transcripts))
+                    self._begin_scoring(bucket_count, engine, existing_files + len(scan.transcripts))
                     boot = EngineBootView(
                         app=self,
                         section=self.query_one("#engine-boot-section"),
@@ -1940,7 +1939,8 @@ class CCSentimentApp(App[None]):
                     boot.show(engine)
                     try:
                         await Pipeline.run(
-                            self.repo, engine, self.model_repo, transcripts,
+                            self.repo, scan,
+                            engine=engine, model_repo=self.model_repo,
                             on_records=self._add_records, on_bucket=self._add_buckets,
                             on_engine_log=boot.write_from_thread,
                             on_snippet=boot.add_snippet,
