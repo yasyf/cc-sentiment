@@ -25,7 +25,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
-from textual.screen import Screen
+from textual.screen import ModalScreen, Screen
 from textual.widget import Widget
 from textual.widgets import (
     Button,
@@ -59,6 +59,7 @@ from cc_sentiment.models import (
     SentimentRecord,
     SSHConfig,
 )
+from cc_sentiment.nlp import NLP
 from cc_sentiment.repo import Repository
 from cc_sentiment.transcripts import TranscriptDiscovery, TranscriptParser
 from cc_sentiment.upload import (
@@ -166,24 +167,6 @@ class ScoringProgress:
     def reset(self) -> None:
         self.start_time = 0.0
         self.initial_estimate_seconds = None
-
-
-@dataclass(frozen=True)
-class StatFetchOk:
-    stat: MyStat
-
-
-@dataclass(frozen=True)
-class StatFetchEmpty:
-    pass
-
-
-@dataclass(frozen=True)
-class StatFetchHttpError:
-    detail: str
-
-
-StatFetchResult = StatFetchOk | StatFetchEmpty | StatFetchHttpError
 
 
 def format_duration(seconds: float) -> str:
@@ -407,11 +390,23 @@ class EngineBootView:
     MAX_SNIPPET_CHARS: ClassVar[int] = 60
     SNIPPET_RATE_LIMIT: ClassVar[float] = 2.5
     SNIPPET_WEIGHTS: ClassVar[dict[int, float]] = {1: 0.7, 2: 0.5, 3: 0.02, 4: 0.5, 5: 0.7}
-    SNIPPET_PATTERNS: ClassVar[tuple[tuple[re.Pattern[str], str], ...]] = (
-        (re.compile(r"\b(not working|doesn't work|doesn't|didn't|don't|broken|still|again|wrong|fails?|failing|error|can't|cannot|stuck|confused|why|nope|no that's)\b", re.I), "red"),
-        (re.compile(r"\b(thanks?|perfect|great|works?|nice|awesome|exactly|yes|yep|got it|beautiful|love|finally)\b", re.I), "green"),
-        (re.compile(r"\b(fix|check|run|add|remove|update|show|find|make|replace|rename|move|delete|rewrite|refactor|test|debug|use|set|create)\b", re.I), "yellow"),
-        (re.compile(r"(\b[\w.-]+\.(py|ts|tsx|js|jsx|md|json|yml|yaml|toml|rs|go|sh|sql)\b|\b[a-z][a-z0-9]*_[a-z0-9_]+\b|\b[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*\b|\b\w+\(\)|(?:/|\./)[\w./-]+)"), "cyan"),
+    NEGATIVE_WORDS: ClassVar[frozenset[str]] = frozenset({
+        "broken", "wrong", "fails", "fail", "failed", "failing", "error", "errors",
+        "stuck", "confused", "nope", "useless", "terrible", "awful", "frustrating",
+        "hate", "hated", "hates", "sucks", "annoying",
+    })
+    POSITIVE_WORDS: ClassVar[frozenset[str]] = frozenset({
+        "perfect", "great", "nice", "awesome", "exactly", "beautiful", "love",
+        "loved", "loves", "finally", "amazing", "incredible", "brilliant",
+        "excellent", "wonderful", "fantastic",
+    })
+    SENTIMENT_POS: ClassVar[frozenset[str]] = frozenset({"ADJ", "ADV", "VERB", "INTJ"})
+    CODE_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
+        r"(\b[\w.-]+\.(py|ts|tsx|js|jsx|md|json|yml|yaml|toml|rs|go|sh|sql)\b"
+        r"|\b[a-z][a-z0-9]*_[a-z0-9_]+\b"
+        r"|\b[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*\b"
+        r"|\b\w+\(\)"
+        r"|(?:/|\./)[\w./-]+)"
     )
     WITTY_COMMENTS: ClassVar[dict[int, tuple[str, ...]]] = {
         1: ("oof", "yikes", "time to take a walk", "we've all been there", "send help", "cursed"),
@@ -475,14 +470,28 @@ class EngineBootView:
     def highlight_snippet(cls, snippet: str) -> Text:
         text = Text(snippet)
         claimed = [False] * len(snippet)
-        for pattern, color in cls.SNIPPET_PATTERNS:
-            for m in pattern.finditer(snippet):
-                start, end = m.start(), m.end()
+        nlp = NLP.get()
+        if nlp is not None:
+            for tok in nlp(snippet):
+                if tok.pos_ not in cls.SENTIMENT_POS:
+                    continue
+                lower = tok.text.lower()
+                color = "red" if lower in cls.NEGATIVE_WORDS else "green" if lower in cls.POSITIVE_WORDS else None
+                if color is None:
+                    continue
+                start, end = tok.idx, tok.idx + len(tok.text)
                 if any(claimed[start:end]):
                     continue
                 text.stylize(color, start, end)
                 for i in range(start, end):
                     claimed[i] = True
+        for m in cls.CODE_PATTERN.finditer(snippet):
+            start, end = m.start(), m.end()
+            if any(claimed[start:end]):
+                continue
+            text.stylize("cyan", start, end)
+            for i in range(start, end):
+                claimed[i] = True
         return text
 
 
@@ -633,31 +642,39 @@ class PlatformErrorScreen(Screen[None]):
         self.dismiss(None)
 
 
-class StatShareScreen(Screen[None]):
+class StatShareScreen(ModalScreen[None]):
     DEFAULT_CSS = """
-    StatShareScreen { align: center middle; }
     #stat-box { width: 76; height: auto; border: heavy $accent; padding: 2 3; }
     #stat-box .title { text-style: bold; color: $text; margin: 0 0 1 0; }
     #stat-box .stat { color: $accent; text-style: bold; margin: 0 0 1 0; }
     #stat-box .detail { color: $text-muted; margin: 0 0 1 0; }
     #stat-box Button { margin: 1 1 0 0; }
+    #stat-switch { height: auto; }
+    #stat-loading, #stat-ready { height: auto; }
     """
 
-    BINDINGS = [
-        ("enter", "tweet", "Tweet"),
-        ("escape", "skip", "Skip"),
-    ]
+    BINDINGS = [("escape", "skip", "Skip")]
 
     TWEET_INTENT_URL: ClassVar[str] = "https://twitter.com/intent/tweet"
+    POLL_INTERVAL_SECONDS: ClassVar[float] = 8.0
 
-    def __init__(self, stat: MyStat, contributor_id: str, contributor_type: str) -> None:
+    stat: reactive[MyStat | None] = reactive(None)
+
+    def __init__(self, config: SSHConfig | GPGConfig | GistConfig) -> None:
         super().__init__()
-        self.stat = stat
-        self.contributor_id = contributor_id
-        self.contributor_type = contributor_type
+        self.config = config
+
+    @property
+    def contributor_id(self) -> str:
+        return self.config.contributor_id
+
+    @property
+    def contributor_type(self) -> str:
+        return self.config.contributor_type
 
     @property
     def share_url(self) -> str:
+        assert self.stat is not None
         params = {"t": self.stat.text} | (
             {"u": self.contributor_id} if self.contributor_type in ("github", "gist") else {}
         )
@@ -665,19 +682,48 @@ class StatShareScreen(Screen[None]):
 
     @property
     def tweet_url(self) -> str:
+        assert self.stat is not None
         return f"{self.TWEET_INTENT_URL}?{urlencode({'text': self.stat.tweet_text, 'url': self.share_url})}"
 
     def compose(self) -> ComposeResult:
         with Vertical(id="stat-box"):
-            yield Label("Your cc-sentiment snapshot", classes="title")
-            yield Label(f"You are {self.stat.text}.", classes="stat")
-            yield Label(
-                "Share it? The card on Twitter will show your GitHub avatar and this stat.",
-                classes="detail",
-            )
-            with Horizontal():
-                yield Button("Tweet it", id="stat-tweet", variant="primary")
-                yield Button("Not now", id="stat-skip", variant="default")
+            with ContentSwitcher(initial="stat-loading", id="stat-switch"):
+                with Vertical(id="stat-loading"):
+                    yield SpinnerLine(id="stat-spinner")
+                    yield Label("Generating your personalized card…", classes="detail")
+                    with Horizontal():
+                        yield Button("Close", id="stat-cancel", variant="default")
+                with Vertical(id="stat-ready"):
+                    yield Label("Your cc-sentiment snapshot", classes="title")
+                    yield Label("", id="stat-text", classes="stat")
+                    yield Label(
+                        "Share it? The card on Twitter will show your GitHub avatar and this stat.",
+                        classes="detail",
+                    )
+                    with Horizontal():
+                        yield Button("Tweet it", id="stat-tweet", variant="primary")
+                        yield Button("Not now", id="stat-skip", variant="default")
+
+    def on_mount(self) -> None:
+        self.query_one("#stat-spinner", SpinnerLine).spinner.text = "Talking to sentiments.cc"
+        self._poll_for_stat()
+
+    @work(exclusive=True, group="stat-poll")
+    async def _poll_for_stat(self) -> None:
+        uploader = Uploader()
+        while self.stat is None:
+            try:
+                self.stat = await uploader.fetch_my_stat(self.config)
+            except (httpx.HTTPError, httpx.InvalidURL):
+                pass
+            if self.stat is None:
+                await anyio.sleep(self.POLL_INTERVAL_SECONDS)
+
+    def watch_stat(self, stat: MyStat | None) -> None:
+        if stat is None:
+            return
+        self.query_one("#stat-text", Label).update(f"You are {stat.text}.")
+        self.query_one("#stat-switch", ContentSwitcher).current = "stat-ready"
 
     @on(Button.Pressed, "#stat-tweet")
     async def on_tweet_button(self) -> None:
@@ -687,8 +733,9 @@ class StatShareScreen(Screen[None]):
     def on_skip_button(self) -> None:
         self.dismiss(None)
 
-    async def action_tweet(self) -> None:
-        await self._open_tweet()
+    @on(Button.Pressed, "#stat-cancel")
+    def on_cancel_button(self) -> None:
+        self.dismiss(None)
 
     def action_skip(self) -> None:
         self.dismiss(None)
@@ -698,9 +745,8 @@ class StatShareScreen(Screen[None]):
         self.dismiss(None)
 
 
-class DaemonPromptScreen(Screen[bool]):
+class DaemonPromptScreen(ModalScreen[bool]):
     DEFAULT_CSS = """
-    DaemonPromptScreen { align: center middle; }
     #daemon-box { width: 76; height: auto; border: heavy $accent; padding: 2 3; }
     #daemon-box .title { text-style: bold; color: $text; margin: 0 0 1 0; }
     #daemon-box .detail { color: $text-muted; margin: 0 0 1 0; }
@@ -1619,7 +1665,7 @@ class CCSentimentApp(App[None]):
     #charts-row { height: auto; }
     #hourly-column { width: 1fr; height: auto; margin: 0 2 0 0; }
     #hourly-chart-label { height: 1; color: $text-muted; }
-    #hourly-chart { height: 2; }
+    #hourly-chart { height: 7; }
     #distribution { width: 1fr; height: auto; }
     #engine-boot-section { height: auto; margin: 1 0 0 0; padding: 0 1; border: round $primary-background; display: none; }
     #engine-boot-section.active { display: block; }
@@ -1688,6 +1734,10 @@ class CCSentimentApp(App[None]):
                     yield Label("Preparing...", id="progress-label")
                     yield ProgressBar(id="scan-progress", total=100, show_eta=False, show_percentage=True)
 
+            with Vertical(id="upload-section", classes="inactive"):
+                yield Label("", id="upload-label")
+                yield ProgressBar(id="upload-progress", total=100, show_eta=False, show_percentage=True)
+
             with Vertical(id="chart-section", classes="inactive"):
                 with Horizontal(id="charts-row"):
                     with Vertical(id="hourly-column"):
@@ -1721,15 +1771,12 @@ class CCSentimentApp(App[None]):
 
             yield Static("", id="insights-section", classes="inactive")
 
-            with Vertical(id="upload-section", classes="inactive"):
-                yield Label("", id="upload-label")
-                yield ProgressBar(id="upload-progress", total=100, show_eta=False, show_percentage=True)
-
             yield Label("", id="status-line")
         yield Footer()
 
     async def on_mount(self) -> None:
         self.title = "cc-sentiment"
+        self.run_worker(NLP.ensure_ready(), name="spacy-load", exclusive=True, exit_on_error=False)
         self._boot_screen = BootingScreen()
         await self.push_screen(self._boot_screen)
         self._boot_screen.status = "Loading local cache..."
@@ -2000,37 +2047,9 @@ class CCSentimentApp(App[None]):
         self.uploaded_count = progress.uploaded_records
         self.view.update_upload(progress)
 
-    async def _fetch_my_stat_with_retry(self) -> StatFetchResult:
-        assert self.state.config is not None
-        uploader = Uploader()
-        for attempt in range(3):
-            try:
-                stat = await uploader.fetch_my_stat(self.state.config)
-            except (httpx.HTTPError, httpx.InvalidURL) as e:
-                self._debug(f"fetch_my_stat attempt {attempt + 1}: {type(e).__name__}: {e}")
-                return StatFetchHttpError(detail=f"{type(e).__name__}: {e}")
-            if stat is not None:
-                return StatFetchOk(stat=stat)
-            self._debug(f"fetch_my_stat attempt {attempt + 1}: None")
-            if attempt < 2:
-                await anyio.sleep(2)
-        return StatFetchEmpty()
-
     async def _offer_stat_share(self) -> None:
         assert self.state.config is not None
-        match await self._fetch_my_stat_with_retry():
-            case StatFetchHttpError():
-                self._append_status("[dim]Couldn't fetch your share card.[/]")
-            case StatFetchEmpty():
-                self._append_status(
-                    "[dim]Personal share card warming up — check back on the next run.[/]"
-                )
-            case StatFetchOk(stat=stat):
-                await self.push_screen_wait(StatShareScreen(
-                    stat=stat,
-                    contributor_id=self.state.config.contributor_id,
-                    contributor_type=self.state.config.contributor_type,
-                ))
+        await self.push_screen_wait(StatShareScreen(self.state.config))
 
     async def _offer_daemon_install(self) -> None:
         if self.state.daemon_prompt_dismissed or LaunchAgent.is_installed():

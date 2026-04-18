@@ -74,6 +74,13 @@ def auth_ok():
         yield
 
 
+@pytest.fixture
+def no_stat_share():
+    with patch.object(CCSentimentApp, "_offer_stat_share", new_callable=AsyncMock), \
+         patch.object(CCSentimentApp, "_offer_daemon_install", new_callable=AsyncMock):
+        yield
+
+
 async def test_setup_mounts_all_steps(no_auto_setup):
     async with SetupHarness(AppState()).run_test() as pilot:
         await pilot.pause(delay=0.3)
@@ -541,7 +548,7 @@ async def test_ccsentiment_app_idle_when_no_work(tmp_path: Path, auth_ok):
             assert "all" in app.status_text.lower() or "set" in app.status_text.lower()
 
 
-async def test_ccsentiment_app_rescan_clears_state(tmp_path: Path, auth_ok):
+async def test_ccsentiment_app_rescan_clears_state(tmp_path: Path, auth_ok, no_stat_share):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
@@ -571,7 +578,7 @@ async def test_ccsentiment_app_rescan_clears_state(tmp_path: Path, auth_ok):
         verify.close()
 
 
-async def test_ccsentiment_app_runs_pipeline_and_uploads(tmp_path: Path, auth_ok):
+async def test_ccsentiment_app_runs_pipeline_and_uploads(tmp_path: Path, auth_ok, no_stat_share):
     records = [make_record(score=3), make_record(score=4)]
     state = AppState(config=GPGConfig(contributor_type="github", contributor_id=ContributorId("testuser"), fpr="ABCD1234"))
     db_path = tmp_path / "records.db"
@@ -782,7 +789,7 @@ async def test_action_open_dashboard_opens_browser(tmp_path: Path, auth_ok):
             assert CCSentimentApp.DASHBOARD_URL in app.status_text
 
 
-async def test_enter_idle_after_upload_mentions_dashboard(tmp_path: Path, auth_ok):
+async def test_enter_idle_after_upload_mentions_dashboard(tmp_path: Path, auth_ok, no_stat_share):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
@@ -822,7 +829,7 @@ async def test_enter_idle_empty_state_mentions_dashboard(tmp_path: Path, auth_ok
             assert "O to browse" in app.status_text
 
 
-async def test_successful_upload_lands_in_idle_after_upload(tmp_path: Path, auth_ok):
+async def test_successful_upload_lands_in_idle_after_upload(tmp_path: Path, auth_ok, no_stat_share):
     records = [make_record(score=3), make_record(score=4)]
     state = AppState(config=GPGConfig(contributor_type="github", contributor_id=ContributorId("testuser"), fpr="ABCD1234"))
     db_path = tmp_path / "records.db"
@@ -843,7 +850,7 @@ async def test_successful_upload_lands_in_idle_after_upload(tmp_path: Path, auth
             assert "sentiments.cc" in app.status_text
 
 
-async def test_stage_transitions_across_successful_run(tmp_path: Path, auth_ok):
+async def test_stage_transitions_across_successful_run(tmp_path: Path, auth_ok, no_stat_share):
     records = [make_record(score=3)]
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
@@ -878,7 +885,7 @@ async def test_stage_transitions_across_successful_run(tmp_path: Path, auth_ok):
     assert seen.index(Discovering) < seen.index(Scoring) < seen.index(Uploading) < seen.index(IdleAfterUpload)
 
 
-async def test_rescan_confirm_restores_previous_stage_on_cancel(tmp_path: Path, auth_ok):
+async def test_rescan_confirm_restores_previous_stage_on_cancel(tmp_path: Path, auth_ok, no_stat_share):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
@@ -1083,14 +1090,12 @@ async def test_engine_boot_snippet_survives_bracket_heavy_content():
 
 
 class StatShareHarness(App[None]):
-    def __init__(self, stat: MyStat, contributor_id: str, contributor_type: str) -> None:
+    def __init__(self, config: SSHConfig | GPGConfig | GistConfig) -> None:
         super().__init__()
-        self.stat = stat
-        self.contributor_id = contributor_id
-        self.contributor_type = contributor_type
+        self.config = config
 
     def on_mount(self) -> None:
-        self.push_screen(StatShareScreen(self.stat, self.contributor_id, self.contributor_type))
+        self.push_screen(StatShareScreen(self.config))
 
 
 STAT = MyStat(
@@ -1101,20 +1106,32 @@ STAT = MyStat(
     total_contributors=100,
 )
 
+GITHUB_CONFIG = SSHConfig(
+    contributor_id=ContributorId("testuser"),
+    key_path=Path("/home/.ssh/id_ed25519"),
+)
+GPG_CONFIG = GPGConfig(
+    contributor_type="gpg",
+    contributor_id=ContributorId("gpg-user-id"),
+    fpr="ABCDEF0123456789",
+)
+
 
 async def test_stat_share_renders_stat_text():
-    harness = StatShareHarness(STAT, "testuser", "github")
-    async with harness.run_test() as pilot:
-        await pilot.pause()
-        text = " ".join(str(lbl.content) for lbl in pilot.app.screen.query(Label))
-        assert "nicer to Claude than 72% of developers" in text
+    harness = StatShareHarness(GITHUB_CONFIG)
+    with patch("cc_sentiment.upload.Uploader.fetch_my_stat", new_callable=AsyncMock, return_value=STAT):
+        async with harness.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            text = " ".join(str(lbl.content) for lbl in pilot.app.screen.query(Label))
+            assert "nicer to Claude than 72% of developers" in text
 
 
 async def test_stat_share_tweet_button_opens_twitter_with_username():
-    harness = StatShareHarness(STAT, "testuser", "github")
-    with patch("cc_sentiment.tui.webbrowser.open") as mock_open:
+    harness = StatShareHarness(GITHUB_CONFIG)
+    with patch("cc_sentiment.upload.Uploader.fetch_my_stat", new_callable=AsyncMock, return_value=STAT), \
+         patch("cc_sentiment.tui.webbrowser.open") as mock_open:
         async with harness.run_test() as pilot:
-            await pilot.pause()
+            await pilot.pause(delay=0.3)
             await pilot.click("#stat-tweet")
             await pilot.pause(delay=0.2)
 
@@ -1126,10 +1143,11 @@ async def test_stat_share_tweet_button_opens_twitter_with_username():
 
 
 async def test_stat_share_gpg_user_omits_username_from_share_url():
-    harness = StatShareHarness(STAT, "gpg-user-id", "gpg")
-    with patch("cc_sentiment.tui.webbrowser.open") as mock_open:
+    harness = StatShareHarness(GPG_CONFIG)
+    with patch("cc_sentiment.upload.Uploader.fetch_my_stat", new_callable=AsyncMock, return_value=STAT), \
+         patch("cc_sentiment.tui.webbrowser.open") as mock_open:
         async with harness.run_test() as pilot:
-            await pilot.pause()
+            await pilot.pause(delay=0.3)
             await pilot.click("#stat-tweet")
             await pilot.pause(delay=0.2)
 
@@ -1141,19 +1159,21 @@ async def test_stat_share_gpg_user_omits_username_from_share_url():
 
 
 async def test_stat_share_skip_dismisses_without_opening_browser():
-    harness = StatShareHarness(STAT, "testuser", "github")
-    with patch("cc_sentiment.tui.webbrowser.open") as mock_open:
+    harness = StatShareHarness(GITHUB_CONFIG)
+    with patch("cc_sentiment.upload.Uploader.fetch_my_stat", new_callable=AsyncMock, return_value=STAT), \
+         patch("cc_sentiment.tui.webbrowser.open") as mock_open:
         async with harness.run_test() as pilot:
-            await pilot.pause()
+            await pilot.pause(delay=0.3)
             await pilot.click("#stat-skip")
             await pilot.pause(delay=0.2)
 
     mock_open.assert_not_called()
 
 
-async def test_stat_share_escape_dismisses_without_opening_browser():
-    harness = StatShareHarness(STAT, "testuser", "github")
-    with patch("cc_sentiment.tui.webbrowser.open") as mock_open:
+async def test_stat_share_escape_dismisses_while_polling():
+    harness = StatShareHarness(GITHUB_CONFIG)
+    with patch("cc_sentiment.upload.Uploader.fetch_my_stat", new_callable=AsyncMock, return_value=None), \
+         patch("cc_sentiment.tui.webbrowser.open") as mock_open:
         async with harness.run_test() as pilot:
             await pilot.pause()
             await pilot.press("escape")
@@ -1162,7 +1182,7 @@ async def test_stat_share_escape_dismisses_without_opening_browser():
     mock_open.assert_not_called()
 
 
-async def test_offer_stat_share_skipped_on_http_error(tmp_path: Path, auth_ok):
+async def test_offer_stat_share_pushes_modal_on_http_error(tmp_path: Path, auth_ok):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
@@ -1172,20 +1192,20 @@ async def test_offer_stat_share_skipped_on_http_error(tmp_path: Path, auth_ok):
              "cc_sentiment.upload.Uploader.fetch_my_stat",
              new_callable=AsyncMock,
              side_effect=httpx.ConnectError("no net"),
-         ) as mock_fetch, \
+         ), \
          patch.object(CCSentimentApp, "push_screen_wait", new_callable=AsyncMock) as mock_push:
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await app._offer_stat_share()
 
-    mock_fetch.assert_awaited_once()
-    for call in mock_push.call_args_list:
-        args = call.args
-        assert not (args and isinstance(args[0], StatShareScreen))
+    assert any(
+        call.args and isinstance(call.args[0], StatShareScreen)
+        for call in mock_push.call_args_list
+    )
 
 
-async def test_offer_stat_share_skipped_when_none(tmp_path: Path, auth_ok):
+async def test_offer_stat_share_pushes_modal_when_stat_not_ready(tmp_path: Path, auth_ok):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
@@ -1195,16 +1215,14 @@ async def test_offer_stat_share_skipped_when_none(tmp_path: Path, auth_ok):
              "cc_sentiment.upload.Uploader.fetch_my_stat",
              new_callable=AsyncMock,
              return_value=None,
-         ) as mock_fetch, \
-         patch("cc_sentiment.tui.anyio.sleep", new_callable=AsyncMock), \
+         ), \
          patch.object(CCSentimentApp, "push_screen_wait", new_callable=AsyncMock) as mock_push:
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await app._offer_stat_share()
 
-    assert mock_fetch.await_count == 3
-    for call in mock_push.call_args_list:
-        args = call.args
-        assert not (args and isinstance(args[0], StatShareScreen))
-    assert "warming up" in app.status_text
+    assert any(
+        call.args and isinstance(call.args[0], StatShareScreen)
+        for call in mock_push.call_args_list
+    )

@@ -45,13 +45,13 @@ FRUSTRATION_PATTERN = re.compile(
 
 SYSTEM_PROMPT = """Rate the developer's sentiment in this developer-AI conversation. Reply with ONLY a single digit 1-5.
 
-1 - Frustrated, angry, giving up
-2 - Annoyed, pointing out mistakes
-3 - Neutral, just giving instructions
-4 - Satisfied, says it works well
-5 - Enthusiastic praise, amazement, strong positive emotion
+1 - Frustrated, angry, or giving up. Examples: "this still doesn't work", "ugh why did you do that", "forget it, i'll do it myself".
+2 - Annoyed, pointing out mistakes. Examples: "that's wrong, try again", "you missed the null case", "no, the other file".
+3 - Neutral, just giving instructions or routine approvals. Examples: "go ahead and commit", "add a test for this", "run the linter", "sounds good, proceed", "yes", "ok".
+4 - Satisfied, says it works well. Examples: "perfect", "that works", "nice, looks good".
+5 - Enthusiastic praise, amazement, strong positive emotion. Examples: "incredible!", "this is amazing", "blown away", "love it!!!".
 
-Key rule: if the developer uses strong positive language like "incredible", "amazing", "love it", "blown away", or multiple exclamation marks, that is 5, not 4. Simple approval like "good" or "works" is 4.
+Key rule: routine greenlights like "go ahead", "yes do it", "sounds good", "ok commit" are 3 (neutral), not 1. Simple approval without strong emotion ("works", "good", "nice") is 4. Strong positive emotion or multiple exclamation marks is 5.
 
 Score ONLY the developer's messages."""
 
