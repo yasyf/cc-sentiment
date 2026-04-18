@@ -62,6 +62,7 @@
 					borderColor: evt.type === 'regression' ? 'rgba(220, 38, 38, 0.3)' : 'rgba(99, 102, 241, 0.3)',
 					borderWidth: 1,
 					borderDash: [4, 4],
+					adjustScaleRange: false,
 					label: {
 						display: true,
 						content: evt.label,
@@ -78,7 +79,7 @@
 	});
 
 	const scoreRange = $derived(
-		paddedRange(buckets.map((d) => d.smoothed_score), { floor: 1, ceil: 5, snapInt: true, minSpan: 2 })
+		paddedRange(buckets.map((d) => d.smoothed_score), { floor: 1, ceil: 5, snapInt: true, minSpan: 1 })
 	);
 
 	const chartData = $derived({
@@ -186,12 +187,11 @@
 						});
 						return range === 'week' && b.label ? `${dt} · ${b.label}` : dt;
 					},
-					label: (ctx: { parsed: { y: number | null }; dataset: { label?: string }; dataIndex: number }) => {
+					label: (ctx: { parsed: { y: number | null }; dataset: { label?: string } }) => {
 						if (ctx.dataset.label === 'Sessions') return `${ctx.parsed.y ?? 0} sessions`;
-						const b = buckets[ctx.dataIndex];
 						const score = ctx.parsed.y;
 						if (score == null) return 'no data';
-						return `${score.toFixed(2)} sentiment · ${b?.count ?? 0} sessions`;
+						return `${score.toFixed(2)} sentiment`;
 					}
 				}
 			},

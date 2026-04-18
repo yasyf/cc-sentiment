@@ -241,6 +241,7 @@ export function dayBoundaryAnnotations(points: { time: string }[], zone: string)
 				xMax: iso,
 				borderColor: 'rgba(0, 0, 0, 0.18)',
 				borderWidth: 1.5,
+				adjustScaleRange: false,
 				label: { display: false }
 			};
 		}
@@ -268,8 +269,11 @@ export function dayPartBandAnnotations(points: { time: string }[], zone: string)
 			const xMax = part.start < part.end
 				? cursor.set({ hour: part.end, minute: 0, second: 0, millisecond: 0 })
 				: cursor.plus({ days: 1 }).set({ hour: part.end, minute: 0, second: 0, millisecond: 0 });
-			const xMinIso = xMin.toISO();
-			const xMaxIso = xMax.toISO();
+			const clampedMin = xMin < first ? first : xMin;
+			const clampedMax = xMax > last ? last : xMax;
+			if (clampedMax <= clampedMin) continue;
+			const xMinIso = clampedMin.toISO();
+			const xMaxIso = clampedMax.toISO();
 			if (!xMinIso || !xMaxIso) continue;
 			annotations[`band-${date}-${part.key}`] = {
 				type: 'box',
@@ -277,6 +281,7 @@ export function dayPartBandAnnotations(points: { time: string }[], zone: string)
 				xMax: xMaxIso,
 				backgroundColor: DAY_PART_TINT[part.key],
 				borderWidth: 0,
+				adjustScaleRange: false,
 				drawTime: 'beforeDatasetsDraw'
 			};
 		}

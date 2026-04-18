@@ -43,7 +43,8 @@
 			label: {
 				display: true,
 				content: 'peak usage',
-				position: { x: 'center' as const, y: 'start' as const },
+				position: { x: 'center' as const, y: 'end' as const },
+				yAdjust: -4,
 				font: { size: 9 },
 				color: '#dc2626',
 				backgroundColor: 'rgba(255,255,255,0.9)',
@@ -109,6 +110,7 @@
 	const chartOptions: ChartOptions = $derived({
 		responsive: true,
 		maintainAspectRatio: false,
+		layout: { padding: { top: 12 } },
 		interaction: { mode: 'index' as const, intersect: false },
 		scales: {
 			x: {
@@ -119,6 +121,7 @@
 			volume: {
 				position: 'left' as const,
 				beginAtZero: true,
+				grace: '10%' as const,
 				grid: { color: GRID },
 				ticks: { color: TICK, font: { size: 10 } },
 				border: { display: false },
