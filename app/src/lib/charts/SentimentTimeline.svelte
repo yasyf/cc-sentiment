@@ -132,7 +132,9 @@
 				grid: { display: false },
 				ticks: {
 					source: 'data' as const,
-					autoSkip: true,
+					autoSkip: range === 'month',
+					autoSkipPadding: 8,
+					maxTicksLimit: range === 'week' ? 32 : 31,
 					maxRotation: 0,
 					color: TICK,
 					font: { size: 12 },
@@ -155,13 +157,20 @@
 					color: TICK,
 					font: { size: 14 },
 					stepSize: 1,
+					padding: 2,
 					callback: (v: number | string) => {
 						const n = Number(v);
 						return Number.isInteger(n) ? SENTIMENT_EMOJI[n] ?? '' : '';
 					}
 				},
 				border: { display: false },
-				title: { display: false }
+				title: {
+					display: true,
+					text: 'sentiment',
+					color: TICK,
+					font: { size: 9 },
+					padding: 0
+				}
 			},
 			volume: {
 				position: 'right' as const,
