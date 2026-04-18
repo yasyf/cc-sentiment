@@ -1,10 +1,13 @@
-use chrono::DateTime;
+use chrono::{DateTime, FixedOffset};
 use crossbeam_channel::{bounded, Receiver};
+use memchr::memchr_iter;
 use once_cell::sync::Lazy;
 use pyo3::prelude::*;
-use pyo3::types::{PyString, PyTuple};
+use pyo3::sync::PyOnceLock;
+use pyo3::types::{PyString, PyTuple, PyType};
 use rayon::prelude::*;
 use regex::Regex;
+use rustc_hash::FxHashMap;
 use serde::Deserialize;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
@@ -15,6 +18,9 @@ use walkdir::WalkDir;
 const BUCKET_SECONDS: i64 = 300;
 const ASSISTANT_TRUNCATION: usize = 1024;
 const MIN_USER_TURNS_PER_SESSION: usize = 2;
+const AVG_LINE_BYTES: usize = 1400;
+
+type ScanEntry = (String, f64, Vec<(String, i64)>);
 
 static PARSE_POOL: Lazy<rayon::ThreadPool> = Lazy::new(|| {
     let n = std::env::var("CC_SENTIMENT_PARSE_THREADS")
@@ -43,6 +49,24 @@ static JUNK_RE: Lazy<Regex> = Lazy::new(|| {
     ))
     .expect("static regex compiles")
 });
+
+static USER_MSG_CLS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+static ASSISTANT_MSG_CLS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+static TOOL_CALL_CLS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+static BUCKET_KEY_CLS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+
+fn models_type<'py>(
+    py: Python<'py>,
+    cell: &'static PyOnceLock<Py<PyType>>,
+    name: &str,
+) -> PyResult<Bound<'py, PyType>> {
+    let cached = cell.get_or_try_init(py, || -> PyResult<Py<PyType>> {
+        let module = py.import("cc_sentiment.models")?;
+        let cls = module.getattr(name)?.cast_into::<PyType>()?;
+        Ok(cls.unbind())
+    })?;
+    Ok(cached.bind(py).clone())
+}
 
 #[derive(Deserialize)]
 struct Envelope<'a> {
@@ -102,14 +126,14 @@ struct InputBlock<'a> {
 enum Parsed {
     User {
         content: String,
-        timestamp: String,
+        timestamp: DateTime<FixedOffset>,
         session_id: String,
         uuid: String,
         cc_version: String,
     },
     Assistant {
         content: String,
-        timestamp: String,
+        timestamp: DateTime<FixedOffset>,
         session_id: String,
         uuid: String,
         claude_model: String,
@@ -141,10 +165,26 @@ fn extract_user_text(content: &Content<'_>) -> Option<String> {
     }
 }
 
+fn truncate_at_chars(s: String, limit: usize) -> String {
+    if s.len() <= limit {
+        return s;
+    }
+    match s.char_indices().nth(limit) {
+        Some((idx, _)) => {
+            let mut out = s;
+            out.truncate(idx);
+            out.push_str("[...]");
+            out
+        }
+        None => s,
+    }
+}
+
 fn parse_envelope(env: Envelope<'_>) -> Option<Parsed> {
     if env.entrypoint.as_deref() == Some("sdk-cli") {
         return None;
     }
+    let ts = DateTime::parse_from_rfc3339(env.timestamp.as_deref()?).ok()?;
     match env.kind.as_deref()? {
         "user" => {
             if env.is_sidechain {
@@ -162,7 +202,7 @@ fn parse_envelope(env: Envelope<'_>) -> Option<Parsed> {
             }
             Some(Parsed::User {
                 content: trimmed.to_string(),
-                timestamp: env.timestamp?.into_owned(),
+                timestamp: ts,
                 session_id: env.session_id?.into_owned(),
                 uuid: env.uuid?.into_owned(),
                 cc_version: env.version?.into_owned(),
@@ -178,8 +218,8 @@ fn parse_envelope(env: Envelope<'_>) -> Option<Parsed> {
                 Content::Blocks(v) => v,
                 Content::Text(_) => return None,
             };
-            let mut text_parts: Vec<String> = Vec::new();
-            let mut tool_calls: Vec<(String, Option<String>)> = Vec::new();
+            let mut text_parts: Vec<String> = Vec::with_capacity(4);
+            let mut tool_calls: Vec<(String, Option<String>)> = Vec::with_capacity(4);
             let mut thinking_chars: usize = 0;
             for b in blocks {
                 match b.kind.as_deref() {
@@ -200,7 +240,7 @@ fn parse_envelope(env: Envelope<'_>) -> Option<Parsed> {
                     }
                     Some("thinking") => {
                         if let Some(t) = b.thinking {
-                            thinking_chars += t.chars().count();
+                            thinking_chars += bytecount::num_chars(t.as_bytes());
                         }
                     }
                     _ => {}
@@ -210,15 +250,10 @@ fn parse_envelope(env: Envelope<'_>) -> Option<Parsed> {
                 return None;
             }
             let combined = text_parts.join(" ");
-            let content = if combined.chars().count() > ASSISTANT_TRUNCATION {
-                let truncated: String = combined.chars().take(ASSISTANT_TRUNCATION).collect();
-                format!("{truncated}[...]")
-            } else {
-                combined
-            };
+            let content = truncate_at_chars(combined, ASSISTANT_TRUNCATION);
             Some(Parsed::Assistant {
                 content,
-                timestamp: env.timestamp?.into_owned(),
+                timestamp: ts,
                 session_id: env.session_id?.into_owned(),
                 uuid: env.uuid?.into_owned(),
                 claude_model: model.into_owned(),
@@ -293,25 +328,19 @@ fn classify_envelope(env: Envelope<'_>) -> Option<(String, i64, bool)> {
     Some((session_id, ts_secs, is_user))
 }
 
-fn tool_calls_to_tuple<'py>(
+fn build_tool_calls<'py>(
     py: Python<'py>,
-    tool_calls: Vec<(String, Option<String>)>,
+    calls: Vec<(String, Option<String>)>,
 ) -> PyResult<Bound<'py, PyTuple>> {
-    let items: Vec<Py<PyAny>> = tool_calls
+    let cls = models_type(py, &TOOL_CALL_CLS, "ToolCall")?;
+    let items: Vec<Bound<'py, PyAny>> = calls
         .into_iter()
-        .map(|(name, fp)| -> PyResult<Py<PyAny>> {
-            let name_obj: Py<PyAny> = PyString::new(py, &name).unbind().into_any();
-            let fp_obj: Py<PyAny> = match fp {
-                Some(s) => PyString::new(py, &s).unbind().into_any(),
-                None => py.None(),
-            };
-            Ok(PyTuple::new(py, [name_obj, fp_obj])?.unbind().into_any())
-        })
+        .map(|(name, fp)| cls.call1((name, fp)))
         .collect::<PyResult<Vec<_>>>()?;
     PyTuple::new(py, items)
 }
 
-fn parsed_to_tuple<'py>(py: Python<'py>, parsed: Parsed) -> PyResult<Bound<'py, PyTuple>> {
+fn parsed_to_py<'py>(py: Python<'py>, parsed: Parsed) -> PyResult<Bound<'py, PyAny>> {
     match parsed {
         Parsed::User {
             content,
@@ -319,17 +348,19 @@ fn parsed_to_tuple<'py>(py: Python<'py>, parsed: Parsed) -> PyResult<Bound<'py, 
             session_id,
             uuid,
             cc_version,
-        } => PyTuple::new(
-            py,
-            [
-                PyString::new(py, "u").unbind().into_any(),
-                PyString::new(py, &content).unbind().into_any(),
-                PyString::new(py, &timestamp).unbind().into_any(),
-                PyString::new(py, &session_id).unbind().into_any(),
-                PyString::new(py, &uuid).unbind().into_any(),
-                PyString::new(py, &cc_version).unbind().into_any(),
-            ],
-        ),
+        } => {
+            let cls = models_type(py, &USER_MSG_CLS, "UserMessage")?;
+            let empty_calls = PyTuple::empty(py);
+            cls.call1((
+                content,
+                timestamp,
+                session_id,
+                uuid,
+                empty_calls,
+                0usize,
+                cc_version,
+            ))
+        }
         Parsed::Assistant {
             content,
             timestamp,
@@ -338,43 +369,82 @@ fn parsed_to_tuple<'py>(py: Python<'py>, parsed: Parsed) -> PyResult<Bound<'py, 
             claude_model,
             tool_calls,
             thinking_chars,
-        } => PyTuple::new(
-            py,
-            [
-                PyString::new(py, "a").unbind().into_any(),
-                PyString::new(py, &content).unbind().into_any(),
-                PyString::new(py, &timestamp).unbind().into_any(),
-                PyString::new(py, &session_id).unbind().into_any(),
-                PyString::new(py, &uuid).unbind().into_any(),
-                PyString::new(py, &claude_model).unbind().into_any(),
-                thinking_chars.into_pyobject(py)?.unbind().into_any(),
-                tool_calls_to_tuple(py, tool_calls)?.unbind().into_any(),
-            ],
-        ),
+        } => {
+            let cls = models_type(py, &ASSISTANT_MSG_CLS, "AssistantMessage")?;
+            let calls_tuple = build_tool_calls(py, tool_calls)?;
+            cls.call1((
+                content,
+                timestamp,
+                session_id,
+                uuid,
+                calls_tuple,
+                thinking_chars,
+                claude_model,
+            ))
+        }
     }
 }
 
+fn handle_parse_line(
+    line: &[u8],
+    messages: &mut Vec<Parsed>,
+    by_session: &mut FxHashMap<String, Vec<(i64, bool)>>,
+) {
+    if line.is_empty() || line.iter().all(|&b| b.is_ascii_whitespace()) {
+        return;
+    }
+    let Ok(env) = sonic_rs::from_slice::<Envelope>(line) else {
+        return;
+    };
+    let Some(parsed) = parse_envelope(env) else {
+        return;
+    };
+    let (sid, ts_secs, is_user) = match &parsed {
+        Parsed::User {
+            session_id,
+            timestamp,
+            ..
+        } => (session_id.clone(), timestamp.timestamp(), true),
+        Parsed::Assistant {
+            session_id,
+            timestamp,
+            ..
+        } => (session_id.clone(), timestamp.timestamp(), false),
+    };
+    by_session.entry(sid).or_default().push((ts_secs, is_user));
+    messages.push(parsed);
+}
+
+fn handle_scan_line(
+    line: &[u8],
+    by_session: &mut FxHashMap<String, Vec<(i64, bool)>>,
+) {
+    if line.is_empty() || line.iter().all(|&b| b.is_ascii_whitespace()) {
+        return;
+    }
+    let Ok(env) = sonic_rs::from_slice::<Envelope>(line) else {
+        return;
+    };
+    let Some((session_id, ts_secs, is_user)) = classify_envelope(env) else {
+        return;
+    };
+    by_session.entry(session_id).or_default().push((ts_secs, is_user));
+}
+
 fn bucket_keys_from_bytes(bytes: &[u8]) -> Vec<(String, i64)> {
-    let mut by_session: HashMap<String, Vec<(i64, bool)>> = HashMap::new();
-    for line in bytes.split(|&b| b == b'\n') {
-        if line.iter().all(|&b| b.is_ascii_whitespace()) {
-            continue;
-        }
-        let Ok(env) = serde_json::from_slice::<Envelope>(line) else {
-            continue;
-        };
-        let Some((session_id, ts_secs, is_user)) = classify_envelope(env) else {
-            continue;
-        };
-        by_session
-            .entry(session_id)
-            .or_default()
-            .push((ts_secs, is_user));
+    let mut by_session: FxHashMap<String, Vec<(i64, bool)>> = FxHashMap::default();
+    let mut start = 0usize;
+    for pos in memchr_iter(b'\n', bytes) {
+        handle_scan_line(&bytes[start..pos], &mut by_session);
+        start = pos + 1;
+    }
+    if start < bytes.len() {
+        handle_scan_line(&bytes[start..], &mut by_session);
     }
     finalize_bucket_keys(by_session)
 }
 
-fn finalize_bucket_keys(by_session: HashMap<String, Vec<(i64, bool)>>) -> Vec<(String, i64)> {
+fn finalize_bucket_keys(by_session: FxHashMap<String, Vec<(i64, bool)>>) -> Vec<(String, i64)> {
     let mut keys: Vec<(String, i64)> = Vec::new();
     for (session_id, mut entries) in by_session {
         if entries.iter().filter(|(_, u)| *u).count() < MIN_USER_TURNS_PER_SESSION {
@@ -462,37 +532,16 @@ struct ParsedFile {
 
 fn parse_file_internal(path: &str, mtime: f64) -> std::io::Result<ParsedFile> {
     let bytes = std::fs::read(path)?;
-    let mut messages: Vec<Parsed> = Vec::new();
-    let mut by_session: HashMap<String, Vec<(i64, bool)>> = HashMap::new();
-    for line in bytes.split(|&b| b == b'\n') {
-        if line.iter().all(|&b| b.is_ascii_whitespace()) {
-            continue;
-        }
-        let Ok(env) = serde_json::from_slice::<Envelope>(line) else {
-            continue;
-        };
-        let Some(parsed) = parse_envelope(env) else {
-            continue;
-        };
-        let (session_id, timestamp, is_user) = match &parsed {
-            Parsed::User {
-                session_id,
-                timestamp,
-                ..
-            } => (session_id, timestamp, true),
-            Parsed::Assistant {
-                session_id,
-                timestamp,
-                ..
-            } => (session_id, timestamp, false),
-        };
-        if let Ok(ts) = DateTime::parse_from_rfc3339(timestamp) {
-            by_session
-                .entry(session_id.clone())
-                .or_default()
-                .push((ts.timestamp(), is_user));
-        }
-        messages.push(parsed);
+    let est_lines = bytes.len() / AVG_LINE_BYTES + 1;
+    let mut messages: Vec<Parsed> = Vec::with_capacity(est_lines);
+    let mut by_session: FxHashMap<String, Vec<(i64, bool)>> = FxHashMap::default();
+    let mut start = 0usize;
+    for pos in memchr_iter(b'\n', &bytes) {
+        handle_parse_line(&bytes[start..pos], &mut messages, &mut by_session);
+        start = pos + 1;
+    }
+    if start < bytes.len() {
+        handle_parse_line(&bytes[start..], &mut messages, &mut by_session);
     }
     Ok(ParsedFile {
         path: path.to_string(),
@@ -502,41 +551,32 @@ fn parse_file_internal(path: &str, mtime: f64) -> std::io::Result<ParsedFile> {
     })
 }
 
-fn parsed_file_to_py(py: Python<'_>, pf: ParsedFile) -> PyResult<Py<PyAny>> {
-    let bk_items: Vec<Py<PyAny>> = pf
+fn parsed_file_to_py<'py>(py: Python<'py>, pf: ParsedFile) -> PyResult<Bound<'py, PyAny>> {
+    let bk_cls = models_type(py, &BUCKET_KEY_CLS, "BucketKey")?;
+    let bk_items: Vec<Bound<'py, PyAny>> = pf
         .bucket_keys
         .into_iter()
-        .map(|(sid, idx)| -> PyResult<Py<PyAny>> {
-            Ok(PyTuple::new(
-                py,
-                [
-                    PyString::new(py, &sid).unbind().into_any(),
-                    idx.into_pyobject(py)?.unbind().into_any(),
-                ],
-            )?
-            .unbind()
-            .into_any())
-        })
+        .map(|(sid, idx)| bk_cls.call1((sid, idx)))
         .collect::<PyResult<Vec<_>>>()?;
     let bk = PyTuple::new(py, bk_items)?;
 
-    let msg_items: Vec<Py<PyAny>> = pf
+    let msg_items: Vec<Bound<'py, PyAny>> = pf
         .messages
         .into_iter()
-        .map(|p| -> PyResult<Py<PyAny>> { Ok(parsed_to_tuple(py, p)?.unbind().into_any()) })
+        .map(|p| parsed_to_py(py, p))
         .collect::<PyResult<Vec<_>>>()?;
     let msgs = PyTuple::new(py, msg_items)?;
 
     let out = PyTuple::new(
         py,
         [
-            PyString::new(py, &pf.path).unbind().into_any(),
-            pf.mtime.into_pyobject(py)?.unbind().into_any(),
-            bk.unbind().into_any(),
-            msgs.unbind().into_any(),
+            PyString::new(py, &pf.path).into_any(),
+            pf.mtime.into_pyobject(py)?.into_any(),
+            bk.into_any(),
+            msgs.into_any(),
         ],
     )?;
-    Ok(out.unbind().into_any())
+    Ok(out.into_any())
 }
 
 #[pyclass]
@@ -546,7 +586,7 @@ pub struct ParseStream {
 
 #[pymethods]
 impl ParseStream {
-    fn recv(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+    fn recv<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
         let opt = py.detach(|| self.rx.recv().ok());
         match opt {
             None => Ok(None),
@@ -554,7 +594,11 @@ impl ParseStream {
         }
     }
 
-    fn recv_many(&self, py: Python<'_>, max: usize) -> PyResult<Vec<Py<PyAny>>> {
+    fn recv_many<'py>(
+        &self,
+        py: Python<'py>,
+        max: usize,
+    ) -> PyResult<Vec<Bound<'py, PyAny>>> {
         let batch: Vec<ParsedFile> = py.detach(|| {
             let mut out: Vec<ParsedFile> = Vec::new();
             match self.rx.recv() {
@@ -602,7 +646,7 @@ fn scan_bucket_keys(
     name_contains: Option<&str>,
     limit: Option<usize>,
     known_mtimes: Option<HashMap<String, f64>>,
-) -> PyResult<Vec<(String, f64, Vec<(String, i64)>)>> {
+) -> PyResult<Vec<ScanEntry>> {
     let dir = PathBuf::from(dir);
     Ok(py.detach(move || {
         let filter = FileFilter {
@@ -637,7 +681,7 @@ mod tests {
     use super::*;
 
     fn parse_line(line: &str) -> Option<Parsed> {
-        let env: Envelope = serde_json::from_str(line).ok()?;
+        let env: Envelope = sonic_rs::from_str(line).ok()?;
         parse_envelope(env)
     }
 
