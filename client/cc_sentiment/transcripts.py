@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Literal
 
 import orjson
 
@@ -17,6 +19,16 @@ from cc_sentiment.models import (
     TranscriptMessage,
     UserMessage,
 )
+
+try:
+    from cc_sentiment import _transcripts_rs as rust
+except ImportError:
+    rust = None
+
+if os.environ.get("CC_SENTIMENT_DISABLE_RUST"):
+    rust = None
+
+BACKEND: Literal["rust", "python"] = "rust" if rust is not None else "python"
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 BUCKET_MINUTES = 5
@@ -49,8 +61,36 @@ class TranscriptDiscovery:
     def transcript_mtime(path: Path) -> float:
         return path.stat().st_mtime
 
+    @staticmethod
+    def find_in(
+        directory: Path,
+        *,
+        name_contains: str | None = None,
+        limit: int | None = None,
+        known_mtimes: dict[str, float] | None = None,
+    ) -> list[tuple[Path, float]]:
+        if not directory.exists():
+            return []
+        found: list[tuple[Path, float]] = []
+        for p in directory.rglob("*.jsonl"):
+            if name_contains and name_contains not in p.name:
+                continue
+            try:
+                mtime = p.stat().st_mtime
+            except OSError:
+                continue
+            if known_mtimes is not None:
+                prev = known_mtimes.get(str(p))
+                if prev is not None and prev >= mtime:
+                    continue
+            found.append((p, mtime))
+        found.sort(key=lambda e: e[0])
+        if limit is not None:
+            found = found[:limit]
+        return found
 
-class TranscriptParser:
+
+class PythonParser:
     @staticmethod
     def parse_line(line: str) -> TranscriptMessage | None:
         try:
@@ -219,6 +259,125 @@ class TranscriptParser:
                     bucket_index=BucketIndex(idx),
                 ))
         return keys
+
+
+class TranscriptParser:
+    @staticmethod
+    def parse_line(line: str) -> TranscriptMessage | None:
+        if rust is None:
+            return PythonParser.parse_line(line)
+        data = rust.parse_line(line)
+        return TranscriptParser.message_from_dict(data) if data is not None else None
+
+    @staticmethod
+    def parse_file(path: Path) -> list[TranscriptMessage]:
+        if rust is None:
+            return PythonParser.parse_file(path)
+        return [TranscriptParser.message_from_dict(d) for d in rust.parse_file(str(path))]
+
+    @staticmethod
+    def bucket_keys_for(path: Path) -> list[BucketKey]:
+        if rust is None:
+            return PythonParser.bucket_keys_for(path)
+        return [
+            BucketKey(session_id=SessionId(s), bucket_index=BucketIndex(i))
+            for s, i in rust.bucket_keys_for(str(path))
+        ]
+
+    @staticmethod
+    def scan_bucket_keys(
+        directory: Path,
+        *,
+        name_contains: str | None = None,
+        limit: int | None = None,
+        known_mtimes: dict[str, float] | None = None,
+    ) -> list[tuple[Path, float, list[BucketKey]]]:
+        if rust is not None:
+            return [
+                (
+                    Path(p),
+                    mtime,
+                    [
+                        BucketKey(session_id=SessionId(s), bucket_index=BucketIndex(i))
+                        for s, i in keys
+                    ],
+                )
+                for p, mtime, keys in rust.scan_bucket_keys(
+                    str(directory),
+                    name_contains=name_contains,
+                    limit=limit,
+                    known_mtimes=known_mtimes,
+                )
+            ]
+        files = TranscriptDiscovery.find_in(
+            directory,
+            name_contains=name_contains,
+            limit=limit,
+            known_mtimes=known_mtimes,
+        )
+        return [(p, mtime, PythonParser.bucket_keys_for(p)) for p, mtime in files]
+
+    @staticmethod
+    def scan_parse_files(
+        directory: Path,
+        *,
+        name_contains: str | None = None,
+        limit: int | None = None,
+        known_mtimes: dict[str, float] | None = None,
+    ) -> list[tuple[Path, float, list[TranscriptMessage]]]:
+        if rust is not None:
+            return [
+                (
+                    Path(p),
+                    mtime,
+                    [TranscriptParser.message_from_dict(d) for d in dicts],
+                )
+                for p, mtime, dicts in rust.scan_parse_files(
+                    str(directory),
+                    name_contains=name_contains,
+                    limit=limit,
+                    known_mtimes=known_mtimes,
+                )
+            ]
+        files = TranscriptDiscovery.find_in(
+            directory,
+            name_contains=name_contains,
+            limit=limit,
+            known_mtimes=known_mtimes,
+        )
+        return [(p, mtime, PythonParser.parse_file(p)) for p, mtime in files]
+
+    @staticmethod
+    def message_from_dict(data: dict) -> TranscriptMessage:
+        tool_calls = tuple(
+            ToolCall(name=tc["name"], file_path=tc.get("file_path"))
+            for tc in data.get("tool_calls", ())
+        )
+        ts = datetime.fromisoformat(data["timestamp"])
+        session_id = SessionId(data["session_id"])
+        match data["kind"]:
+            case "user":
+                return UserMessage(
+                    content=data["content"],
+                    timestamp=ts,
+                    session_id=session_id,
+                    uuid=data["uuid"],
+                    tool_calls=tool_calls,
+                    thinking_chars=data.get("thinking_chars", 0),
+                    cc_version=data["cc_version"],
+                )
+            case "assistant":
+                return AssistantMessage(
+                    content=data["content"],
+                    timestamp=ts,
+                    session_id=session_id,
+                    uuid=data["uuid"],
+                    tool_calls=tool_calls,
+                    thinking_chars=data.get("thinking_chars", 0),
+                    claude_model=data["claude_model"],
+                )
+            case other:
+                raise ValueError(f"unknown message kind: {other!r}")
 
 
 class ConversationBucketer:

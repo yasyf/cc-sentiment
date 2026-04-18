@@ -11,13 +11,81 @@ concurrency:
   group: release-pypi
   cancel-in-progress: false
 
-permissions:
-  id-token: write
-
 jobs:
-  release:
+  set-version:
     runs-on: ubuntu-latest
-    environment: pypi
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        run: echo "version=0.2.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+  build_wheels:
+    name: Build ${{ matrix.id }} wheel
+    needs: set-version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: macos-arm64
+            os: macos-14
+            cibw_archs: arm64
+          - id: macos-x86_64
+            os: macos-13
+            cibw_archs: x86_64
+          - id: linux-x86_64
+            os: ubuntu-latest
+            cibw_archs: x86_64
+          - id: linux-aarch64
+            os: ubuntu-24.04-arm
+            cibw_archs: aarch64
+          - id: windows-amd64
+            os: windows-latest
+            cibw_archs: AMD64
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Patch version
+        env:
+          VERSION: ${{ needs.set-version.outputs.version }}
+        run: |
+          uv run --no-project --with tomli-w python - <<'PY'
+          import os, tomllib, tomli_w
+          from pathlib import Path
+          path = Path("client/pyproject.toml")
+          data = tomllib.loads(path.read_text())
+          data["project"]["version"] = os.environ["VERSION"]
+          path.write_text(tomli_w.dumps(data))
+          PY
+
+      - name: Install Rust (non-Linux hosts)
+        if: runner.os != 'Linux'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v3.2.0
+        with:
+          package-dir: client
+          output-dir: wheelhouse
+        env:
+          CIBW_ARCHS: ${{ matrix.cibw_archs }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cibw-wheels-${{ matrix.id }}
+          path: ./wheelhouse/*.whl
+          if-no-files-found: error
+
+  build_sdist:
+    name: Build sdist
+    needs: set-version
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
@@ -29,7 +97,7 @@ jobs:
 
       - name: Patch version
         env:
-          VERSION: "0.1.${{ github.run_number }}"
+          VERSION: ${{ needs.set-version.outputs.version }}
         run: |
           uv run --no-project --with tomli-w python - <<'PY'
           import os, tomllib, tomli_w
@@ -40,11 +108,42 @@ jobs:
           path.write_text(tomli_w.dumps(data))
           PY
 
-      - name: Build
+      - name: Build sdist
         working-directory: client
-        run: uv build
+        run: uv build --sdist
 
-      - name: Publish
-        uses: pypa/gh-action-pypi-publish@v1.14.0
+      - uses: actions/upload-artifact@v4
         with:
-          packages-dir: client/dist
+          name: cibw-sdist
+          path: client/dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: [build_wheels, build_sdist]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cibw-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify artifacts
+        run: |
+          wheels=$(ls dist/*.whl | wc -l | tr -d ' ')
+          sdists=$(ls dist/*.tar.gz | wc -l | tr -d ' ')
+          echo "wheels=$wheels sdists=$sdists"
+          ls -la dist/
+          test "$wheels" = "5" || { echo "expected 5 wheels, got $wheels"; exit 1; }
+          test "$sdists" = "1" || { echo "expected 1 sdist, got $sdists"; exit 1; }
+          for w in dist/*.whl; do
+            case "$w" in
+              *cp313-abi3*) ;;
+              *) echo "non-abi3 wheel: $w"; exit 1 ;;
+            esac
+          done
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

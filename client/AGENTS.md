@@ -42,6 +42,27 @@ client/
         └── sample_transcript.jsonl
 ```
 
+## Optional Rust Parser
+
+`cc_sentiment._transcripts_rs` is a PyO3 extension under `crates/transcripts/` that provides a ~5× faster implementation of `parse_line` / `parse_file` / `bucket_keys_for`. It's **optional** — distributed as prebuilt abi3 wheels per `(os, arch)`, with the Python implementation in `transcripts.py` as a permanent fallback.
+
+- Dispatch lives in `transcripts.py`: `try: from cc_sentiment import _transcripts_rs as rust` → `BACKEND` constant. If the extension is missing, `PythonParser` handles everything.
+- `CC_SENTIMENT_DISABLE_RUST=1` forces the Python path at runtime (used by CI to run parity tests over both backends).
+- `setuptools-rust` with `optional = true` means an sdist install on a platform without `cargo` produces a pure-Python install — no Rust toolchain required.
+- `setup.cfg` sets `[bdist_wheel] py_limited_api = cp313` so wheels are abi3-tagged (`cp313-abi3`).
+
+**Contributors who only touch Python code need nothing extra** — `uv sync && uv run pytest` works and exercises the Python path. The native extension is built lazily only when `cargo` is on `$PATH`.
+
+**Contributors working on the Rust crate** need rustup:
+
+```bash
+brew install rustup-init && rustup-init -y
+uv pip install -e . --force-reinstall   # rebuilds the extension
+cd crates/transcripts && cargo test      # unit tests for the Rust side
+```
+
+Parity tests in `tests/test_transcripts.py` are parametrized over both backends via a `backend` fixture that monkeypatches `transcripts_module.rust` — any change to the Python parser must be mirrored in the Rust crate, and vice versa.
+
 ## Transcript Discovery
 
 Claude Code stores conversations at `~/.claude/projects/<project-slug>/<uuid>.jsonl`. Each line is a JSON object representing a conversation turn.

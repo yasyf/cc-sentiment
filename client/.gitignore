@@ -1,0 +1,10 @@
+# Rust build artifacts
+target/
+*.rlib
+*.rmeta
+*.pdb
+
+# Compiled extension (built in-place by editable installs)
+cc_sentiment/_transcripts_rs*.so
+cc_sentiment/_transcripts_rs*.pyd
+cc_sentiment/_transcripts_rs*.dylib

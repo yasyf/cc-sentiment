@@ -41,15 +41,45 @@ Repository = "https://github.com/yasyf/cc-sentiment"
 Issues = "https://github.com/yasyf/cc-sentiment/issues"
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=68", "setuptools-rust>=1.10"]
+build-backend = "setuptools.build_meta"
 
-[tool.hatch.build.targets.wheel]
+[tool.setuptools]
 packages = ["cc_sentiment"]
+
+[tool.setuptools.package-data]
+cc_sentiment = ["*.pyi", "py.typed"]
+
+[[tool.setuptools-rust.ext-modules]]
+target = "cc_sentiment._transcripts_rs"
+path = "crates/transcripts/Cargo.toml"
+optional = true
+py-limited-api = "auto"
+debug = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.cibuildwheel]
+build = "cp313-*"
+skip = ["pp*", "*musllinux*", "*-manylinux_i686", "*-win32"]
+build-frontend = "build"
+build-verbosity = 1
+
+[tool.cibuildwheel.linux]
+archs = ["x86_64", "aarch64"]
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
+environment = { PATH = "$HOME/.cargo/bin:$PATH" }
+before-all = "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable"
+
+[tool.cibuildwheel.macos]
+archs = ["arm64", "x86_64"]
+environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }
+
+[tool.cibuildwheel.windows]
+archs = ["AMD64"]
 
 [dependency-groups]
 dev = [

@@ -28,7 +28,7 @@ jobs:
 
       - name: Patch version
         env:
-          VERSION: "0.1.${{ github.run_number }}"
+          VERSION: "0.2.${{ github.run_number }}"
         run: |
           uv run --no-project --with tomli-w python - <<'PY'
           import os, tomllib, tomli_w
@@ -39,24 +39,23 @@ jobs:
           path.write_text(tomli_w.dumps(data))
           PY
 
-      - name: Build
+      - name: Build sdist
         working-directory: client
-        run: uv build
+        run: uv build --sdist
 
       - name: Rename sdist to stable name
         env:
-          VERSION: "0.1.${{ github.run_number }}"
+          VERSION: "0.2.${{ github.run_number }}"
         run: cp "client/dist/cc_sentiment-${VERSION}.tar.gz" client/dist/cc-sentiment.tar.gz
 
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: "0.1.${{ github.run_number }}"
+          VERSION: "0.2.${{ github.run_number }}"
         run: |
           gh release create "v${VERSION}" \
             --title "v${VERSION}" \
             --target "${{ github.sha }}" \
             --generate-notes \
             --latest \
-            client/dist/cc-sentiment.tar.gz \
-            client/dist/cc_sentiment-${VERSION}-py3-none-any.whl
+            client/dist/cc-sentiment.tar.gz

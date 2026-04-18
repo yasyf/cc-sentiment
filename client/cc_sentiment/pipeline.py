@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -24,6 +23,7 @@ from cc_sentiment.models import (
 )
 from cc_sentiment.repo import Repository
 from cc_sentiment.transcripts import (
+    CLAUDE_PROJECTS_DIR,
     ConversationBucketer,
     TranscriptDiscovery,
     TranscriptParser,
@@ -50,21 +50,23 @@ class Pipeline:
 
     @staticmethod
     async def count_new_buckets(repo: Repository, transcripts: list[tuple[Path, float]]) -> int:
+        if not transcripts:
+            return 0
+        known = await anyio.to_thread.run_sync(repo.file_mtimes)
         scored_by_path = await anyio.to_thread.run_sync(repo.scored_buckets_for_all)
-        limiter = anyio.CapacityLimiter(max(os.cpu_count() or 4, 4))
-        results: list[int] = []
 
-        def count_one(path: Path) -> int:
-            scored = scored_by_path.get(str(path), frozenset())
-            return sum(1 for key in TranscriptParser.bucket_keys_for(path) if key not in scored)
+        def do_scan() -> int:
+            scan = TranscriptParser.scan_bucket_keys(
+                CLAUDE_PROJECTS_DIR, known_mtimes=known
+            )
+            return sum(
+                1
+                for path, _, keys in scan
+                for key in keys
+                if key not in scored_by_path.get(str(path), frozenset())
+            )
 
-        async def run_one(path: Path) -> None:
-            results.append(await anyio.to_thread.run_sync(count_one, path, limiter=limiter))
-
-        async with anyio.create_task_group() as tg:
-            for path, _ in transcripts:
-                tg.start_soon(run_one, path)
-        return sum(results)
+        return await anyio.to_thread.run_sync(do_scan)
 
     @staticmethod
     def _parse_buckets_with_metrics(

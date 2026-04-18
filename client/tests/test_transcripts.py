@@ -14,6 +14,7 @@ from cc_sentiment.models import (
     ToolCall,
     UserMessage,
 )
+from cc_sentiment import transcripts as transcripts_module
 from cc_sentiment.transcripts import (
     ASSISTANT_TRUNCATION,
     ConversationBucketer,
@@ -23,6 +24,16 @@ from cc_sentiment.transcripts import (
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "sample_transcript.jsonl"
 
 
+@pytest.fixture(params=["python", "rust"])
+def backend(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
+    if request.param == "rust" and transcripts_module.rust is None:
+        pytest.skip("rust extension not built")
+    if request.param == "python":
+        monkeypatch.setattr(transcripts_module, "rust", None)
+    return request.param
+
+
+@pytest.mark.usefixtures("backend")
 class TestTranscriptParser:
     def test_skips_queue_operations(self) -> None:
         messages = TranscriptParser.parse_file(FIXTURE_PATH)

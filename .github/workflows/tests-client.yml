@@ -1,0 +1,54 @@
+name: Tests (client)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - client/**
+      - .github/workflows/tests-client.yml
+  pull_request:
+    paths:
+      - client/**
+      - .github/workflows/tests-client.yml
+
+concurrency:
+  group: tests-client-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.0.0
+        with:
+          python-version: "3.13"
+          cache-dependency-glob: client/uv.lock
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Sync (rebuilds Rust ext in release mode via debug=false)
+        working-directory: client
+        run: uv sync --extra mlx
+
+      - name: Assert extension is release build
+        working-directory: client
+        run: |
+          uv run python - <<'PY'
+          from cc_sentiment import _transcripts_rs as r
+          assert r.is_release_build(), "_transcripts_rs was built in debug mode"
+          print("release build confirmed")
+          PY
+
+      - name: Run tests (rust backend)
+        working-directory: client
+        run: uv run pytest -q
+
+      - name: Run tests (python backend)
+        working-directory: client
+        env:
+          CC_SENTIMENT_DISABLE_RUST: "1"
+        run: uv run pytest -q
