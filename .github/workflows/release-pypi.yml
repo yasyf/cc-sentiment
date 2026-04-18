@@ -47,10 +47,10 @@ jobs:
             os: windows-latest
             cibw_archs: AMD64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.0.0
+        uses: astral-sh/setup-uv@v8.1.0
         with:
           python-version: "3.13"
 
@@ -72,15 +72,41 @@ jobs:
         if: runner.os != 'Linux'
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust build artifacts (host builds)
+        if: runner.os != 'Linux'
+        uses: Swatinem/rust-cache@v2.9.1
+        with:
+          workspaces: client -> target
+          cache-on-failure: true
+          shared-key: wheels-${{ matrix.id }}
+
+      - name: Cache Rust build artifacts (Linux container)
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          path: |
+            client/.cargo/registry/index
+            client/.cargo/registry/cache
+            client/.cargo/git/db
+            client/.cargo/bin
+            client/target
+          key: wheels-${{ matrix.id }}-${{ hashFiles('client/Cargo.lock', 'client/crates/**/Cargo.toml') }}
+          restore-keys: |
+            wheels-${{ matrix.id }}-
+
       - name: Build wheels
-        uses: pypa/cibuildwheel@v3.2.0
+        uses: pypa/cibuildwheel@v3.4.1
         with:
           package-dir: client
           output-dir: wheelhouse
         env:
           CIBW_ARCHS: ${{ matrix.cibw_archs }}
+          CIBW_ENVIRONMENT_LINUX: >-
+            CARGO_HOME=/project/.cargo
+            CARGO_TARGET_DIR=/project/target
+            PATH=/project/.cargo/bin:$PATH
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: cibw-wheels-${{ matrix.id }}
           path: ./wheelhouse/*.whl
@@ -91,10 +117,10 @@ jobs:
     needs: set-version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.0.0
+        uses: astral-sh/setup-uv@v8.1.0
         with:
           python-version: "3.13"
           cache-dependency-glob: client/uv.lock
@@ -116,7 +142,7 @@ jobs:
         working-directory: client
         run: uv build --sdist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: cibw-sdist
           path: client/dist/*.tar.gz
@@ -129,7 +155,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8.0.1
         with:
           pattern: cibw-*
           path: dist
@@ -141,7 +167,7 @@ jobs:
     needs: [set-version, build_wheels, build_sdist, publish]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8.0.1
         with:
           pattern: cibw-*
           path: dist
