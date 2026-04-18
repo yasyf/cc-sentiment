@@ -19,6 +19,7 @@ from .config import (
     GPGConfig,
     SSHConfig,
 )
+from .daemon import DaemonEvent, DaemonEventPayload, DaemonEventType
 from .record import CLIENT_VERSION, SentimentRecord, UploadPayload
 from .stats import MyStat
 from .transcript import (
@@ -41,6 +42,9 @@ __all__ = [
     "ContributorId",
     "ContributorType",
     "ConversationBucket",
+    "DaemonEvent",
+    "DaemonEventPayload",
+    "DaemonEventType",
     "GPGConfig",
     "GistConfig",
     "MyStat",

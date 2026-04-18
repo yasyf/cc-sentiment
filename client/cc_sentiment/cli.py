@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import contextlib
 import os
+import subprocess
 import sys
 
 os.environ.setdefault("PYTHONNODEBUGRANGES", "1")
 
 import anyio
 import click
+import httpx
 from rich.console import Console
 
 from cc_sentiment.models import AppState
+
+DAEMON_PING_ERRORS = (httpx.HTTPError, subprocess.CalledProcessError, OSError, TimeoutError)
 
 
 @click.group(invoke_without_command=True)
@@ -24,6 +29,10 @@ from cc_sentiment.models import AppState
 def main(ctx: click.Context, model_repo: str | None, debug: bool) -> None:
     ctx.ensure_object(dict)
     ctx.obj["debug"] = debug
+
+    from cc_sentiment.updater import SelfUpdater
+    SelfUpdater.maybe_upgrade()
+
     if ctx.invoked_subcommand is not None:
         return
 
@@ -45,8 +54,11 @@ def setup(ctx: click.Context) -> None:
 @main.command()
 def install() -> None:
     from cc_sentiment.daemon import LaunchAgent
+    from cc_sentiment.upload import Uploader
 
     LaunchAgent.install()
+    with contextlib.suppress(*DAEMON_PING_ERRORS):
+        anyio.run(Uploader.ping_daemon_event, "install")
     click.echo(
         "Scheduled daily. Your transcripts will be scored and uploaded in the background. "
         "Undo with `cc-sentiment uninstall`."
@@ -56,11 +68,14 @@ def install() -> None:
 @main.command()
 def uninstall() -> None:
     from cc_sentiment.daemon import LaunchAgent
+    from cc_sentiment.upload import Uploader
 
     if not LaunchAgent.is_installed():
         click.echo("Not scheduled — nothing to remove.")
         return
     LaunchAgent.uninstall()
+    with contextlib.suppress(*DAEMON_PING_ERRORS):
+        anyio.run(Uploader.ping_daemon_event, "uninstall")
     click.echo("Removed the daily schedule.")
 
 

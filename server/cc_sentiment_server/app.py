@@ -19,6 +19,7 @@ from slowapi.util import get_remote_address
 
 from cc_sentiment_server.db import Database
 from cc_sentiment_server.models import (
+    DaemonEventPayload,
     DataResponse,
     MyStatResponse,
     StatusResponse,
@@ -192,6 +193,29 @@ def create_app(
             revalidate(f"user:{db_contributor_id}"),
         )
         return UploadResponse(ingested=len(payload.records))
+
+    @web_app.post("/daemon-event")
+    @limiter.limit("30/minute")
+    async def daemon_event(request: Request, payload: DaemonEventPayload) -> StatusResponse:
+        if not await verifier.verify_signature(
+            payload.contributor_type,
+            payload.contributor_id,
+            json.dumps(
+                payload.event.model_dump(mode="json"),
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            payload.signature,
+        ):
+            return JSONResponse({"detail": "Signature verification failed"}, status_code=401)
+
+        db_contributor_id = (
+            payload.contributor_id.split("/", 1)[0]
+            if payload.contributor_type == "gist"
+            else payload.contributor_id
+        )
+        await db.record_daemon_event(payload.event, db_contributor_id, payload.contributor_type)
+        return StatusResponse()
 
     @web_app.get("/my-stats")
     @limiter.limit("30/minute")

@@ -8,6 +8,7 @@ from typing import ClassVar
 from psycopg_pool import AsyncConnectionPool
 
 from cc_sentiment_server.models import (
+    DaemonEvent,
     DataResponse,
     DistributionPoint,
     ModelBreakdown,
@@ -149,6 +150,27 @@ SELECT add_compression_policy('sentiment', INTERVAL '30 days',
     if_not_exists => TRUE)
 """
 
+CREATE_DAEMON_EVENTS_SQL = """
+CREATE TABLE IF NOT EXISTS daemon_events (
+    time TIMESTAMPTZ NOT NULL,
+    contributor_type TEXT NOT NULL CHECK(contributor_type IN ('github', 'gpg', 'gist')),
+    contributor_id TEXT NOT NULL,
+    event_type TEXT NOT NULL CHECK(event_type IN ('install', 'uninstall')),
+    client_version TEXT NOT NULL,
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+"""
+
+CREATE_DAEMON_EVENT_INDEXES_SQL = [
+    "CREATE INDEX IF NOT EXISTS idx_daemon_events_time ON daemon_events (time DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_daemon_events_contributor ON daemon_events (contributor_id, time DESC)",
+]
+
+INSERT_DAEMON_EVENT_SQL = """
+INSERT INTO daemon_events (time, contributor_type, contributor_id, event_type, client_version)
+VALUES (%(time)s, %(contributor_type)s, %(contributor_id)s, %(event_type)s, %(client_version)s)
+"""
+
 SEED_STATEMENTS = [
     CREATE_TOOLKIT_EXTENSION_SQL,
     CREATE_TABLE_SQL,
@@ -160,6 +182,8 @@ SEED_STATEMENTS = [
     ADD_TOTALS_CAGG_POLICY_SQL,
     ENABLE_COMPRESSION_SQL,
     ADD_COMPRESSION_POLICY_SQL,
+    CREATE_DAEMON_EVENTS_SQL,
+    *CREATE_DAEMON_EVENT_INDEXES_SQL,
 ]
 
 
@@ -384,6 +408,21 @@ class Database:
     async def _fetch_one(self, sql: str, params: dict | None = None) -> tuple:
         async with self.pool.connection() as conn:
             return await (await conn.execute(sql, params or {})).fetchone()
+
+    async def record_daemon_event(
+        self, event: DaemonEvent, contributor_id: str, contributor_type: str
+    ) -> None:
+        async with self.pool.connection() as conn:
+            await conn.execute(
+                INSERT_DAEMON_EVENT_SQL,
+                {
+                    "time": event.time,
+                    "contributor_type": contributor_type,
+                    "contributor_id": contributor_id,
+                    "event_type": event.event_type,
+                    "client_version": event.client_version,
+                },
+            )
 
     async def ingest(self, records: list[SentimentRecord], contributor_id: str, contributor_type: str) -> None:
         async with self.pool.connection() as conn:

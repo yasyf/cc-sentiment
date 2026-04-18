@@ -241,6 +241,83 @@ class TestVerifyEndpoint:
         assert "Invalid GitHub username" in response.json()["detail"]
 
 
+VALID_DAEMON_EVENT: dict = {
+    "event_type": "install",
+    "client_version": "0.1.0",
+    "time": "2026-04-18T10:30:00Z",
+}
+
+VALID_DAEMON_PAYLOAD: dict = {
+    "contributor_type": "github",
+    "contributor_id": "octocat",
+    "signature": "sig-content",
+    "event": VALID_DAEMON_EVENT,
+}
+
+
+class TestDaemonEvent:
+    @pytest.mark.asyncio
+    async def test_install_event(self, client: httpx.AsyncClient, db: Database) -> None:
+        response = await client.post("/daemon-event", json=VALID_DAEMON_PAYLOAD)
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
+
+        async with db.pool.connection() as conn:
+            row = await (await conn.execute(
+                "SELECT contributor_id, contributor_type, event_type, client_version FROM daemon_events"
+            )).fetchone()
+        assert row == ("octocat", "github", "install", "0.1.0")
+
+    @pytest.mark.asyncio
+    async def test_uninstall_event(self, client: httpx.AsyncClient, db: Database) -> None:
+        payload = {
+            **VALID_DAEMON_PAYLOAD,
+            "event": {**VALID_DAEMON_EVENT, "event_type": "uninstall"},
+        }
+        response = await client.post("/daemon-event", json=payload)
+
+        assert response.status_code == 200
+        async with db.pool.connection() as conn:
+            row = await (await conn.execute(
+                "SELECT event_type FROM daemon_events"
+            )).fetchone()
+        assert row[0] == "uninstall"
+
+    @pytest.mark.asyncio
+    async def test_invalid_signature(self, client: httpx.AsyncClient, verifier: AsyncMock) -> None:
+        verifier.verify_signature.return_value = False
+        response = await client.post("/daemon-event", json=VALID_DAEMON_PAYLOAD)
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_invalid_event_type(self, client: httpx.AsyncClient) -> None:
+        payload = {
+            **VALID_DAEMON_PAYLOAD,
+            "event": {**VALID_DAEMON_EVENT, "event_type": "bogus"},
+        }
+        response = await client.post("/daemon-event", json=payload)
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_gist_stores_normalized_contributor_id(
+        self, client: httpx.AsyncClient, db: Database
+    ) -> None:
+        payload = {
+            **VALID_DAEMON_PAYLOAD,
+            "contributor_type": "gist",
+            "contributor_id": "octocat/abcdef1234567890abcd",
+        }
+        response = await client.post("/daemon-event", json=payload)
+
+        assert response.status_code == 200
+        async with db.pool.connection() as conn:
+            row = await (await conn.execute(
+                "SELECT contributor_id, contributor_type FROM daemon_events"
+            )).fetchone()
+        assert row == ("octocat", "gist")
+
+
 class TestData:
     @pytest.mark.asyncio
     async def test_returns_correct_shape(self, client: httpx.AsyncClient) -> None:

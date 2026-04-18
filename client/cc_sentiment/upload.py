@@ -4,15 +4,21 @@ import subprocess
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import anyio
 import anyio.streams.memory
 import anyio.to_thread
 import httpx
+import orjson
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from cc_sentiment.models import (
+    CLIENT_VERSION,
     AppState,
+    DaemonEvent,
+    DaemonEventPayload,
+    DaemonEventType,
     GistConfig,
     GPGConfig,
     MyStat,
@@ -212,6 +218,42 @@ class Uploader:
         await anyio.to_thread.run_sync(
             repo.mark_sessions_uploaded, {r.conversation_id for r in records}
         )
+
+    async def record_daemon_event(
+        self,
+        config: SSHConfig | GPGConfig | GistConfig,
+        event_type: DaemonEventType,
+    ) -> None:
+        event = DaemonEvent(
+            event_type=event_type,
+            client_version=CLIENT_VERSION,
+            time=datetime.now(timezone.utc),
+        )
+        canonical = orjson.dumps(
+            event.model_dump(mode="json"), option=orjson.OPT_SORT_KEYS
+        ).decode()
+        backend = self.backend_from_config(config)
+        signature = await anyio.to_thread.run_sync(PayloadSigner.sign, canonical, backend)
+        payload = DaemonEventPayload(
+            contributor_type=config.contributor_type,
+            contributor_id=self.wire_contributor_id(config),
+            signature=signature,
+            event=event,
+        )
+        async with httpx.AsyncClient() as client:
+            (await client.post(
+                f"{self.server_url}/daemon-event",
+                content=payload.model_dump_json().encode(),
+                headers={"Content-Type": "application/json"},
+                timeout=3.0,
+            )).raise_for_status()
+
+    @classmethod
+    async def ping_daemon_event(cls, event_type: DaemonEventType) -> None:
+        if (config := AppState.load().config) is None:
+            return
+        with anyio.fail_after(3.0):
+            await cls().record_daemon_event(config, event_type)
 
     async def fetch_my_stat(self, config: SSHConfig | GPGConfig | GistConfig) -> MyStat | None:
         async with httpx.AsyncClient() as client:

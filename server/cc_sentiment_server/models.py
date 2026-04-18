@@ -17,6 +17,8 @@ __all__ = [
     "ModelBreakdown",
     "DataResponse",
     "MyStatResponse",
+    "DaemonEvent",
+    "DaemonEventPayload",
 ]
 
 
@@ -138,3 +140,20 @@ class MyStatResponse(BaseModel):
     text: str = Field(min_length=1)
     tweet_text: str = Field(min_length=1)
     total_contributors: int = Field(ge=1)
+
+
+class DaemonEvent(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    event_type: Literal["install", "uninstall"]
+    client_version: str = Field(min_length=1)
+    time: datetime
+
+
+class DaemonEventPayload(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    contributor_type: Literal["github", "gpg", "gist"]
+    contributor_id: str = Field(min_length=1)
+    signature: str = Field(min_length=1)
+    event: DaemonEvent

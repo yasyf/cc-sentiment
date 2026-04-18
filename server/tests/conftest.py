@@ -35,4 +35,5 @@ async def _seeded_db(timescaledb: str):
 async def db(_seeded_db: Database):
     async with _seeded_db.pool.connection() as conn:
         await conn.execute("TRUNCATE sentiment")
+        await conn.execute("TRUNCATE daemon_events")
     yield _seeded_db
