@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
 import tempfile
@@ -10,6 +9,7 @@ from typing import Literal, Protocol
 
 import gnupg
 import httpx
+import orjson
 
 from cc_sentiment.models import SentimentRecord
 
@@ -307,11 +307,10 @@ class KeyDiscovery:
 class PayloadSigner:
     @staticmethod
     def canonical_json(records: list[SentimentRecord]) -> str:
-        return json.dumps(
+        return orjson.dumps(
             [r.model_dump(mode="json", by_alias=True) for r in records],
-            sort_keys=True,
-            separators=(",", ":"),
-        )
+            option=orjson.OPT_SORT_KEYS,
+        ).decode()
 
     @staticmethod
     def sign(data: str, backend: SigningBackend) -> str:

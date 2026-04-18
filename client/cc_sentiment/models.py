@@ -4,7 +4,7 @@ from collections import Counter
 from datetime import datetime
 from importlib.metadata import version
 from pathlib import Path
-from typing import Annotated, Literal, NewType
+from typing import Annotated, Literal, NamedTuple, NewType
 
 from pydantic import BaseModel, Discriminator, Tag
 
@@ -20,34 +20,34 @@ PROMPT_VERSION = PromptVersion("v1")
 CLIENT_VERSION = version("cc-sentiment")
 
 
-class ToolCall(BaseModel, frozen=True):
+class ToolCall(NamedTuple):
     name: str
     file_path: str | None = None
 
 
-class BaseMessage(BaseModel, frozen=True):
+class UserMessage(NamedTuple):
     content: str
     timestamp: datetime
     session_id: SessionId
     uuid: str
     tool_calls: tuple[ToolCall, ...]
     thinking_chars: int
-
-
-class UserMessage(BaseMessage, frozen=True):
-    role: Literal["user"] = "user"
     cc_version: str
+    role: Literal["user"] = "user"
 
 
-class AssistantMessage(BaseMessage, frozen=True):
-    role: Literal["assistant"] = "assistant"
+class AssistantMessage(NamedTuple):
+    content: str
+    timestamp: datetime
+    session_id: SessionId
+    uuid: str
+    tool_calls: tuple[ToolCall, ...]
+    thinking_chars: int
     claude_model: str
+    role: Literal["assistant"] = "assistant"
 
 
-TranscriptMessage = Annotated[
-    Annotated[UserMessage, Tag("user")] | Annotated[AssistantMessage, Tag("assistant")],
-    Discriminator("role"),
-]
+TranscriptMessage = UserMessage | AssistantMessage
 
 
 class BucketMetrics(BaseModel, frozen=True):
@@ -119,7 +119,7 @@ class BucketMetrics(BaseModel, frozen=True):
         )
 
 
-class ConversationBucket(BaseModel, frozen=True):
+class ConversationBucket(NamedTuple):
     session_id: SessionId
     bucket_index: BucketIndex
     bucket_start: datetime
@@ -194,7 +194,7 @@ ClientConfig = Annotated[
 ]
 
 
-class BucketKey(BaseModel, frozen=True):
+class BucketKey(NamedTuple):
     session_id: SessionId
     bucket_index: BucketIndex
 

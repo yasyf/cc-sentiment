@@ -60,7 +60,7 @@ from cc_sentiment.models import (
     SSHConfig,
 )
 from cc_sentiment.repo import Repository
-from cc_sentiment.transcripts import TranscriptDiscovery
+from cc_sentiment.transcripts import TranscriptDiscovery, TranscriptParser
 from cc_sentiment.upload import (
     UPLOAD_POOL_TIMEOUT_SECONDS,
     AuthOk,
@@ -1873,6 +1873,7 @@ class CCSentimentApp(App[None]):
             self.exit()
             return
         self._debug(f"engine={engine}")
+        self._debug(f"transcript-backend: {TranscriptParser.backend_name()}")
 
         self.stage = Discovering()
         self._set_boot_status("Discovering transcripts...")

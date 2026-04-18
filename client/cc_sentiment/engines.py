@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import importlib.util
-import json
 import platform
 import re
 import shutil
@@ -19,6 +18,7 @@ from typing import Protocol
 
 import anyio.to_thread
 import httpx
+import orjson
 
 from cc_sentiment.models import ConversationBucket, SentimentScore
 
@@ -474,7 +474,7 @@ class ClaudeCLIEngine:
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
             raise RuntimeError(f"claude -p failed ({proc.returncode}): {stderr.decode()[:500]}")
-        data = json.loads(stdout)
+        data = orjson.loads(stdout)
         if data["is_error"]:
             raise RuntimeError(f"claude -p error: {data['result']}")
         usage = data["usage"]

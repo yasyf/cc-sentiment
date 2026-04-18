@@ -3,10 +3,13 @@ from __future__ import annotations
 import os
 import re
 from collections import defaultdict
+from collections.abc import AsyncIterator, Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
+import anyio
+import anyio.to_process
 import orjson
 
 from cc_sentiment.models import (
@@ -20,7 +23,7 @@ from cc_sentiment.models import (
     UserMessage,
 )
 
-from .backend import Backend
+from .backend import Backend, ParsedTranscript
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 BUCKET_MINUTES = 5
@@ -132,94 +135,160 @@ class ConversationBucketer:
         return buckets
 
 
-class PythonBackend:
-    name: ClassVar[Literal["rust", "python"]] = "python"
+def _build_message(data: dict[str, Any]) -> TranscriptMessage | None:
+    if data.get("entrypoint") in EPHEMERAL_ENTRYPOINTS:
+        return None
 
-    def parse_line(self, line: str) -> TranscriptMessage | None:
+    match data["type"]:
+        case "queue-operation":
+            return None
+        case "user" if data.get("isSidechain"):
+            return None
+        case "user":
+            match data["message"]["content"]:
+                case str(raw):
+                    content = raw
+                case list(blocks) if (parts := [
+                    b["text"] for b in blocks
+                    if isinstance(b, dict) and b.get("type") == "text"
+                ]):
+                    content = " ".join(parts)
+                case _:
+                    return None
+            if JUNK_USER_MESSAGE_RE.search(content):
+                return None
+            content = content.strip()
+            if not content:
+                return None
+            return UserMessage(
+                content=content,
+                timestamp=datetime.fromisoformat(data["timestamp"]),
+                session_id=SessionId(data["sessionId"]),
+                uuid=data["uuid"],
+                tool_calls=(),
+                thinking_chars=0,
+                cc_version=data["version"],
+            )
+        case "assistant" if data["message"]["model"] == "<synthetic>":
+            return None
+        case "assistant":
+            blocks = data["message"]["content"]
+            text_blocks = [
+                b["text"] for b in blocks
+                if isinstance(b, dict) and b.get("type") == "text"
+            ]
+            tool_calls = tuple(
+                ToolCall(
+                    name=b["name"],
+                    file_path=b.get("input", {}).get("file_path"),
+                )
+                for b in blocks
+                if isinstance(b, dict) and b.get("type") == "tool_use"
+            )
+            thinking_chars = sum(
+                len(b.get("thinking", ""))
+                for b in blocks
+                if isinstance(b, dict) and b.get("type") == "thinking"
+            )
+            if not text_blocks and not tool_calls:
+                return None
+            combined = " ".join(text_blocks)
+            return AssistantMessage(
+                content=(
+                    combined[:ASSISTANT_TRUNCATION] + "[...]"
+                    if len(combined) > ASSISTANT_TRUNCATION
+                    else combined
+                ),
+                timestamp=datetime.fromisoformat(data["timestamp"]),
+                session_id=SessionId(data["sessionId"]),
+                uuid=data["uuid"],
+                tool_calls=tool_calls,
+                thinking_chars=thinking_chars,
+                claude_model=data["message"]["model"],
+            )
+        case _:
+            return None
+
+
+def _parse_messages_from_bytes(raw: bytes) -> list[TranscriptMessage]:
+    messages: list[TranscriptMessage] = []
+    for line in raw.split(b"\n"):
+        if not line.strip():
+            continue
         try:
             data = orjson.loads(line)
         except orjson.JSONDecodeError:
-            return None
+            continue
+        msg = _build_message(data)
+        if msg is not None:
+            messages.append(msg)
+    return messages
 
-        if data.get("entrypoint") in EPHEMERAL_ENTRYPOINTS:
-            return None
 
-        match data["type"]:
-            case "queue-operation":
-                return None
-            case "user" if data.get("isSidechain"):
-                return None
-            case "user":
-                match data["message"]["content"]:
-                    case str(raw):
-                        content = raw
-                    case list(blocks) if (parts := [
-                        b["text"] for b in blocks
-                        if isinstance(b, dict) and b.get("type") == "text"
-                    ]):
-                        content = " ".join(parts)
-                    case _:
-                        return None
-                if JUNK_USER_MESSAGE_RE.search(content):
-                    return None
-                content = content.strip()
-                if not content:
-                    return None
-                return UserMessage(
-                    content=content,
-                    timestamp=datetime.fromisoformat(data["timestamp"]),
-                    session_id=SessionId(data["sessionId"]),
-                    uuid=data["uuid"],
-                    tool_calls=(),
-                    thinking_chars=0,
-                    cc_version=data["version"],
-                )
-            case "assistant" if data["message"]["model"] == "<synthetic>":
-                return None
-            case "assistant":
-                blocks = data["message"]["content"]
-                text_blocks = [
-                    b["text"] for b in blocks
-                    if isinstance(b, dict) and b.get("type") == "text"
-                ]
-                tool_calls = tuple(
-                    ToolCall(
-                        name=b["name"],
-                        file_path=b.get("input", {}).get("file_path"),
-                    )
-                    for b in blocks
-                    if isinstance(b, dict) and b.get("type") == "tool_use"
-                )
-                thinking_chars = sum(
-                    len(b.get("thinking", ""))
-                    for b in blocks
-                    if isinstance(b, dict) and b.get("type") == "thinking"
-                )
-                if not text_blocks and not tool_calls:
-                    return None
-                combined = " ".join(text_blocks)
-                return AssistantMessage(
-                    content=(
-                        combined[:ASSISTANT_TRUNCATION] + "[...]"
-                        if len(combined) > ASSISTANT_TRUNCATION
-                        else combined
-                    ),
-                    timestamp=datetime.fromisoformat(data["timestamp"]),
-                    session_id=SessionId(data["sessionId"]),
-                    uuid=data["uuid"],
-                    tool_calls=tool_calls,
-                    thinking_chars=thinking_chars,
-                    claude_model=data["message"]["model"],
-                )
-            case _:
-                return None
+def _extract_bucket_keys(messages: list[TranscriptMessage]) -> list[BucketKey]:
+    return [
+        BucketKey(session_id=b.session_id, bucket_index=b.bucket_index)
+        for b in ConversationBucketer.bucket_messages(messages)
+    ]
 
-    def parse_file(self, path: Path) -> list[TranscriptMessage]:
-        return [
-            msg
-            for line in path.read_text().splitlines()
-            if line.strip() and (msg := self.parse_line(line)) is not None
+
+def _python_parse_one(path_str: str, mtime: float) -> ParsedTranscript:
+    path = Path(path_str)
+    raw = path.read_bytes()
+    messages = _parse_messages_from_bytes(raw)
+    return ParsedTranscript(
+        path=path,
+        mtime=mtime,
+        bucket_keys=tuple(_extract_bucket_keys(messages)),
+        messages=tuple(messages),
+    )
+
+
+def _python_parse_chunk(chunk: list[tuple[str, float]]) -> list[ParsedTranscript]:
+    return [_python_parse_one(path_str, mtime) for path_str, mtime in chunk]
+
+
+class PythonBackend:
+    name: ClassVar[Literal["rust", "python"]] = "python"
+    CHUNK_SIZE: ClassVar[int] = 16
+
+    async def parse_batch(
+        self,
+        paths: Sequence[tuple[Path, float]],
+        *,
+        prefetch: int,
+    ) -> AsyncIterator[ParsedTranscript]:
+        if not paths:
+            return
+        send_ch, recv_ch = anyio.create_memory_object_stream[ParsedTranscript](
+            max_buffer_size=prefetch * self.CHUNK_SIZE
+        )
+        limiter = anyio.CapacityLimiter(prefetch)
+
+        chunks: list[list[tuple[str, float]]] = [
+            [(str(p), m) for p, m in paths[i : i + self.CHUNK_SIZE]]
+            for i in range(0, len(paths), self.CHUNK_SIZE)
         ]
+
+        async def worker(chunk: list[tuple[str, float]]) -> None:
+            async with limiter:
+                parsed_list = await anyio.to_process.run_sync(_python_parse_chunk, chunk)
+            for parsed in parsed_list:
+                await send_ch.send(parsed)
+
+        async def drive() -> None:
+            try:
+                async with anyio.create_task_group() as tg:
+                    for chunk in chunks:
+                        tg.start_soon(worker, chunk)
+            finally:
+                await send_ch.aclose()
+
+        async with anyio.create_task_group() as outer:
+            outer.start_soon(drive)
+            async with recv_ch:
+                async for parsed in recv_ch:
+                    yield parsed
 
     def bucket_keys_for(self, path: Path) -> list[BucketKey]:
         by_session: dict[SessionId, list[tuple[datetime, bool]]] = defaultdict(list)
@@ -305,6 +374,7 @@ class PythonBackend:
 
 class TranscriptParser:
     BACKEND: ClassVar[Backend | None] = None
+    PREFETCH: ClassVar[int] = 8
 
     @classmethod
     def backend(cls) -> Backend:
@@ -327,18 +397,6 @@ class TranscriptParser:
         return cls.backend().name
 
     @classmethod
-    def parse_line(cls, line: str) -> TranscriptMessage | None:
-        return cls.backend().parse_line(line)
-
-    @classmethod
-    def parse_file(cls, path: Path) -> list[TranscriptMessage]:
-        return cls.backend().parse_file(path)
-
-    @classmethod
-    def bucket_keys_for(cls, path: Path) -> list[BucketKey]:
-        return cls.backend().bucket_keys_for(path)
-
-    @classmethod
     def scan_bucket_keys(
         cls,
         directory: Path,
@@ -353,6 +411,17 @@ class TranscriptParser:
             limit=limit,
             known_mtimes=known_mtimes,
         )
+
+    @classmethod
+    async def stream_transcripts(
+        cls,
+        paths: Sequence[tuple[Path, float]],
+        *,
+        prefetch: int | None = None,
+    ) -> AsyncIterator[ParsedTranscript]:
+        n = prefetch if prefetch is not None else cls.PREFETCH
+        async for parsed in cls.backend().parse_batch(paths, prefetch=n):
+            yield parsed
 
 
 __all__ = [

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
+
+import anyio
+import anyio.to_thread
 
 from cc_sentiment import _transcripts_rs as rust
 from cc_sentiment.models import (
@@ -15,22 +19,27 @@ from cc_sentiment.models import (
     UserMessage,
 )
 
+from .backend import ParsedTranscript
+
 
 class RustBackend:
     name: ClassVar[Literal["rust", "python"]] = "rust"
+    RECV_BATCH: ClassVar[int] = 32
 
-    def parse_line(self, line: str) -> TranscriptMessage | None:
-        data = rust.parse_line(line)
-        return self.message_from_dict(data) if data is not None else None
-
-    def parse_file(self, path: Path) -> list[TranscriptMessage]:
-        return [self.message_from_dict(d) for d in rust.parse_file(str(path))]
-
-    def bucket_keys_for(self, path: Path) -> list[BucketKey]:
-        return [
-            BucketKey(session_id=SessionId(s), bucket_index=BucketIndex(i))
-            for s, i in rust.bucket_keys_for(str(path))
-        ]
+    async def parse_batch(
+        self,
+        paths: Sequence[tuple[Path, float]],
+        *,
+        prefetch: int,
+    ) -> AsyncIterator[ParsedTranscript]:
+        payload = [(str(p), m) for p, m in paths]
+        stream = rust.stream_parse(payload, prefetch)
+        while True:
+            batch = await anyio.to_thread.run_sync(stream.recv_many, self.RECV_BATCH)
+            if not batch:
+                return
+            for item in batch:
+                yield self.parsed_from_tuple(item)
 
     def scan_bucket_keys(
         self,
@@ -44,10 +53,7 @@ class RustBackend:
             (
                 Path(p),
                 mtime,
-                [
-                    BucketKey(session_id=SessionId(s), bucket_index=BucketIndex(i))
-                    for s, i in keys
-                ],
+                [BucketKey(SessionId(s), BucketIndex(i)) for s, i in keys],
             )
             for p, mtime, keys in rust.scan_bucket_keys(
                 str(directory),
@@ -57,34 +63,50 @@ class RustBackend:
             )
         ]
 
-    @staticmethod
-    def message_from_dict(data: dict) -> TranscriptMessage:
-        tool_calls = tuple(
-            ToolCall(name=tc["name"], file_path=tc.get("file_path"))
-            for tc in data.get("tool_calls", ())
+    @classmethod
+    def parsed_from_tuple(cls, data: tuple[Any, ...]) -> ParsedTranscript:
+        path, mtime, bucket_keys, messages = data
+        return ParsedTranscript(
+            path=Path(path),
+            mtime=mtime,
+            bucket_keys=tuple(
+                BucketKey(SessionId(s), BucketIndex(i)) for s, i in bucket_keys
+            ),
+            messages=tuple(cls.message_from_tuple(m) for m in messages),
         )
-        ts = datetime.fromisoformat(data["timestamp"])
-        session_id = SessionId(data["session_id"])
-        match data["kind"]:
-            case "user":
-                return UserMessage(
-                    content=data["content"],
-                    timestamp=ts,
-                    session_id=session_id,
-                    uuid=data["uuid"],
-                    tool_calls=tool_calls,
-                    thinking_chars=data.get("thinking_chars", 0),
-                    cc_version=data["cc_version"],
-                )
-            case "assistant":
-                return AssistantMessage(
-                    content=data["content"],
-                    timestamp=ts,
-                    session_id=session_id,
-                    uuid=data["uuid"],
-                    tool_calls=tool_calls,
-                    thinking_chars=data.get("thinking_chars", 0),
-                    claude_model=data["claude_model"],
-                )
-            case other:
-                raise ValueError(f"unknown message kind: {other!r}")
+
+    @staticmethod
+    def message_from_tuple(data: tuple[Any, ...]) -> TranscriptMessage:
+        kind = data[0]
+        if kind == "u":
+            _, content, ts_str, session_id_str, uuid, cc_version = data
+            return UserMessage(
+                content,
+                datetime.fromisoformat(ts_str),
+                SessionId(session_id_str),
+                uuid,
+                (),
+                0,
+                cc_version,
+            )
+        if kind == "a":
+            (
+                _,
+                content,
+                ts_str,
+                session_id_str,
+                uuid,
+                claude_model,
+                thinking_chars,
+                tool_calls,
+            ) = data
+            return AssistantMessage(
+                content,
+                datetime.fromisoformat(ts_str),
+                SessionId(session_id_str),
+                uuid,
+                tuple(ToolCall(n, fp) for n, fp in tool_calls),
+                thinking_chars,
+                claude_model,
+            )
+        raise ValueError(f"unknown message kind: {kind!r}")

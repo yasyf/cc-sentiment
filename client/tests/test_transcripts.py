@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import anyio
+import orjson
 import pytest
 
 from cc_sentiment.models import (
@@ -12,16 +13,38 @@ from cc_sentiment.models import (
     BucketMetrics,
     SessionId,
     ToolCall,
+    TranscriptMessage,
     UserMessage,
 )
 from cc_sentiment.transcripts import (
     ASSISTANT_TRUNCATION,
     ConversationBucketer,
+    ParsedTranscript,
     PythonBackend,
     TranscriptParser,
 )
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "sample_transcript.jsonl"
+
+
+def parse_paths(paths: list[tuple[Path, float]]) -> list[ParsedTranscript]:
+    async def run() -> list[ParsedTranscript]:
+        return [p async for p in TranscriptParser.stream_transcripts(paths)]
+
+    return anyio.run(run)
+
+
+def parse_file(path: Path) -> list[TranscriptMessage]:
+    results = parse_paths([(path, 0.0)])
+    assert len(results) == 1
+    return list(results[0].messages)
+
+
+def parse_single_line(tmp_path: Path, line: str) -> TranscriptMessage | None:
+    f = tmp_path / "single.jsonl"
+    f.write_text(line)
+    messages = parse_file(f)
+    return messages[0] if messages else None
 
 
 @pytest.fixture(params=["python", "rust"])
@@ -38,48 +61,48 @@ def backend(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> 
 
 
 @pytest.mark.usefixtures("backend")
-class TestTranscriptParser:
+class TestStreamTranscripts:
     def test_skips_queue_operations(self) -> None:
-        messages = TranscriptParser.parse_file(FIXTURE_PATH)
+        messages = parse_file(FIXTURE_PATH)
         types_present = {m.content for m in messages}
         assert "queued task" not in types_present
 
     def test_skips_sidechain_messages(self) -> None:
-        messages = TranscriptParser.parse_file(FIXTURE_PATH)
+        messages = parse_file(FIXTURE_PATH)
         uuids = {m.uuid for m in messages}
         assert "u3-sidechain" not in uuids
 
     def test_parses_user_messages(self) -> None:
-        messages = TranscriptParser.parse_file(FIXTURE_PATH)
+        messages = parse_file(FIXTURE_PATH)
         user_msgs = [m for m in messages if m.role == "user"]
         assert len(user_msgs) == 5
         assert user_msgs[0].content == "fix the login bug please, it keeps crashing on submit"
 
     def test_parses_assistant_text_blocks(self) -> None:
-        messages = TranscriptParser.parse_file(FIXTURE_PATH)
+        messages = parse_file(FIXTURE_PATH)
         assistant_msgs = [m for m in messages if m.role == "assistant"]
         assert len(assistant_msgs) == 5
         assert "thinking" not in assistant_msgs[0].content.lower()
         assert "I'll fix the login bug" in assistant_msgs[0].content
 
     def test_excludes_tool_use_blocks(self) -> None:
-        messages = TranscriptParser.parse_file(FIXTURE_PATH)
+        messages = parse_file(FIXTURE_PATH)
         assistant_msgs = [m for m in messages if m.role == "assistant"]
         for msg in assistant_msgs:
             assert "read_file" not in msg.content
 
     def test_groups_by_session(self) -> None:
-        messages = TranscriptParser.parse_file(FIXTURE_PATH)
+        messages = parse_file(FIXTURE_PATH)
         sessions = {m.session_id for m in messages}
         assert sessions == {SessionId("session-aaa"), SessionId("session-bbb")}
 
     def test_preserves_timestamps(self) -> None:
-        messages = TranscriptParser.parse_file(FIXTURE_PATH)
+        messages = parse_file(FIXTURE_PATH)
         assert messages[0].timestamp == datetime(
             2026, 4, 10, 7, 36, 0, tzinfo=timezone.utc
         )
 
-    def test_truncates_long_assistant_messages(self) -> None:
+    def test_truncates_long_assistant_messages(self, tmp_path: Path) -> None:
         long_text = "x" * 2000
         line = (
             '{"parentUuid":"p","message":{"model":"m","type":"message",'
@@ -87,21 +110,21 @@ class TestTranscriptParser:
             + long_text
             + '"}]},"type":"assistant","uuid":"u","timestamp":"2026-04-10T07:40:00.000Z","sessionId":"s"}'
         )
-        msg = TranscriptParser.parse_line(line)
+        msg = parse_single_line(tmp_path, line)
         assert msg is not None
         assert len(msg.content) == ASSISTANT_TRUNCATION + len("[...]")
         assert msg.content.endswith("[...]")
 
-    def test_skips_synthetic_terminator_assistant_lines(self) -> None:
+    def test_skips_synthetic_terminator_assistant_lines(self, tmp_path: Path) -> None:
         line = (
             '{"parentUuid":"p","message":{"model":"<synthetic>","type":"message",'
             '"role":"assistant","stop_reason":"stop_sequence",'
             '"content":[{"type":"text","text":"No response requested."}]},'
             '"type":"assistant","uuid":"u","timestamp":"2026-04-10T07:40:00.000Z","sessionId":"s"}'
         )
-        assert TranscriptParser.parse_line(line) is None
+        assert parse_single_line(tmp_path, line) is None
 
-    def test_skips_ephemeral_sdk_cli_entrypoint(self) -> None:
+    def test_skips_ephemeral_sdk_cli_entrypoint(self, tmp_path: Path) -> None:
         line = (
             '{"parentUuid":null,"isSidechain":false,"type":"user",'
             '"message":{"role":"user","content":"one-shot"},'
@@ -109,9 +132,9 @@ class TestTranscriptParser:
             '"uuid":"u","timestamp":"2026-04-10T07:36:00.000Z",'
             '"sessionId":"s","version":"2.1.92"}'
         )
-        assert TranscriptParser.parse_line(line) is None
+        assert parse_single_line(tmp_path, line) is None
 
-    def test_allows_conductor_sdk_ts_entrypoint(self) -> None:
+    def test_allows_conductor_sdk_ts_entrypoint(self, tmp_path: Path) -> None:
         line = (
             '{"parentUuid":null,"isSidechain":false,"type":"user",'
             '"message":{"role":"user","content":"fix the failing test"},'
@@ -120,12 +143,12 @@ class TestTranscriptParser:
             '"sessionId":"s","version":"2.1.7",'
             '"cwd":"/Users/me/conductor/workspaces/project/branch"}'
         )
-        msg = TranscriptParser.parse_line(line)
+        msg = parse_single_line(tmp_path, line)
         assert isinstance(msg, UserMessage)
         assert msg.content == "fix the failing test"
         assert msg.cc_version == "2.1.7"
 
-    def test_allows_cli_entrypoint(self) -> None:
+    def test_allows_cli_entrypoint(self, tmp_path: Path) -> None:
         line = (
             '{"parentUuid":null,"isSidechain":false,"type":"user",'
             '"message":{"role":"user","content":"hello"},'
@@ -133,63 +156,90 @@ class TestTranscriptParser:
             '"uuid":"u","timestamp":"2026-04-10T07:36:00.000Z",'
             '"sessionId":"s","version":"2.1.92"}'
         )
-        msg = TranscriptParser.parse_line(line)
+        msg = parse_single_line(tmp_path, line)
         assert msg is not None
         assert msg.content == "hello"
 
-    def test_drops_user_message_with_system_reminder(self) -> None:
+    def test_drops_user_message_with_system_reminder(self, tmp_path: Path) -> None:
         line = (
             '{"parentUuid":null,"isSidechain":false,"type":"user",'
             '"message":{"role":"user","content":"<system-reminder>tool notes</system-reminder>"},'
             '"uuid":"u","timestamp":"2026-04-10T07:36:00.000Z",'
             '"sessionId":"s","version":"2.1.92"}'
         )
-        assert TranscriptParser.parse_line(line) is None
+        assert parse_single_line(tmp_path, line) is None
 
-    def test_drops_user_message_with_caveat_preamble(self) -> None:
+    def test_drops_user_message_with_caveat_preamble(self, tmp_path: Path) -> None:
         content = (
             "Caveat: The messages below were generated by the user while running local commands.\n"
             "<local-command-stdout>...</local-command-stdout>"
         )
-        line = json.dumps({
+        line = orjson.dumps({
             "parentUuid": None, "isSidechain": False, "type": "user",
             "message": {"role": "user", "content": content},
             "uuid": "u", "timestamp": "2026-04-10T07:36:00.000Z",
             "sessionId": "s", "version": "2.1.92",
-        })
-        assert TranscriptParser.parse_line(line) is None
+        }).decode()
+        assert parse_single_line(tmp_path, line) is None
 
-    def test_drops_user_message_with_interrupt_marker(self) -> None:
-        line = json.dumps({
+    def test_drops_user_message_with_interrupt_marker(self, tmp_path: Path) -> None:
+        line = orjson.dumps({
             "parentUuid": None, "isSidechain": False, "type": "user",
             "message": {"role": "user", "content": "[Request interrupted by user for tool use] actually let's redo it"},
             "uuid": "u", "timestamp": "2026-04-10T07:36:00.000Z",
             "sessionId": "s", "version": "2.1.92",
-        })
-        assert TranscriptParser.parse_line(line) is None
+        }).decode()
+        assert parse_single_line(tmp_path, line) is None
 
-    def test_drops_user_message_with_persisted_output(self) -> None:
-        line = json.dumps({
+    def test_drops_user_message_with_persisted_output(self, tmp_path: Path) -> None:
+        line = orjson.dumps({
             "parentUuid": None, "isSidechain": False, "type": "user",
             "message": {"role": "user", "content": "<persisted-output>past output</persisted-output>"},
             "uuid": "u", "timestamp": "2026-04-10T07:36:00.000Z",
             "sessionId": "s", "version": "2.1.92",
-        })
-        assert TranscriptParser.parse_line(line) is None
+        }).decode()
+        assert parse_single_line(tmp_path, line) is None
 
-    def test_bucket_keys_for_matches_full_parse(self) -> None:
-        full = ConversationBucketer.bucket_messages(TranscriptParser.parse_file(FIXTURE_PATH))
-        fast = TranscriptParser.bucket_keys_for(FIXTURE_PATH)
+    def test_parsed_transcript_includes_bucket_keys_and_mtime(self, tmp_path: Path) -> None:
+        f = tmp_path / "t.jsonl"
+        f.write_bytes(FIXTURE_PATH.read_bytes())
+
+        async def collect() -> list[ParsedTranscript]:
+            return [
+                p async for p in TranscriptParser.stream_transcripts([(f, 123.0)])
+            ]
+
+        [parsed] = anyio.run(collect)
+        assert parsed.mtime == 123.0
+        expected_keys = {
+            BucketKey(session_id=b.session_id, bucket_index=b.bucket_index)
+            for b in ConversationBucketer.bucket_messages(list(parsed.messages))
+        }
+        assert set(parsed.bucket_keys) == expected_keys
+
+
+@pytest.mark.usefixtures("backend")
+class TestScanBucketKeys:
+    def test_scan_bucket_keys_matches_full_parse(self, tmp_path: Path) -> None:
+        f = tmp_path / "t.jsonl"
+        f.write_bytes(FIXTURE_PATH.read_bytes())
+
+        scanned = TranscriptParser.scan_bucket_keys(tmp_path)
+        assert len(scanned) == 1
+        _, _, keys = scanned[0]
+
+        full_messages = parse_file(f)
         expected = {
             BucketKey(session_id=b.session_id, bucket_index=b.bucket_index)
-            for b in full
+            for b in ConversationBucketer.bucket_messages(full_messages)
         }
-        assert set(fast) == expected
+        assert set(keys) == expected
 
 
+@pytest.mark.usefixtures("backend")
 class TestConversationBucketer:
     def test_bucket_count(self) -> None:
-        messages = TranscriptParser.parse_file(FIXTURE_PATH)
+        messages = parse_file(FIXTURE_PATH)
         buckets = ConversationBucketer.bucket_messages(messages)
         session_aaa_buckets = [
             b for b in buckets if b.session_id == SessionId("session-aaa")
@@ -197,7 +247,7 @@ class TestConversationBucketer:
         assert len(session_aaa_buckets) == 1
 
     def test_bucket_alignment(self) -> None:
-        messages = TranscriptParser.parse_file(FIXTURE_PATH)
+        messages = parse_file(FIXTURE_PATH)
         buckets = ConversationBucketer.bucket_messages(messages)
         for bucket in buckets:
             assert bucket.bucket_start.second == 0
@@ -205,7 +255,7 @@ class TestConversationBucketer:
             assert bucket.bucket_start.minute % 5 == 0
 
     def test_messages_in_correct_buckets(self) -> None:
-        messages = TranscriptParser.parse_file(FIXTURE_PATH)
+        messages = parse_file(FIXTURE_PATH)
         buckets = ConversationBucketer.bucket_messages(messages)
         bucket = next(
             b for b in buckets if b.session_id == SessionId("session-aaa")
@@ -214,7 +264,7 @@ class TestConversationBucketer:
         assert "great, that fixed it! now can you add email validation too?" in user_contents
 
     def test_separate_sessions_bucketed_independently(self) -> None:
-        messages = TranscriptParser.parse_file(FIXTURE_PATH)
+        messages = parse_file(FIXTURE_PATH)
         buckets = ConversationBucketer.bucket_messages(messages)
         session_bbb_buckets = [
             b for b in buckets if b.session_id == SessionId("session-bbb")

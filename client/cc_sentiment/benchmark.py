@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import json
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +9,7 @@ from statistics import mean, median, stdev
 
 import anyio
 import click
+import orjson
 
 from cc_sentiment.engines import DEFAULT_MODEL, InferenceEngine, build_engine
 from cc_sentiment.labeled_data import build_labeled_dataset
@@ -49,20 +48,19 @@ class BenchmarkRunner:
     @staticmethod
     def collect_buckets(max_transcripts: int) -> list[ConversationBucket]:
         transcripts = TranscriptDiscovery.find_transcripts()[:max_transcripts]
-        workers = min(os.cpu_count() or 4, len(transcripts))
+        paths: list[tuple[Path, float]] = [
+            (p, TranscriptDiscovery.stat_mtime(p) or 0.0) for p in transcripts
+        ]
 
-        def parse_one(path: Path) -> list[ConversationBucket]:
-            if messages := TranscriptParser.parse_file(path):
-                return ConversationBucketer.bucket_messages(messages)
-            return []
+        async def collect() -> list[ConversationBucket]:
+            buckets: list[ConversationBucket] = []
+            with click.progressbar(length=len(paths), label="Parsing transcripts") as bar:
+                async for parsed in TranscriptParser.stream_transcripts(paths):
+                    buckets.extend(ConversationBucketer.bucket_messages(list(parsed.messages)))
+                    bar.update(1)
+            return buckets
 
-        all_buckets: list[ConversationBucket] = []
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = [pool.submit(parse_one, p) for p in transcripts]
-            with click.progressbar(futures, label="Parsing transcripts") as bar:
-                for future in bar:
-                    all_buckets.extend(future.result())
-        return all_buckets
+        return anyio.run(collect)
 
     @staticmethod
     def predownload_model(model_repo: str | None = None) -> None:
@@ -282,9 +280,9 @@ def run_accuracy_test(
         },
     }
 
-    existing = json.loads(output_path.read_text()) if output_path.exists() else []
+    existing = orjson.loads(output_path.read_bytes()) if output_path.exists() else []
     existing.append(results_data)
-    output_path.write_text(json.dumps(existing, indent=2))
+    output_path.write_bytes(orjson.dumps(existing, option=orjson.OPT_INDENT_2))
     click.echo(f"\nResults appended to {output_path}")
 
 

@@ -12,6 +12,7 @@ from cc_sentiment.engines import resolve_engine
 from cc_sentiment.models import AppState
 from cc_sentiment.pipeline import Pipeline
 from cc_sentiment.repo import Repository
+from cc_sentiment.transcripts import TranscriptParser
 from cc_sentiment.upload import (
     AuthOk,
     AuthServerError,
@@ -91,6 +92,7 @@ class HeadlessRunner:
 
         engine = await anyio.to_thread.run_sync(resolve_engine, None)
         cls.trace(debug, f"engine={engine}")
+        cls.trace(debug, f"transcript-backend: {TranscriptParser.backend_name()}")
         if engine == "claude":
             return HeadlessClaudeEngineBlocked()
 

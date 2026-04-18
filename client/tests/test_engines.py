@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import json
 import subprocess
+
+import orjson
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -204,13 +205,13 @@ class TestClaudeCLIEngine:
             ClaudeCLIEngine(model="claude-haiku-4-5")
 
     async def test_score_parses_json_response_and_tracks_cost(self) -> None:
-        response = json.dumps({
+        response = orjson.dumps({
             "type": "result",
             "is_error": False,
             "result": "4",
             "total_cost_usd": 0.0025,
             "usage": {"input_tokens": 2500, "output_tokens": 1},
-        }).encode()
+        })
         proc = MagicMock(returncode=0, communicate=AsyncMock(return_value=(response, b"")))
 
         with patch("cc_sentiment.engines.shutil.which", return_value="/usr/bin/claude"):
@@ -233,13 +234,13 @@ class TestClaudeCLIEngine:
             await engine.score([make_bucket("please help me fix this")])
 
     async def test_score_fires_on_progress_for_inference_path(self) -> None:
-        response = json.dumps({
+        response = orjson.dumps({
             "type": "result",
             "is_error": False,
             "result": "4",
             "total_cost_usd": 0.0025,
             "usage": {"input_tokens": 2500, "output_tokens": 1},
-        }).encode()
+        })
         proc = MagicMock(returncode=0, communicate=AsyncMock(return_value=(response, b"")))
 
         with patch("cc_sentiment.engines.shutil.which", return_value="/usr/bin/claude"):

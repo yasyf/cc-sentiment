@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -9,8 +10,10 @@ from cc_sentiment.models import (
     SentimentRecord,
     SentimentScore,
     SessionId,
+    TranscriptMessage,
 )
 from cc_sentiment.pipeline import ScannedTranscript, ScanResult
+from cc_sentiment.transcripts import ConversationBucketer, ParsedTranscript
 
 
 def make_record(
@@ -35,6 +38,23 @@ def make_record(
         thinking_present=False,
         thinking_chars=0,
         cc_version="2.1.92",
+    )
+
+
+def make_parsed(
+    path: Path,
+    messages: Sequence[TranscriptMessage],
+    mtime: float = 0.0,
+) -> ParsedTranscript:
+    buckets = ConversationBucketer.bucket_messages(list(messages))
+    return ParsedTranscript(
+        path=path,
+        mtime=mtime,
+        bucket_keys=tuple(
+            BucketKey(session_id=b.session_id, bucket_index=b.bucket_index)
+            for b in buckets
+        ),
+        messages=tuple(messages),
     )
 
 

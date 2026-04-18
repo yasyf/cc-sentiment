@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import orjson
 
 from cc_sentiment.signing import (
     GPGKeyInfo,
@@ -167,13 +168,13 @@ class TestPayloadSigner:
     def test_canonical_json_deterministic(self) -> None:
         records = [make_record(), make_record(bucket_index=1, score=3)]
         result = PayloadSigner.canonical_json(records)
-        parsed = json.loads(result)
+        parsed = orjson.loads(result)
         assert len(parsed) == 2
 
     def test_canonical_json_sorted_keys(self) -> None:
         records = [make_record()]
         result = PayloadSigner.canonical_json(records)
-        parsed = json.loads(result)
+        parsed = orjson.loads(result)
         keys = list(parsed[0].keys())
         assert keys == sorted(keys)
 

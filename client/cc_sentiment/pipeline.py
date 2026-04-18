@@ -22,11 +22,13 @@ from cc_sentiment.models import (
     SentimentRecord,
     SentimentScore,
     SessionId,
+    TranscriptMessage,
 )
 from cc_sentiment.repo import Repository
 from cc_sentiment.transcripts import (
     CLAUDE_PROJECTS_DIR,
     ConversationBucketer,
+    ParsedTranscript,
     TranscriptParser,
 )
 
@@ -84,13 +86,13 @@ class Pipeline:
         )
 
     @staticmethod
-    def parse_buckets_with_metrics(
-        path: Path, scored_buckets: frozenset[BucketKey]
+    def buckets_with_metrics(
+        messages: tuple[TranscriptMessage, ...],
+        scored_buckets: frozenset[BucketKey],
     ) -> tuple[list[ConversationBucket], dict[BucketKey, BucketMetrics]]:
-        messages = TranscriptParser.parse_file(path)
         if not messages:
             return [], {}
-        all_buckets = ConversationBucketer.bucket_messages(messages)
+        all_buckets = ConversationBucketer.bucket_messages(list(messages))
 
         by_session: dict[SessionId, list[ConversationBucket]] = {}
         for b in all_buckets:
@@ -160,17 +162,17 @@ class Pipeline:
         )
 
     @classmethod
-    async def process_transcript(
+    async def score_transcript(
         cls,
-        path: Path,
+        parsed: ParsedTranscript,
         classifier: InferenceEngine,
         scored_buckets: frozenset[BucketKey] = frozenset(),
         on_bucket: Callable[[int], None] = NOOP_PROGRESS,
         on_snippet: Callable[[str, int], None] = NOOP_SNIPPET,
         on_records: Callable[[list[SentimentRecord]], None] = lambda _: None,
     ) -> list[SentimentRecord]:
-        new_buckets, metrics_by_key = await anyio.to_thread.run_sync(
-            cls.parse_buckets_with_metrics, path, scored_buckets
+        new_buckets, metrics_by_key = cls.buckets_with_metrics(
+            parsed.messages, scored_buckets
         )
         if not new_buckets:
             return []
@@ -218,18 +220,16 @@ class Pipeline:
 
             all_records: list[SentimentRecord] = []
 
-            for scanned in scan.transcripts:
-                scored_buckets = scan.scored_by_path.get(
-                    str(scanned.path), frozenset()
-                )
-                records = await cls.process_transcript(
-                    scanned.path, classifier, scored_buckets,
+            async for parsed in TranscriptParser.stream_transcripts(scan.paths):
+                scored = scan.scored_by_path.get(str(parsed.path), frozenset())
+                records = await cls.score_transcript(
+                    parsed, classifier, scored,
                     on_bucket=on_bucket, on_snippet=on_snippet,
                     on_records=on_records,
                 )
                 all_records.extend(records)
                 await anyio.to_thread.run_sync(
-                    repo.save_records, str(scanned.path), scanned.mtime, records
+                    repo.save_records, str(parsed.path), parsed.mtime, records
                 )
                 if records:
                     on_transcript_complete(records)

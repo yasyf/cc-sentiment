@@ -1,17 +1,32 @@
 use chrono::DateTime;
+use crossbeam_channel::{bounded, Receiver};
 use once_cell::sync::Lazy;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyString, PyTuple};
 use rayon::prelude::*;
 use regex::Regex;
-use serde_json::Value;
+use serde::Deserialize;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::thread;
 use walkdir::WalkDir;
 
 const BUCKET_SECONDS: i64 = 300;
 const ASSISTANT_TRUNCATION: usize = 1024;
 const MIN_USER_TURNS_PER_SESSION: usize = 2;
+
+static PARSE_POOL: Lazy<rayon::ThreadPool> = Lazy::new(|| {
+    let n = std::env::var("CC_SENTIMENT_PARSE_THREADS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or_else(|| (num_cpus::get() * 2).min(32));
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(n)
+        .thread_name(|i| format!("cc-sentiment-parse-{i}"))
+        .build()
+        .expect("parse pool builds")
+});
 
 static JUNK_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(concat!(
@@ -28,6 +43,61 @@ static JUNK_RE: Lazy<Regex> = Lazy::new(|| {
     ))
     .expect("static regex compiles")
 });
+
+#[derive(Deserialize)]
+struct Envelope<'a> {
+    #[serde(rename = "type", borrow, default)]
+    kind: Option<Cow<'a, str>>,
+    #[serde(borrow, default)]
+    timestamp: Option<Cow<'a, str>>,
+    #[serde(rename = "sessionId", borrow, default)]
+    session_id: Option<Cow<'a, str>>,
+    #[serde(rename = "isSidechain", default)]
+    is_sidechain: bool,
+    #[serde(borrow, default)]
+    entrypoint: Option<Cow<'a, str>>,
+    #[serde(borrow, default)]
+    uuid: Option<Cow<'a, str>>,
+    #[serde(borrow, default)]
+    version: Option<Cow<'a, str>>,
+    #[serde(borrow, default)]
+    message: Option<MessageRaw<'a>>,
+}
+
+#[derive(Deserialize)]
+struct MessageRaw<'a> {
+    #[serde(borrow, default)]
+    model: Option<Cow<'a, str>>,
+    #[serde(borrow, default)]
+    content: Option<Content<'a>>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Content<'a> {
+    Text(#[serde(borrow)] Cow<'a, str>),
+    Blocks(#[serde(borrow)] Vec<ContentBlock<'a>>),
+}
+
+#[derive(Deserialize)]
+struct ContentBlock<'a> {
+    #[serde(rename = "type", borrow, default)]
+    kind: Option<Cow<'a, str>>,
+    #[serde(borrow, default)]
+    text: Option<Cow<'a, str>>,
+    #[serde(borrow, default)]
+    thinking: Option<Cow<'a, str>>,
+    #[serde(borrow, default)]
+    name: Option<Cow<'a, str>>,
+    #[serde(borrow, default)]
+    input: Option<InputBlock<'a>>,
+}
+
+#[derive(Deserialize)]
+struct InputBlock<'a> {
+    #[serde(rename = "file_path", borrow, default)]
+    file_path: Option<Cow<'a, str>>,
+}
 
 enum Parsed {
     User {
@@ -48,22 +118,18 @@ enum Parsed {
     },
 }
 
-fn get_str<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
-    v.get(key)?.as_str()
-}
-
-fn extract_user_content(raw: &Value) -> Option<String> {
-    match raw {
-        Value::String(s) => Some(s.clone()),
-        Value::Array(arr) => {
-            let parts: Vec<&str> = arr
+fn extract_user_text(content: &Content<'_>) -> Option<String> {
+    match content {
+        Content::Text(s) => Some(s.to_string()),
+        Content::Blocks(blocks) => {
+            let parts: Vec<&str> = blocks
                 .iter()
-                .filter_map(|block| {
-                    let obj = block.as_object()?;
-                    if obj.get("type")?.as_str()? != "text" {
-                        return None;
+                .filter_map(|b| {
+                    if b.kind.as_deref()? == "text" {
+                        b.text.as_deref()
+                    } else {
+                        None
                     }
-                    obj.get("text")?.as_str()
                 })
                 .collect();
             if parts.is_empty() {
@@ -72,26 +138,21 @@ fn extract_user_content(raw: &Value) -> Option<String> {
                 Some(parts.join(" "))
             }
         }
-        _ => None,
     }
 }
 
-fn parse_value(data: &Value) -> Option<Parsed> {
-    if get_str(data, "entrypoint") == Some("sdk-cli") {
+fn parse_envelope(env: Envelope<'_>) -> Option<Parsed> {
+    if env.entrypoint.as_deref() == Some("sdk-cli") {
         return None;
     }
-    match get_str(data, "type")? {
-        "queue-operation" => None,
+    match env.kind.as_deref()? {
         "user" => {
-            if data
-                .get("isSidechain")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-            {
+            if env.is_sidechain {
                 return None;
             }
-            let message = data.get("message")?;
-            let content = extract_user_content(message.get("content")?)?;
+            let msg = env.message?;
+            let content_val = msg.content?;
+            let content = extract_user_text(&content_val)?;
             if JUNK_RE.is_match(&content) {
                 return None;
             }
@@ -101,46 +162,44 @@ fn parse_value(data: &Value) -> Option<Parsed> {
             }
             Some(Parsed::User {
                 content: trimmed.to_string(),
-                timestamp: get_str(data, "timestamp")?.to_string(),
-                session_id: get_str(data, "sessionId")?.to_string(),
-                uuid: get_str(data, "uuid")?.to_string(),
-                cc_version: get_str(data, "version")?.to_string(),
+                timestamp: env.timestamp?.into_owned(),
+                session_id: env.session_id?.into_owned(),
+                uuid: env.uuid?.into_owned(),
+                cc_version: env.version?.into_owned(),
             })
         }
         "assistant" => {
-            let message = data.get("message")?;
-            let model = get_str(message, "model")?;
+            let msg = env.message?;
+            let model = msg.model?;
             if model == "<synthetic>" {
                 return None;
             }
-            let blocks = message.get("content")?.as_array()?;
-            let mut text_parts: Vec<&str> = Vec::new();
+            let blocks = match msg.content? {
+                Content::Blocks(v) => v,
+                Content::Text(_) => return None,
+            };
+            let mut text_parts: Vec<String> = Vec::new();
             let mut tool_calls: Vec<(String, Option<String>)> = Vec::new();
             let mut thinking_chars: usize = 0;
-            for block in blocks {
-                let Some(obj) = block.as_object() else {
-                    continue;
-                };
-                match obj.get("type").and_then(|v| v.as_str()) {
+            for b in blocks {
+                match b.kind.as_deref() {
                     Some("text") => {
-                        if let Some(t) = obj.get("text").and_then(|v| v.as_str()) {
-                            text_parts.push(t);
+                        if let Some(t) = b.text {
+                            text_parts.push(t.into_owned());
                         }
                     }
                     Some("tool_use") => {
-                        let Some(name) = obj.get("name").and_then(|v| v.as_str()) else {
+                        let Some(name) = b.name else {
                             continue;
                         };
-                        let file_path = obj
-                            .get("input")
-                            .and_then(|v| v.as_object())
-                            .and_then(|o| o.get("file_path"))
-                            .and_then(|v| v.as_str())
-                            .map(str::to_string);
-                        tool_calls.push((name.to_string(), file_path));
+                        let fp = b
+                            .input
+                            .and_then(|i| i.file_path)
+                            .map(|c| c.into_owned());
+                        tool_calls.push((name.into_owned(), fp));
                     }
                     Some("thinking") => {
-                        if let Some(t) = obj.get("thinking").and_then(|v| v.as_str()) {
+                        if let Some(t) = b.thinking {
                             thinking_chars += t.chars().count();
                         }
                     }
@@ -159,10 +218,10 @@ fn parse_value(data: &Value) -> Option<Parsed> {
             };
             Some(Parsed::Assistant {
                 content,
-                timestamp: get_str(data, "timestamp")?.to_string(),
-                session_id: get_str(data, "sessionId")?.to_string(),
-                uuid: get_str(data, "uuid")?.to_string(),
-                claude_model: model.to_string(),
+                timestamp: env.timestamp?.into_owned(),
+                session_id: env.session_id?.into_owned(),
+                uuid: env.uuid?.into_owned(),
+                claude_model: model.into_owned(),
                 tool_calls,
                 thinking_chars,
             })
@@ -171,8 +230,88 @@ fn parse_value(data: &Value) -> Option<Parsed> {
     }
 }
 
-fn parsed_to_dict<'py>(py: Python<'py>, parsed: Parsed) -> PyResult<Bound<'py, PyDict>> {
-    let d = PyDict::new(py);
+fn classify_envelope(env: Envelope<'_>) -> Option<(String, i64, bool)> {
+    if env.entrypoint.as_deref() == Some("sdk-cli") {
+        return None;
+    }
+    let is_user = match env.kind.as_deref()? {
+        "user" => {
+            if env.is_sidechain {
+                return None;
+            }
+            let msg = env.message.as_ref()?;
+            let content_val = msg.content.as_ref()?;
+            let ok = match content_val {
+                Content::Text(s) => !JUNK_RE.is_match(s) && !s.trim().is_empty(),
+                Content::Blocks(blocks) => {
+                    let parts: Vec<&str> = blocks
+                        .iter()
+                        .filter_map(|b| {
+                            if b.kind.as_deref()? == "text" {
+                                b.text.as_deref()
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    if parts.is_empty() {
+                        false
+                    } else {
+                        let joined = parts.join(" ");
+                        !JUNK_RE.is_match(&joined) && !joined.trim().is_empty()
+                    }
+                }
+            };
+            if !ok {
+                return None;
+            }
+            true
+        }
+        "assistant" => {
+            let msg = env.message.as_ref()?;
+            if msg.model.as_deref()? == "<synthetic>" {
+                return None;
+            }
+            let blocks = match msg.content.as_ref()? {
+                Content::Blocks(v) => v,
+                Content::Text(_) => return None,
+            };
+            let has_any = blocks.iter().any(|b| {
+                matches!(b.kind.as_deref(), Some("text") | Some("tool_use"))
+            });
+            if !has_any {
+                return None;
+            }
+            false
+        }
+        _ => return None,
+    };
+    let ts_secs = DateTime::parse_from_rfc3339(env.timestamp.as_deref()?)
+        .ok()?
+        .timestamp();
+    let session_id = env.session_id?.into_owned();
+    Some((session_id, ts_secs, is_user))
+}
+
+fn tool_calls_to_tuple<'py>(
+    py: Python<'py>,
+    tool_calls: Vec<(String, Option<String>)>,
+) -> PyResult<Bound<'py, PyTuple>> {
+    let items: Vec<Py<PyAny>> = tool_calls
+        .into_iter()
+        .map(|(name, fp)| -> PyResult<Py<PyAny>> {
+            let name_obj: Py<PyAny> = PyString::new(py, &name).unbind().into_any();
+            let fp_obj: Py<PyAny> = match fp {
+                Some(s) => PyString::new(py, &s).unbind().into_any(),
+                None => py.None(),
+            };
+            Ok(PyTuple::new(py, [name_obj, fp_obj])?.unbind().into_any())
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    PyTuple::new(py, items)
+}
+
+fn parsed_to_tuple<'py>(py: Python<'py>, parsed: Parsed) -> PyResult<Bound<'py, PyTuple>> {
     match parsed {
         Parsed::User {
             content,
@@ -180,14 +319,17 @@ fn parsed_to_dict<'py>(py: Python<'py>, parsed: Parsed) -> PyResult<Bound<'py, P
             session_id,
             uuid,
             cc_version,
-        } => {
-            d.set_item("kind", "user")?;
-            d.set_item("content", content)?;
-            d.set_item("timestamp", timestamp)?;
-            d.set_item("session_id", session_id)?;
-            d.set_item("uuid", uuid)?;
-            d.set_item("cc_version", cc_version)?;
-        }
+        } => PyTuple::new(
+            py,
+            [
+                PyString::new(py, "u").unbind().into_any(),
+                PyString::new(py, &content).unbind().into_any(),
+                PyString::new(py, &timestamp).unbind().into_any(),
+                PyString::new(py, &session_id).unbind().into_any(),
+                PyString::new(py, &uuid).unbind().into_any(),
+                PyString::new(py, &cc_version).unbind().into_any(),
+            ],
+        ),
         Parsed::Assistant {
             content,
             timestamp,
@@ -196,90 +338,20 @@ fn parsed_to_dict<'py>(py: Python<'py>, parsed: Parsed) -> PyResult<Bound<'py, P
             claude_model,
             tool_calls,
             thinking_chars,
-        } => {
-            d.set_item("kind", "assistant")?;
-            d.set_item("content", content)?;
-            d.set_item("timestamp", timestamp)?;
-            d.set_item("session_id", session_id)?;
-            d.set_item("uuid", uuid)?;
-            d.set_item("claude_model", claude_model)?;
-            d.set_item("thinking_chars", thinking_chars)?;
-            let calls = PyList::empty(py);
-            for (name, fp) in tool_calls {
-                let tc = PyDict::new(py);
-                tc.set_item("name", name)?;
-                if let Some(p) = fp {
-                    tc.set_item("file_path", p)?;
-                }
-                calls.append(tc)?;
-            }
-            d.set_item("tool_calls", calls)?;
-        }
+        } => PyTuple::new(
+            py,
+            [
+                PyString::new(py, "a").unbind().into_any(),
+                PyString::new(py, &content).unbind().into_any(),
+                PyString::new(py, &timestamp).unbind().into_any(),
+                PyString::new(py, &session_id).unbind().into_any(),
+                PyString::new(py, &uuid).unbind().into_any(),
+                PyString::new(py, &claude_model).unbind().into_any(),
+                thinking_chars.into_pyobject(py)?.unbind().into_any(),
+                tool_calls_to_tuple(py, tool_calls)?.unbind().into_any(),
+            ],
+        ),
     }
-    Ok(d)
-}
-
-fn parse_lines(content: &str) -> Vec<Parsed> {
-    content
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-        .filter_map(|data| parse_value(&data))
-        .collect()
-}
-
-fn bucket_classify(data: &Value) -> Option<(String, i64, bool)> {
-    if get_str(data, "entrypoint") == Some("sdk-cli") {
-        return None;
-    }
-    let is_user = match get_str(data, "type")? {
-        "queue-operation" => return None,
-        "user" => {
-            if data
-                .get("isSidechain")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-            {
-                return None;
-            }
-            let message = data.get("message")?;
-            let content = extract_user_content(message.get("content")?)?;
-            if JUNK_RE.is_match(&content) {
-                return None;
-            }
-            if content.trim().is_empty() {
-                return None;
-            }
-            true
-        }
-        "assistant" => {
-            let message = data.get("message")?;
-            if get_str(message, "model")? == "<synthetic>" {
-                return None;
-            }
-            let blocks = message.get("content")?.as_array()?;
-            let has_text = blocks.iter().any(|b| {
-                b.as_object()
-                    .and_then(|o| o.get("type").and_then(|t| t.as_str()))
-                    == Some("text")
-            });
-            let has_tool = blocks.iter().any(|b| {
-                b.as_object()
-                    .and_then(|o| o.get("type").and_then(|t| t.as_str()))
-                    == Some("tool_use")
-            });
-            if !has_text && !has_tool {
-                return None;
-            }
-            false
-        }
-        _ => return None,
-    };
-    let session_id = get_str(data, "sessionId")?.to_string();
-    let ts_secs = DateTime::parse_from_rfc3339(get_str(data, "timestamp")?)
-        .ok()?
-        .timestamp();
-    Some((session_id, ts_secs, is_user))
 }
 
 fn bucket_keys_from_bytes(bytes: &[u8]) -> Vec<(String, i64)> {
@@ -288,10 +360,10 @@ fn bucket_keys_from_bytes(bytes: &[u8]) -> Vec<(String, i64)> {
         if line.iter().all(|&b| b.is_ascii_whitespace()) {
             continue;
         }
-        let Ok(data) = serde_json::from_slice::<Value>(line) else {
+        let Ok(env) = serde_json::from_slice::<Envelope>(line) else {
             continue;
         };
-        let Some((session_id, ts_secs, is_user)) = bucket_classify(&data) else {
+        let Some((session_id, ts_secs, is_user)) = classify_envelope(env) else {
             continue;
         };
         by_session
@@ -299,6 +371,10 @@ fn bucket_keys_from_bytes(bytes: &[u8]) -> Vec<(String, i64)> {
             .or_default()
             .push((ts_secs, is_user));
     }
+    finalize_bucket_keys(by_session)
+}
+
+fn finalize_bucket_keys(by_session: HashMap<String, Vec<(i64, bool)>>) -> Vec<(String, i64)> {
     let mut keys: Vec<(String, i64)> = Vec::new();
     for (session_id, mut entries) in by_session {
         if entries.iter().filter(|(_, u)| *u).count() < MIN_USER_TURNS_PER_SESSION {
@@ -377,35 +453,145 @@ fn discover(dir: &Path, filter: FileFilter<'_>) -> Vec<(PathBuf, f64)> {
     found
 }
 
-#[pyfunction]
-fn parse_line(py: Python<'_>, line: &str) -> PyResult<Option<Py<PyDict>>> {
-    let parsed = py.detach(|| {
-        serde_json::from_str::<Value>(line)
-            .ok()
-            .and_then(|data| parse_value(&data))
-    });
-    match parsed {
-        Some(p) => Ok(Some(parsed_to_dict(py, p)?.unbind())),
-        None => Ok(None),
+struct ParsedFile {
+    path: String,
+    mtime: f64,
+    bucket_keys: Vec<(String, i64)>,
+    messages: Vec<Parsed>,
+}
+
+fn parse_file_internal(path: &str, mtime: f64) -> std::io::Result<ParsedFile> {
+    let bytes = std::fs::read(path)?;
+    let mut messages: Vec<Parsed> = Vec::new();
+    let mut by_session: HashMap<String, Vec<(i64, bool)>> = HashMap::new();
+    for line in bytes.split(|&b| b == b'\n') {
+        if line.iter().all(|&b| b.is_ascii_whitespace()) {
+            continue;
+        }
+        let Ok(env) = serde_json::from_slice::<Envelope>(line) else {
+            continue;
+        };
+        let Some(parsed) = parse_envelope(env) else {
+            continue;
+        };
+        let (session_id, timestamp, is_user) = match &parsed {
+            Parsed::User {
+                session_id,
+                timestamp,
+                ..
+            } => (session_id, timestamp, true),
+            Parsed::Assistant {
+                session_id,
+                timestamp,
+                ..
+            } => (session_id, timestamp, false),
+        };
+        if let Ok(ts) = DateTime::parse_from_rfc3339(timestamp) {
+            by_session
+                .entry(session_id.clone())
+                .or_default()
+                .push((ts.timestamp(), is_user));
+        }
+        messages.push(parsed);
+    }
+    Ok(ParsedFile {
+        path: path.to_string(),
+        mtime,
+        bucket_keys: finalize_bucket_keys(by_session),
+        messages,
+    })
+}
+
+fn parsed_file_to_py(py: Python<'_>, pf: ParsedFile) -> PyResult<Py<PyAny>> {
+    let bk_items: Vec<Py<PyAny>> = pf
+        .bucket_keys
+        .into_iter()
+        .map(|(sid, idx)| -> PyResult<Py<PyAny>> {
+            Ok(PyTuple::new(
+                py,
+                [
+                    PyString::new(py, &sid).unbind().into_any(),
+                    idx.into_pyobject(py)?.unbind().into_any(),
+                ],
+            )?
+            .unbind()
+            .into_any())
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let bk = PyTuple::new(py, bk_items)?;
+
+    let msg_items: Vec<Py<PyAny>> = pf
+        .messages
+        .into_iter()
+        .map(|p| -> PyResult<Py<PyAny>> { Ok(parsed_to_tuple(py, p)?.unbind().into_any()) })
+        .collect::<PyResult<Vec<_>>>()?;
+    let msgs = PyTuple::new(py, msg_items)?;
+
+    let out = PyTuple::new(
+        py,
+        [
+            PyString::new(py, &pf.path).unbind().into_any(),
+            pf.mtime.into_pyobject(py)?.unbind().into_any(),
+            bk.unbind().into_any(),
+            msgs.unbind().into_any(),
+        ],
+    )?;
+    Ok(out.unbind().into_any())
+}
+
+#[pyclass]
+pub struct ParseStream {
+    rx: Receiver<ParsedFile>,
+}
+
+#[pymethods]
+impl ParseStream {
+    fn recv(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        let opt = py.detach(|| self.rx.recv().ok());
+        match opt {
+            None => Ok(None),
+            Some(pf) => Ok(Some(parsed_file_to_py(py, pf)?)),
+        }
+    }
+
+    fn recv_many(&self, py: Python<'_>, max: usize) -> PyResult<Vec<Py<PyAny>>> {
+        let batch: Vec<ParsedFile> = py.detach(|| {
+            let mut out: Vec<ParsedFile> = Vec::new();
+            match self.rx.recv() {
+                Ok(pf) => out.push(pf),
+                Err(_) => return out,
+            }
+            while out.len() < max {
+                match self.rx.try_recv() {
+                    Ok(pf) => out.push(pf),
+                    Err(_) => break,
+                }
+            }
+            out
+        });
+        batch
+            .into_iter()
+            .map(|pf| parsed_file_to_py(py, pf))
+            .collect()
     }
 }
 
 #[pyfunction]
-fn parse_file(py: Python<'_>, path: &str) -> PyResult<Vec<Py<PyDict>>> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| pyo3::exceptions::PyOSError::new_err(e.to_string()))?;
-    let parsed: Vec<Parsed> = py.detach(|| parse_lines(&content));
-    parsed
-        .into_iter()
-        .map(|p| Ok(parsed_to_dict(py, p)?.unbind()))
-        .collect()
-}
-
-#[pyfunction]
-fn bucket_keys_for(py: Python<'_>, path: &str) -> PyResult<Vec<(String, i64)>> {
-    let content =
-        std::fs::read(path).map_err(|e| pyo3::exceptions::PyOSError::new_err(e.to_string()))?;
-    Ok(py.detach(|| bucket_keys_from_bytes(&content)))
+fn stream_parse(paths: Vec<(String, f64)>, prefetch: usize) -> PyResult<ParseStream> {
+    let capacity = prefetch.max(1);
+    let (tx, rx) = bounded::<ParsedFile>(capacity);
+    thread::spawn(move || {
+        PARSE_POOL.install(|| {
+            paths
+                .into_par_iter()
+                .for_each_with(tx, |tx, (path, mtime)| {
+                    if let Ok(pf) = parse_file_internal(&path, mtime) {
+                        let _ = tx.send(pf);
+                    }
+                });
+        });
+    });
+    Ok(ParseStream { rx })
 }
 
 #[pyfunction]
@@ -425,23 +611,24 @@ fn scan_bucket_keys(
             known_mtimes: known_mtimes.as_ref(),
         };
         let files = discover(&dir, filter);
-        files
-            .into_par_iter()
-            .filter_map(|(path, mtime)| {
-                let bytes = std::fs::read(&path).ok()?;
-                let keys = bucket_keys_from_bytes(&bytes);
-                Some((path.to_string_lossy().into_owned(), mtime, keys))
-            })
-            .collect()
+        PARSE_POOL.install(|| {
+            files
+                .into_par_iter()
+                .filter_map(|(path, mtime)| {
+                    let bytes = std::fs::read(&path).ok()?;
+                    let keys = bucket_keys_from_bytes(&bytes);
+                    Some((path.to_string_lossy().into_owned(), mtime, keys))
+                })
+                .collect()
+        })
     }))
 }
 
 #[pymodule]
 fn _transcripts_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(parse_line, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_file, m)?)?;
-    m.add_function(wrap_pyfunction!(bucket_keys_for, m)?)?;
+    m.add_function(wrap_pyfunction!(stream_parse, m)?)?;
     m.add_function(wrap_pyfunction!(scan_bucket_keys, m)?)?;
+    m.add_class::<ParseStream>()?;
     Ok(())
 }
 
@@ -449,13 +636,21 @@ fn _transcripts_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     use super::*;
 
+    fn parse_line(line: &str) -> Option<Parsed> {
+        let env: Envelope = serde_json::from_str(line).ok()?;
+        parse_envelope(env)
+    }
+
     #[test]
     fn parses_user_string_content() {
         let line = r#"{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"hello"},"uuid":"u","timestamp":"2026-04-10T07:36:00.000Z","sessionId":"s","version":"2.1.92"}"#;
-        let data: Value = serde_json::from_str(line).unwrap();
-        let parsed = parse_value(&data).unwrap();
+        let parsed = parse_line(line).unwrap();
         match parsed {
-            Parsed::User { content, cc_version, .. } => {
+            Parsed::User {
+                content,
+                cc_version,
+                ..
+            } => {
                 assert_eq!(content, "hello");
                 assert_eq!(cc_version, "2.1.92");
             }
@@ -466,22 +661,19 @@ mod tests {
     #[test]
     fn skips_sdk_cli_entrypoint() {
         let line = r#"{"type":"user","message":{"role":"user","content":"hi"},"entrypoint":"sdk-cli","uuid":"u","timestamp":"2026-04-10T07:36:00Z","sessionId":"s","version":"2.1.92"}"#;
-        let data: Value = serde_json::from_str(line).unwrap();
-        assert!(parse_value(&data).is_none());
+        assert!(parse_line(line).is_none());
     }
 
     #[test]
     fn skips_synthetic_assistant() {
         let line = r#"{"type":"assistant","message":{"model":"<synthetic>","content":[{"type":"text","text":"x"}]},"uuid":"u","timestamp":"2026-04-10T07:36:00Z","sessionId":"s"}"#;
-        let data: Value = serde_json::from_str(line).unwrap();
-        assert!(parse_value(&data).is_none());
+        assert!(parse_line(line).is_none());
     }
 
     #[test]
     fn skips_user_system_reminder() {
         let line = r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":"<system-reminder>x</system-reminder>"},"uuid":"u","timestamp":"2026-04-10T07:36:00Z","sessionId":"s","version":"2.1.92"}"#;
-        let data: Value = serde_json::from_str(line).unwrap();
-        assert!(parse_value(&data).is_none());
+        assert!(parse_line(line).is_none());
     }
 
     #[test]
@@ -490,11 +682,13 @@ mod tests {
         let line = format!(
             r#"{{"type":"assistant","message":{{"model":"m","content":[{{"type":"text","text":"{long}"}}]}},"uuid":"u","timestamp":"2026-04-10T07:36:00Z","sessionId":"s"}}"#
         );
-        let data: Value = serde_json::from_str(&line).unwrap();
-        let parsed = parse_value(&data).unwrap();
+        let parsed = parse_line(&line).unwrap();
         match parsed {
             Parsed::Assistant { content, .. } => {
-                assert_eq!(content.chars().count(), ASSISTANT_TRUNCATION + "[...]".chars().count());
+                assert_eq!(
+                    content.chars().count(),
+                    ASSISTANT_TRUNCATION + "[...]".chars().count()
+                );
                 assert!(content.ends_with("[...]"));
             }
             _ => panic!("expected assistant"),
@@ -504,10 +698,13 @@ mod tests {
     #[test]
     fn extracts_tool_calls_with_file_path() {
         let line = r#"{"type":"assistant","message":{"model":"m","content":[{"type":"tool_use","name":"Read","input":{"file_path":"/a.py"}},{"type":"text","text":"ok"}]},"uuid":"u","timestamp":"2026-04-10T07:36:00Z","sessionId":"s"}"#;
-        let data: Value = serde_json::from_str(line).unwrap();
-        let parsed = parse_value(&data).unwrap();
+        let parsed = parse_line(line).unwrap();
         match parsed {
-            Parsed::Assistant { tool_calls, content, .. } => {
+            Parsed::Assistant {
+                tool_calls,
+                content,
+                ..
+            } => {
                 assert_eq!(content, "ok");
                 assert_eq!(tool_calls.len(), 1);
                 assert_eq!(tool_calls[0].0, "Read");
@@ -520,12 +717,41 @@ mod tests {
     #[test]
     fn user_list_content_joins_text_blocks() {
         let line = r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]},"uuid":"u","timestamp":"2026-04-10T07:36:00Z","sessionId":"s","version":"2.1.92"}"#;
-        let data: Value = serde_json::from_str(line).unwrap();
-        let parsed = parse_value(&data).unwrap();
+        let parsed = parse_line(line).unwrap();
         match parsed {
             Parsed::User { content, .. } => assert_eq!(content, "a b"),
             _ => panic!("expected user"),
         }
+    }
+
+    #[test]
+    fn parse_file_internal_drains_messages_and_bucket_keys() {
+        let tmp = std::env::temp_dir().join(format!(
+            "cc_sentiment_pfi_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("s.jsonl");
+        let content = concat!(
+            r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":"hi"},"uuid":"u1","timestamp":"2026-04-10T07:36:00.000Z","sessionId":"s","version":"2.1.92"}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"model":"m","content":[{"type":"text","text":"ok"}]},"uuid":"u2","timestamp":"2026-04-10T07:36:05.000Z","sessionId":"s","version":"2.1.92"}"#,
+            "\n",
+            r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":"thanks"},"uuid":"u3","timestamp":"2026-04-10T07:36:10.000Z","sessionId":"s","version":"2.1.92"}"#,
+            "\n"
+        );
+        std::fs::write(&path, content).unwrap();
+        let pf = parse_file_internal(path.to_str().unwrap(), 42.0).unwrap();
+        assert_eq!(pf.mtime, 42.0);
+        assert_eq!(pf.messages.len(), 3);
+        assert_eq!(pf.bucket_keys.len(), 1);
+        assert_eq!(pf.bucket_keys[0].0, "s");
+        assert_eq!(pf.bucket_keys[0].1, 0);
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]

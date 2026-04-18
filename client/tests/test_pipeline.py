@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,9 +16,18 @@ from cc_sentiment.models import (
 )
 from cc_sentiment.pipeline import Pipeline, ScannedTranscript, ScanResult
 from cc_sentiment.repo import Repository
-from tests.helpers import make_record
+from cc_sentiment.transcripts import ParsedTranscript, TranscriptParser
+from tests.helpers import make_parsed, make_record
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "sample_transcript.jsonl"
+
+
+def parse_fixture() -> ParsedTranscript:
+    async def run() -> list[ParsedTranscript]:
+        return [p async for p in TranscriptParser.stream_transcripts([(FIXTURE_PATH, 1.0)])]
+
+    [parsed] = anyio.run(run)
+    return parsed
 
 
 @pytest.fixture
@@ -72,28 +81,30 @@ class TestScan:
         assert result.transcripts[0].new_bucket_keys == (new_key,)
 
 
-class TestProcessTranscript:
-    def test_empty_file_returns_empty(self, tmp_path: Path) -> None:
-        empty_file = tmp_path / "empty.jsonl"
-        empty_file.write_text("")
+@pytest.fixture
+def fixture_parsed() -> ParsedTranscript:
+    return parse_fixture()
+
+
+class TestScoreTranscript:
+    def test_empty_messages_returns_empty(self) -> None:
+        parsed = ParsedTranscript(path=Path("/empty.jsonl"), mtime=0.0, bucket_keys=(), messages=())
         classifier = MagicMock()
         classifier.score = AsyncMock(return_value=[])
-        classifier.close = AsyncMock()
 
         async def run() -> list[SentimentRecord]:
-            return await Pipeline.process_transcript(empty_file, classifier)
+            return await Pipeline.score_transcript(parsed, classifier)
 
         result = anyio.run(run)
         assert result == []
         classifier.score.assert_not_called()
 
-    def test_correct_record_count(self) -> None:
+    def test_correct_record_count(self, fixture_parsed: ParsedTranscript) -> None:
         classifier = MagicMock()
         classifier.score = AsyncMock(return_value=[SentimentScore(3)] * 2)
-        classifier.close = AsyncMock()
 
         async def run() -> list[SentimentRecord]:
-            return await Pipeline.process_transcript(FIXTURE_PATH, classifier)
+            return await Pipeline.score_transcript(fixture_parsed, classifier)
 
         result = anyio.run(run)
         assert len(result) == 2
@@ -101,14 +112,13 @@ class TestProcessTranscript:
 
 
 class TestBucketCaching:
-    def test_skips_cached_buckets(self) -> None:
+    def test_skips_cached_buckets(self, fixture_parsed: ParsedTranscript) -> None:
         cached = frozenset({BucketKey(session_id=SessionId("s1"), bucket_index=BucketIndex(0))})
         classifier = MagicMock()
         classifier.score = AsyncMock(return_value=[SentimentScore(3)] * 4)
-        classifier.close = AsyncMock()
 
         async def run() -> list[SentimentRecord]:
-            return await Pipeline.process_transcript(FIXTURE_PATH, classifier, scored_buckets=cached)
+            return await Pipeline.score_transcript(fixture_parsed, classifier, scored_buckets=cached)
 
         anyio.run(run)
         called_buckets = classifier.score.call_args[0][0]
@@ -117,21 +127,13 @@ class TestBucketCaching:
             for b in called_buckets
         )
 
-    def test_all_cached_returns_empty(self) -> None:
+    def test_all_cached_returns_empty(self, fixture_parsed: ParsedTranscript) -> None:
+        all_keys = frozenset(fixture_parsed.bucket_keys)
         classifier = MagicMock()
         classifier.score = AsyncMock(return_value=[SentimentScore(3)] * 5)
-        classifier.close = AsyncMock()
-
-        async def get_all_keys() -> frozenset[BucketKey]:
-            from cc_sentiment.transcripts import ConversationBucketer, TranscriptParser
-            messages = TranscriptParser.parse_file(FIXTURE_PATH)
-            buckets = ConversationBucketer.bucket_messages(messages)
-            return frozenset(BucketKey(session_id=b.session_id, bucket_index=b.bucket_index) for b in buckets)
-
-        all_keys = anyio.run(get_all_keys)
 
         async def run() -> list[SentimentRecord]:
-            return await Pipeline.process_transcript(FIXTURE_PATH, classifier, scored_buckets=all_keys)
+            return await Pipeline.score_transcript(fixture_parsed, classifier, scored_buckets=all_keys)
 
         result = anyio.run(run)
         assert result == []
@@ -167,7 +169,11 @@ class TestCrossBucketReadHistory:
             ])
         )
 
-        new_buckets, metrics_by_key = Pipeline.parse_buckets_with_metrics(path, frozenset())
+        async def load() -> list[ParsedTranscript]:
+            return [p async for p in TranscriptParser.stream_transcripts([(path, 0.0)])]
+
+        [parsed] = anyio.run(load)
+        new_buckets, metrics_by_key = Pipeline.buckets_with_metrics(parsed.messages, frozenset())
         assert len(new_buckets) == 2
         bucket_1_key = BucketKey(session_id=SessionId("session-cross"), bucket_index=BucketIndex(2))
         assert metrics_by_key[bucket_1_key].edits_without_prior_read_ratio == 0.0
@@ -183,14 +189,27 @@ class TestCrossBucketReadHistory:
             ])
         )
 
-        _, metrics_by_key = Pipeline.parse_buckets_with_metrics(path, frozenset())
+        async def load() -> list[ParsedTranscript]:
+            return [p async for p in TranscriptParser.stream_transcripts([(path, 0.0)])]
+
+        [parsed] = anyio.run(load)
+        _, metrics_by_key = Pipeline.buckets_with_metrics(parsed.messages, frozenset())
         bucket_key = BucketKey(session_id=SessionId("session-x"), bucket_index=BucketIndex(0))
         assert metrics_by_key[bucket_key].edits_without_prior_read_ratio == 1.0
+
+
+def _stub_stream(parsed_list: list[ParsedTranscript]):
+    async def stream(paths, *, prefetch=None) -> AsyncIterator[ParsedTranscript]:
+        for parsed in parsed_list:
+            yield parsed
+
+    return stream
 
 
 class TestPipelineStateUpdate:
     def test_repo_updated_with_records(self, repo: Repository) -> None:
         record = make_record()
+        parsed = make_parsed(Path("/fake.jsonl"), (), mtime=100.0)
         scan_result = ScanResult(
             transcripts=(
                 ScannedTranscript(
@@ -209,7 +228,8 @@ class TestPipelineStateUpdate:
         mock_classifier.close = AsyncMock()
 
         with patch("cc_sentiment.pipeline.build_engine", AsyncMock(return_value=mock_classifier)), \
-             patch.object(Pipeline, "process_transcript", new_callable=AsyncMock, return_value=[record]):
+             patch.object(TranscriptParser, "stream_transcripts", new=_stub_stream([parsed])), \
+             patch.object(Pipeline, "score_transcript", new_callable=AsyncMock, return_value=[record]):
 
             async def do_run() -> list[SentimentRecord]:
                 return await Pipeline.run(repo, scan_result, engine="mlx")
@@ -227,28 +247,28 @@ class TestPipelineStateUpdate:
 
 
 class TestOnBucketPlumbing:
-    def test_process_transcript_passes_on_bucket_to_classifier(self) -> None:
+    def test_score_transcript_passes_on_bucket_to_classifier(self, fixture_parsed: ParsedTranscript) -> None:
         classifier = MagicMock()
         classifier.score = AsyncMock(return_value=[SentimentScore(3)] * 2)
-        classifier.close = AsyncMock()
 
         cb = MagicMock()
 
         async def run() -> None:
-            await Pipeline.process_transcript(FIXTURE_PATH, classifier, on_bucket=cb)
+            await Pipeline.score_transcript(fixture_parsed, classifier, on_bucket=cb)
 
         anyio.run(run)
         _, kwargs = classifier.score.call_args
         assert kwargs.get("on_progress") is cb
 
-    def test_run_threads_on_bucket_through_to_process_transcript(self, repo: Repository) -> None:
+    def test_run_threads_on_bucket_through_to_score_transcript(self, repo: Repository) -> None:
         cb = MagicMock()
         captured: dict[str, object] = {}
 
-        async def fake_process(path, classifier, scored_buckets=frozenset(), **kwargs):
+        async def fake_score(parsed, classifier, scored_buckets=frozenset(), **kwargs):
             captured["on_bucket"] = kwargs.get("on_bucket")
             return []
 
+        parsed = make_parsed(FIXTURE_PATH, (), mtime=1.0)
         classifier = MagicMock()
         classifier.close = AsyncMock()
         scan_result = ScanResult(
@@ -266,7 +286,8 @@ class TestOnBucketPlumbing:
 
         async def run() -> None:
             with patch("cc_sentiment.pipeline.build_engine", AsyncMock(return_value=classifier)), \
-                 patch.object(Pipeline, "process_transcript", new=fake_process):
+                 patch.object(TranscriptParser, "stream_transcripts", new=_stub_stream([parsed])), \
+                 patch.object(Pipeline, "score_transcript", new=fake_score):
                 await Pipeline.run(repo, scan_result, engine="omlx", on_bucket=cb)
 
         anyio.run(run)
