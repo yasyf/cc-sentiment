@@ -65,7 +65,7 @@ asyncio_mode = "auto"
 
 [tool.cibuildwheel]
 build = "cp313-*"
-skip = ["pp*", "*musllinux*", "*-manylinux_i686", "*-win32"]
+skip = ["*musllinux*", "*-manylinux_i686", "*-win32"]
 build-frontend = "build"
 build-verbosity = 1
 test-command = "cc-sentiment --help"
