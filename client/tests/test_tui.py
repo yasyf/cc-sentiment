@@ -533,7 +533,7 @@ async def test_ccsentiment_app_cost_cancel_exits(tmp_path: Path, auth_ok):
             await pilot.pause(delay=0.5)
             assert isinstance(pilot.app.screen, CostReviewScreen)
             await pilot.click("#cost-no")
-            await pilot.pause(delay=0.3)
+            await pilot.pause()
             mock_pipeline_run.assert_not_called()
 
 
@@ -571,7 +571,7 @@ async def test_ccsentiment_app_rescan_clears_state(tmp_path: Path, auth_ok, no_s
             assert isinstance(app.stage, RescanConfirm)
 
             await pilot.press("r")
-            await pilot.pause(delay=0.3)
+            await pilot.pause()
 
     verify = Repository.open(db_path)
     try:
@@ -786,7 +786,7 @@ async def test_action_open_dashboard_opens_browser(tmp_path: Path, auth_ok):
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await pilot.press("o")
-            await pilot.pause(delay=0.2)
+            await pilot.pause()
             mock_open.assert_called_once_with(DASHBOARD_URL)
             assert DASHBOARD_URL in app.status_text
 
@@ -1134,7 +1134,7 @@ async def test_stat_share_tweet_button_opens_twitter_with_username():
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await pilot.click("#stat-tweet")
-            await pilot.pause(delay=0.2)
+            await pilot.pause()
 
     mock_open.assert_called_once()
     url = mock_open.call_args[0][0]
@@ -1149,7 +1149,7 @@ async def test_stat_share_gpg_user_omits_username_from_share_url():
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await pilot.click("#stat-tweet")
-            await pilot.pause(delay=0.2)
+            await pilot.pause()
 
     mock_open.assert_called_once()
     url = mock_open.call_args[0][0]
@@ -1164,7 +1164,7 @@ async def test_stat_share_skip_dismisses_without_opening_browser():
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await pilot.click("#stat-skip")
-            await pilot.pause(delay=0.2)
+            await pilot.pause()
 
     mock_open.assert_not_called()
 
@@ -1175,7 +1175,7 @@ async def test_stat_share_escape_dismisses():
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await pilot.press("escape")
-            await pilot.pause(delay=0.2)
+            await pilot.pause()
 
     mock_open.assert_not_called()
 
