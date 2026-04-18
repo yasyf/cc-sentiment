@@ -495,6 +495,19 @@ async def test_ccsentiment_app_engine_failure_shows_error_and_exits(tmp_path: Pa
             assert isinstance(pilot.app.screen, PlatformErrorScreen)
 
 
+async def test_ccsentiment_app_debug_mode_composes(tmp_path: Path):
+    from cc_sentiment.tui.widgets.debug_section import DebugSection
+
+    state = AppState()
+    db_path = tmp_path / "records.db"
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", side_effect=RuntimeError("no engine")), \
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
+        app = CCSentimentApp(state=state, db_path=db_path, debug=True)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.1)
+            assert pilot.app.query_one(DebugSection) is not None
+
+
 async def test_ccsentiment_app_pushes_setup_when_no_config(tmp_path: Path):
     state = AppState()
     db_path = tmp_path / "records.db"

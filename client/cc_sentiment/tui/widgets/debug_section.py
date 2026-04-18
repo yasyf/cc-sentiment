@@ -8,13 +8,11 @@ from cc_sentiment.tui.widgets.section import Section
 
 
 class DebugSection(Section):
+    BORDER_SUBTITLE = "debug"
     DEFAULT_CSS = """
     DebugSection { border: round $surface; }
     DebugSection > #debug-body { color: $text-muted; height: auto; }
     """
-
-    def __init__(self, **kwargs) -> None:
-        super().__init__(title="debug", **kwargs)
 
     def compose(self) -> ComposeResult:
         yield Static("", id="debug-body")
