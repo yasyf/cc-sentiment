@@ -18,7 +18,7 @@ Claude Code threads like [anthropics/claude-code#42796](https://github.com/anthr
 uvx cc-sentiment
 ```
 
-Needs Python 3.13+ and [uv](https://docs.astral.sh/uv/). The first run links your GitHub account, scores any transcripts it finds in `~/.claude/projects/`, and uploads the numbers.
+Needs [uv](https://docs.astral.sh/uv/). The first run links your GitHub account, scores any transcripts it finds in `~/.claude/projects/`, and uploads the numbers.
 
 ## What gets uploaded
 

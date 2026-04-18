@@ -10,7 +10,7 @@ Your conversations stay on your Mac. Only anonymous numeric scores are uploaded.
 uvx cc-sentiment
 ```
 
-Needs macOS on Apple Silicon, Python 3.13+, and [uv](https://docs.astral.sh/uv/). The first run links your GitHub account, scores transcripts in `~/.claude/projects/`, and uploads the numbers.
+Needs macOS on Apple Silicon and [uv](https://docs.astral.sh/uv/). The first run links your GitHub account, scores transcripts in `~/.claude/projects/`, and uploads the numbers.
 
 ## What gets uploaded
 

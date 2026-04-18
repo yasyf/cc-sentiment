@@ -30,7 +30,7 @@
 			<section>
 				<h3 class="text-base font-medium text-text">Run it</h3>
 				<p class="mt-2 text-sm text-text-muted">
-					Requires Python 3.13+ and <a href="https://docs.astral.sh/uv/" class="text-accent hover:text-accent-hover transition-colors" target="_blank" rel="noopener">uv</a>.
+					Requires <a href="https://docs.astral.sh/uv/" class="text-accent hover:text-accent-hover transition-colors" target="_blank" rel="noopener">uv</a>.
 				</p>
 				<pre class="mt-3 overflow-x-auto rounded border border-border bg-bg-code px-4 py-3 font-mono text-sm text-text-secondary"><code>uvx cc-sentiment</code></pre>
 				<p class="mt-2 text-sm text-text-dim">
