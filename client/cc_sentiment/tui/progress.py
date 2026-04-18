@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, fields
+from collections import Counter
+from dataclasses import dataclass, field, fields
 
 
 @dataclass
@@ -47,3 +48,17 @@ class ScoringProgress:
     def reset(self) -> None:
         self.start_time = 0.0
         self.initial_estimate_seconds = None
+
+
+@dataclass
+class LiveFunStats:
+    swear_counts: Counter[str] = field(default_factory=Counter)
+
+    def bump(self, words: list[str]) -> None:
+        self.swear_counts.update(words)
+
+    def top(self) -> tuple[str, int] | None:
+        return self.swear_counts.most_common(1)[0] if self.swear_counts else None
+
+    def reset(self) -> None:
+        self.swear_counts.clear()

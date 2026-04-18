@@ -179,6 +179,7 @@ class Pipeline:
         on_bucket: Callable[[int], None] = NOOP_PROGRESS,
         on_snippet: Callable[[str, int], Awaitable[None]] = NOOP_SNIPPET,
         on_records: Callable[[list[SentimentRecord]], None] = lambda _: None,
+        on_frustration: Callable[[list[str]], None] = lambda _: None,
     ) -> list[SentimentRecord]:
         new_buckets, metrics_by_key = cls.buckets_with_metrics(
             parsed.messages, scored_buckets
@@ -193,6 +194,8 @@ class Pipeline:
             for bucket, score in zip(chunk, scores):
                 if snippet := cls.snippet_for(bucket, int(score)):
                     await on_snippet(snippet, int(score))
+                if int(score) == 1 and (words := FrustrationFilter.matched_words(bucket)):
+                    on_frustration(words)
             chunk_records = [
                 cls.to_record(
                     bucket,
@@ -220,6 +223,7 @@ class Pipeline:
         on_engine_log: Callable[[str], None] | None = None,
         on_snippet: Callable[[str, int], Awaitable[None]] = NOOP_SNIPPET,
         on_transcript_complete: Callable[[list[SentimentRecord]], None] = lambda _: None,
+        on_frustration: Callable[[list[str]], None] = lambda _: None,
     ) -> list[SentimentRecord]:
         classifier = await EngineFactory.build(engine, model_repo, on_engine_log)
 
@@ -234,7 +238,7 @@ class Pipeline:
                 records = await cls.score_transcript(
                     parsed, classifier, scored,
                     on_bucket=on_bucket, on_snippet=on_snippet,
-                    on_records=on_records,
+                    on_records=on_records, on_frustration=on_frustration,
                 )
                 all_records.extend(records)
                 await anyio.to_thread.run_sync(

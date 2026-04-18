@@ -39,6 +39,15 @@ class FrustrationFilter:
             None,
         )
 
+    @staticmethod
+    def matched_words(bucket: ConversationBucket) -> list[str]:
+        return [
+            match.group(1).lower().strip()
+            for msg in bucket.messages
+            if msg.role == "user"
+            for match in FRUSTRATION_PATTERN.finditer(msg.content)
+        ]
+
     @classmethod
     def check_frustration(cls, bucket: ConversationBucket) -> bool:
         return cls.matched_user_message(bucket) is not None

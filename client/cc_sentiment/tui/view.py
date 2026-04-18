@@ -11,8 +11,8 @@ from cc_sentiment.models import SentimentRecord
 from cc_sentiment.upload import UploadProgress
 
 from cc_sentiment.tui.format import TimeFormat
-from cc_sentiment.tui.progress import ScoringProgress
-from cc_sentiment.tui.widgets import HourlyChart, ScoreBar
+from cc_sentiment.tui.progress import LiveFunStats, ScoringProgress
+from cc_sentiment.tui.widgets import HourlyChart, LiveFunBox, ScoreBar
 
 
 class ProcessingView:
@@ -99,6 +99,9 @@ class ProcessingView:
 
     def hide_engine_boot(self) -> None:
         self.app.query_one("#engine-boot").add_class("inactive")
+
+    def update_live_fun(self, stats: LiveFunStats) -> None:
+        self.app.query_one("#live-fun", LiveFunBox).render_stats(stats)
 
     def render_scores(self, records: list[SentimentRecord]) -> None:
         if not records:
