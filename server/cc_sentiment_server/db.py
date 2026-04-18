@@ -273,6 +273,8 @@ class ScoredStat:
 
 @dataclass(frozen=True, slots=True)
 class StatCandidate:
+    TWEET_SUFFIX: ClassVar[str] = "Check out yours at"
+
     kind: str
 
     @property
@@ -329,7 +331,7 @@ class PeerStat(StatCandidate):
                         kind=self.kind,
                         percentile=percentile,
                         text=text,
-                        tweet_text=tweet,
+                        tweet_text=f"{tweet} {self.TWEET_SUFFIX}",
                         total_contributors=total,
                     ),
                     priority=abs(pr - 0.5),
@@ -352,9 +354,7 @@ class AngriestHourStat(StatCandidate):
     """
     FALLBACK_PRIORITY: ClassVar[float] = -1.0
     TEXT: ClassVar[str] = "angriest at Claude around {hour}"
-    TWEET: ClassVar[str] = (
-        "Turns out I'm angriest at Claude around {hour}! Check out yours at"
-    )
+    TWEET: ClassVar[str] = "My Claude rage peaks around {hour}."
 
     @property
     def query(self) -> str:
@@ -380,7 +380,7 @@ class AngriestHourStat(StatCandidate):
                         kind=self.kind,
                         percentile=0,
                         text=self.TEXT.format(hour=formatted),
-                        tweet_text=self.TWEET.format(hour=formatted),
+                        tweet_text=f"{self.TWEET.format(hour=formatted)} {self.TWEET_SUFFIX}",
                         total_contributors=max(count, 1),
                     ),
                     priority=self.FALLBACK_PRIORITY,
@@ -396,98 +396,56 @@ class Database:
             metric_sql="AVG(sentiment_score::float)",
             high_text="nicer to Claude than {p}% of developers",
             low_text="tougher on Claude than {p}% of developers",
-            high_tweet=(
-                "Turns out I'm nicer to Claude than {p}% of developers! "
-                "Check out yours at"
-            ),
-            low_tweet=(
-                "Turns out I'm tougher on Claude than {p}% of developers! "
-                "Check out yours at"
-            ),
+            high_tweet="Apparently I'm a Claude softie — nicer than {p}% of devs.",
+            low_tweet="I run Claude like a drill sergeant — tougher than {p}% of devs.",
         ),
         PeerStat(
             kind="thinking",
             metric_sql="AVG(thinking_chars::float)",
             high_text="making Claude overthink things more than {p}% of developers",
             low_text="getting quick answers out of Claude more than {p}% of developers",
-            high_tweet=(
-                "Turns out I'm making Claude overthink things more than "
-                "{p}% of developers! Check out yours at"
-            ),
-            low_tweet=(
-                "Turns out I'm getting quick answers out of Claude more than "
-                "{p}% of developers! Check out yours at"
-            ),
+            high_tweet="I keep Claude overthinking — more than {p}% of devs do.",
+            low_tweet="Claude barely breaks a sweat with me — faster than {p}% of devs.",
         ),
         PeerStat(
             kind="tool_calls",
             metric_sql="AVG(tool_calls_per_turn)",
             high_text="working Claude harder per turn than {p}% of developers",
             low_text="going easier on Claude per turn than {p}% of developers",
-            high_tweet=(
-                "Turns out I'm working Claude harder per turn than "
-                "{p}% of developers! Check out yours at"
-            ),
-            low_tweet=(
-                "Turns out I'm going easier on Claude per turn than "
-                "{p}% of developers! Check out yours at"
-            ),
+            high_tweet="Each turn I have Claude juggling more tools than {p}% of devs.",
+            low_tweet="I keep Claude's tool belt lean — lighter per turn than {p}% of devs.",
         ),
         PeerStat(
             kind="turn_length",
             metric_sql="AVG(turn_count::float)",
             high_text="having marathon chats with Claude more than {p}% of developers",
             low_text="wrapping up with Claude faster than {p}% of developers",
-            high_tweet=(
-                "Turns out I'm having marathon chats with Claude more than "
-                "{p}% of developers! Check out yours at"
-            ),
-            low_tweet=(
-                "Turns out I'm wrapping up with Claude faster than "
-                "{p}% of developers! Check out yours at"
-            ),
+            high_tweet="My Claude sessions go the distance — longer than {p}% of devs'.",
+            low_tweet="My Claude sessions wrap in a flash — faster than {p}% of devs'.",
         ),
         PeerStat(
             kind="read_before_edit",
             metric_sql="AVG(read_edit_ratio)",
             high_text="making Claude look before it leaps more than {p}% of developers",
             low_text="letting Claude leap before it looks more than {p}% of developers",
-            high_tweet=(
-                "Turns out I'm making Claude look before it leaps more than "
-                "{p}% of developers! Check out yours at"
-            ),
-            low_tweet=(
-                "Turns out I'm letting Claude leap before it looks more than "
-                "{p}% of developers! Check out yours at"
-            ),
+            high_tweet="I make Claude read twice, edit once — more careful than {p}% of devs.",
+            low_tweet="I let Claude edit first, ask questions later — bolder than {p}% of devs.",
         ),
         PeerStat(
             kind="subagents",
             metric_sql="AVG(subagent_count::float)",
             high_text="running Claude agents in parallel more than {p}% of developers",
             low_text="keeping Claude single-threaded more than {p}% of developers",
-            high_tweet=(
-                "Turns out I'm running Claude agents in parallel more than "
-                "{p}% of developers! Check out yours at"
-            ),
-            low_tweet=(
-                "Turns out I'm keeping Claude single-threaded more than "
-                "{p}% of developers! Check out yours at"
-            ),
+            high_tweet="I've got Claude subagents running wild — more than {p}% of devs.",
+            low_tweet="One Claude is plenty — more single-threaded than {p}% of devs.",
         ),
         PeerStat(
             kind="volume",
             metric_sql="COUNT(DISTINCT conversation_id)::float",
             high_text="wearing Claude out more than {p}% of developers",
             low_text="rationing Claude more than {p}% of developers",
-            high_tweet=(
-                "Turns out I'm wearing Claude out more than "
-                "{p}% of developers! Check out yours at"
-            ),
-            low_tweet=(
-                "Turns out I'm rationing Claude more than "
-                "{p}% of developers! Check out yours at"
-            ),
+            high_tweet="I'm wearing Claude out — more prolific than {p}% of devs.",
+            low_tweet="I ration my Claude time — more selective than {p}% of devs.",
         ),
         AngriestHourStat(kind="angriest_hour"),
     )

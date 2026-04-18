@@ -182,7 +182,6 @@ class TestQueryMyStat:
             "read_before_edit", "subagents", "volume",
         }
         assert result.text
-        assert result.tweet_text.startswith("Turns out I'm ")
         assert result.tweet_text.endswith("Check out yours at")
         assert 0 <= result.percentile <= 100
 
@@ -248,8 +247,8 @@ class TestQueryMyStat:
         assert result is not None
         assert result.kind == "angriest_hour"
         assert result.text.startswith("angriest at Claude around ")
-        assert result.tweet_text.startswith("Turns out I'm angriest at Claude around ")
-        assert result.tweet_text.endswith("! Check out yours at")
+        assert result.tweet_text.startswith("My Claude rage peaks around ")
+        assert result.tweet_text.endswith("Check out yours at")
         assert result.percentile == 0
         assert result.total_contributors >= 1
 
