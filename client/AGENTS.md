@@ -4,7 +4,7 @@ macOS Apple Silicon CLI tool. Discovers Claude Code conversation transcripts, ru
 
 ## Python Style
 
-Adapted from the bioqa styleguide. Root `AGENTS.md` rules apply unless overridden here.
+Root `AGENTS.md` rules apply unless overridden here. The client follows a functional, fail-fast Python style — the rules below spell out the specifics.
 
 1. **No comments or docstrings.** Code is self-documenting via names, types, and organization. Comments only for `TODO:`, non-obvious workarounds, or temporarily disabled code. Explanatory prose belongs in PR descriptions and commit messages, not in source.
 

@@ -43,3 +43,15 @@ jobs:
         env:
           CC_SENTIMENT_DISABLE_RUST: "1"
         run: uv run pytest -q
+
+      - name: Build wheel
+        working-directory: client
+        run: uv build --wheel
+
+      - name: Smoke-test built wheel in fresh venv
+        working-directory: client
+        run: |
+          rm -rf .wheel-smoke
+          uv venv --seed .wheel-smoke
+          uv pip install --python .wheel-smoke/bin/python dist/*.whl
+          .wheel-smoke/bin/cc-sentiment --help
