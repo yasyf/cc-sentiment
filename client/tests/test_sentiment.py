@@ -116,6 +116,7 @@ class TestConversationFormatting:
 
 class TestClassifierIntegration:
     def test_score_chunk(self) -> None:
+        from cc_sentiment.engines import SYSTEM_PROMPT
         from cc_sentiment.sentiment import SentimentClassifier
 
         mock_model = MagicMock()
@@ -139,7 +140,8 @@ class TestClassifierIntegration:
             classifier.model = mock_model
             classifier.tokenizer = mock_tokenizer
             classifier.logit_processor = mock_logit_proc
-            classifier._system_tokens = [1, 2, 3]
+            classifier.system_prompt = SYSTEM_PROMPT
+            classifier.system_tokens = [1, 2, 3]
             classifier._load_prompt_caches = MagicMock(return_value=[None])
 
             bucket = make_bucket([("user", "this works perfectly!")])

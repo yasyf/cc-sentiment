@@ -1,18 +1,14 @@
 from __future__ import annotations
 
-import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean, median, stdev
 
 import anyio
 import click
-import orjson
 
 from cc_sentiment.engines import DEFAULT_MODEL, EngineFactory, InferenceEngine
-from cc_sentiment.labeled_data import LabeledDataset
 from cc_sentiment.models import ConversationBucket, SentimentScore
 from cc_sentiment.transcripts import (
     ConversationBucketer,
@@ -70,7 +66,10 @@ class BenchmarkRunner:
         snapshot_download(repo)
 
     @staticmethod
-    async def create_engine(engine_name: str, model_repo: str | None = None) -> InferenceEngine:
+    async def create_engine(
+        engine_name: str,
+        model_repo: str | None = None,
+    ) -> InferenceEngine:
         return await EngineFactory.build(engine_name, model_repo)
 
     @classmethod
@@ -208,85 +207,6 @@ class BenchmarkRunner:
             cls.print_per_bucket(results, buckets)
 
         cls.print_performance(results)
-
-    @classmethod
-    def run_accuracy_test(
-        cls,
-        engine_name: str,
-        model_repo: str | None = None,
-    ) -> None:
-        dataset = LabeledDataset.build()
-        buckets = [lb.bucket for lb in dataset]
-        expected = [int(lb.expected_score) for lb in dataset]
-
-        click.echo(f"=== Accuracy test: {engine_name}, {len(dataset)} labeled buckets ===")
-        click.echo(f"Model: {model_repo or 'default'}\n")
-
-        async def run() -> list[SentimentScore]:
-            engine = await cls.create_engine(engine_name, model_repo)
-            scored = 0
-            t0 = time.monotonic()
-
-            def on_progress(n: int) -> None:
-                nonlocal scored
-                scored += n
-                elapsed = time.monotonic() - t0
-                rate = scored / elapsed if elapsed > 0 else 0
-                click.echo(f"\r  {scored}/{len(buckets)} ({rate:.1f} b/s)", nl=False)
-
-            scores = await engine.score(buckets, on_progress=on_progress)
-            click.echo()
-            await engine.close()
-            return scores
-
-        scores = anyio.run(run)
-        predicted = [int(s) for s in scores]
-
-        correct = sum(p == e for p, e in zip(predicted, expected))
-        within_1 = sum(abs(p - e) <= 1 for p, e in zip(predicted, expected))
-        mae = mean(abs(p - e) for p, e in zip(predicted, expected))
-        total = len(dataset)
-
-        click.echo(f"\n=== Results ===")
-        click.echo(f"Exact accuracy: {correct}/{total} ({100 * correct / total:.0f}%)")
-        click.echo(f"Within ±1:      {within_1}/{total} ({100 * within_1 / total:.0f}%)")
-        click.echo(f"MAE:            {mae:.2f}")
-
-        click.echo(f"\n{'Expected':>10} | " + " | ".join(f"Pred={s}" for s in range(1, 6)))
-        click.echo("-" * 65)
-        for exp_score in range(1, 6):
-            row_items = [(e, p) for e, p in zip(expected, predicted) if e == exp_score]
-            row_total = len(row_items)
-            if row_total == 0:
-                continue
-            counts = [sum(1 for _, p in row_items if p == ps) for ps in range(1, 6)]
-            pcts = [f"{100 * c / row_total:>5.0f}%" for c in counts]
-            click.echo(f"{exp_score:>10} | " + " | ".join(pcts) + f" (n={row_total})")
-
-        output_path = Path.home() / ".cc-sentiment" / "accuracy_results.json"
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        results_data = {
-            "model": model_repo or "default",
-            "engine": engine_name,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "exact_accuracy": correct / total,
-            "within_1_accuracy": within_1 / total,
-            "mae": mae,
-            "total": total,
-            "per_score": {
-                str(s): {
-                    "expected_count": sum(1 for e in expected if e == s),
-                    "predictions": [p for e, p in zip(expected, predicted) if e == s],
-                }
-                for s in range(1, 6)
-            },
-        }
-
-        existing = orjson.loads(output_path.read_bytes()) if output_path.exists() else []
-        existing.append(results_data)
-        output_path.write_bytes(orjson.dumps(existing, option=orjson.OPT_INDENT_2))
-        click.echo(f"\nResults appended to {output_path}")
 
     @classmethod
     def run_scaling_test(

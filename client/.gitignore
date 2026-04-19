@@ -14,3 +14,6 @@ dist/
 build/
 *.egg-info/
 *.egg
+
+# Hand-labeled dev dataset (ground truth for prompt iteration; not committed)
+cc_sentiment/labels.jsonl

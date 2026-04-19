@@ -27,6 +27,7 @@ class ClaudeCLIEngine:
                 "`claude` CLI not found. Install Claude Code from https://claude.com/claude-code"
             )
         self.model = model
+        self.system_prompt = SYSTEM_PROMPT
         self.total_cost_usd = 0.0
         self.total_input_tokens = 0
         self.total_output_tokens = 0
@@ -55,7 +56,7 @@ class ClaudeCLIEngine:
         proc = await asyncio.create_subprocess_exec(
             "claude", "-p", f"CONVERSATION:\n{format_conversation(bucket)}",
             "--model", self.model,
-            "--system-prompt", SYSTEM_PROMPT,
+            "--system-prompt", self.system_prompt,
             "--output-format", "json",
             "--max-turns", "1",
             "--tools", "",

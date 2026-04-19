@@ -4,6 +4,7 @@ import importlib.util
 import platform
 import sys
 from collections.abc import Callable
+from functools import partial
 
 import anyio.to_thread
 
@@ -52,14 +53,16 @@ class EngineFactory:
                     )
                 from cc_sentiment.sentiment import SentimentClassifier
                 inner: InferenceEngine = await anyio.to_thread.run_sync(
-                    SentimentClassifier, model_repo or DEFAULT_MODEL
+                    partial(SentimentClassifier, model_repo or DEFAULT_MODEL)
                 )
             case "omlx":
-                omlx = await anyio.to_thread.run_sync(OMLXEngine, model_repo, on_engine_log)
+                omlx = await anyio.to_thread.run_sync(
+                    partial(OMLXEngine, model_repo, on_engine_log)
+                )
                 await omlx.warm_system_prompt()
                 inner = omlx
             case "claude":
-                inner = ClaudeCLIEngine(model=model_repo or ClaudeCLIEngine.HAIKU_MODEL)
+                inner = ClaudeCLIEngine(model_repo or ClaudeCLIEngine.HAIKU_MODEL)
             case _:
                 raise ValueError(f"Unknown engine: {kind}")
         return FrustrationFilter(inner)

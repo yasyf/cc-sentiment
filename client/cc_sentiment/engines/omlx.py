@@ -62,6 +62,7 @@ class OMLXEngine:
         self._next_server: WarmServer | None = None
         self._next_warm_task: asyncio.Task[None] | None = None
         self.on_log: Callable[[str], None] = on_log or SILENT_LOG
+        self.system_prompt = SYSTEM_PROMPT
         self._start_server()
 
     @staticmethod
@@ -199,13 +200,12 @@ class OMLXEngine:
         return {
             **({"model": self.model_name} if self.model_name else {}),
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": self.system_prompt},
                 {"role": "user", "content": f"CONVERSATION:\n{user_content}"},
             ],
             "max_tokens": 1,
             "temperature": 0.0,
             "structured_outputs": {"choice": STRUCTURED_OUTPUTS_CHOICE},
-            "chat_template_kwargs": {"enable_thinking": False},
         }
 
     async def score(

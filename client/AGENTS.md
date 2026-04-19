@@ -65,12 +65,11 @@ client/
 └── cc_sentiment/
     ├── __init__.py
     ├── _transcripts_rs.pyi  # PyO3 stub
-    ├── benchmark.py         # BenchmarkRunner (accuracy + scaling tests)
+    ├── benchmark.py         # BenchmarkRunner (perf + scaling tests)
     ├── cli.py               # Click commands — thin
     ├── daemon.py            # background daemon entry
     ├── hardware.py          # platform / RAM detection
     ├── headless.py          # headless scan flow (no TUI)
-    ├── labeled_data.py      # LabeledDataset builder for offline eval
     ├── nlp.py               # spaCy NLP utility (lazy-loaded)
     ├── pipeline.py          # Pipeline orchestrator
     ├── repo.py              # SQLite Repository

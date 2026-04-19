@@ -132,16 +132,11 @@ def run(ctx: click.Context) -> None:
 @click.option("--engines", default="mlx", help="Comma-separated engines")
 @click.option("--model", "model_repo", default=None)
 @click.option("--scaling", is_flag=True, help="Run scaling test across bucket sizes")
-@click.option("--accuracy", is_flag=True, help="Run accuracy test against labeled dataset")
 def benchmark(
     transcripts: int, runs: int, engines: str,
-    model_repo: str | None, scaling: bool, accuracy: bool,
+    model_repo: str | None, scaling: bool,
 ) -> None:
     from cc_sentiment.benchmark import BenchmarkRunner
-
-    if accuracy:
-        BenchmarkRunner.run_accuracy_test(engines.split(",")[0].strip(), model_repo)
-        return
 
     BenchmarkRunner.run_benchmark(
         max_transcripts=transcripts,

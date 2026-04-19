@@ -2,16 +2,13 @@ from __future__ import annotations
 
 import platform
 import sys
-from pathlib import Path
 from collections.abc import Callable
+from hashlib import sha1
+from pathlib import Path
 
 from anyio import to_thread
 
-from cc_sentiment.engines import (
-    DEFAULT_MODEL,
-    NOOP_PROGRESS,
-    SYSTEM_PROMPT,
-)
+from cc_sentiment.engines import DEFAULT_MODEL, NOOP_PROGRESS, SYSTEM_PROMPT
 from cc_sentiment.models import (
     ConversationBucket,
     SentimentScore,
@@ -27,17 +24,22 @@ if sys.platform != "darwin" or platform.machine() != "arm64":
 
 __all__ = ["SentimentClassifier"]
 
-SCORE_TOKEN_IDS = [236770, 236778, 236800, 236812, 236810]
 CACHE_DIR = Path.home() / ".cc-sentiment"
-PROMPT_CACHE_FILE = CACHE_DIR / "prompt_cache.safetensors"
 
 
 class SentimentClassifier:
     @staticmethod
-    def make_score_logit_processor() -> Callable:
+    def compute_score_token_ids(tokenizer) -> list[int]:
+        return [
+            tokenizer.encode(str(n), add_special_tokens=False)[-1]
+            for n in range(1, 6)
+        ]
+
+    @staticmethod
+    def make_score_logit_processor(score_token_ids: list[int]) -> Callable:
         import mlx.core as mx
 
-        allowed = mx.array(SCORE_TOKEN_IDS)
+        allowed = mx.array(score_token_ids)
 
         def processor(input_ids: mx.array, logits: mx.array) -> mx.array:
             mask = mx.full(logits.shape, -1e9)
@@ -46,23 +48,30 @@ class SentimentClassifier:
 
         return processor
 
+    @staticmethod
+    def cache_file_for(model_repo: str) -> Path:
+        key = sha1(model_repo.encode()).hexdigest()[:12]
+        return CACHE_DIR / f"prompt_cache_{key}.safetensors"
+
     def __init__(self, model_repo: str = DEFAULT_MODEL) -> None:
         apply_kv_cache_patch()
 
         from mlx_lm import load
 
         self.model, self.tokenizer = load(model_repo)
-        self.logit_processor = self.make_score_logit_processor()
-        self._system_tokens = self.tokenizer.apply_chat_template(
-            [{"role": "system", "content": SYSTEM_PROMPT}],
+        self.system_prompt = SYSTEM_PROMPT
+        self.score_token_ids = self.compute_score_token_ids(self.tokenizer)
+        self.logit_processor = self.make_score_logit_processor(self.score_token_ids)
+        self.system_tokens = self.tokenizer.apply_chat_template(
+            [{"role": "system", "content": self.system_prompt}],
             tokenize=True,
             add_generation_prompt=False,
-            enable_thinking=False,
         )
+        self.prompt_cache_file = self.cache_file_for(model_repo)
         self._ensure_prompt_cache()
 
     def _ensure_prompt_cache(self) -> None:
-        if PROMPT_CACHE_FILE.exists():
+        if self.prompt_cache_file.exists():
             return
 
         from mlx_lm import batch_generate
@@ -72,12 +81,11 @@ class SentimentClassifier:
 
         dummy_user = self.tokenizer.apply_chat_template(
             [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": self.system_prompt},
                 {"role": "user", "content": "test"},
             ],
             tokenize=True,
             add_generation_prompt=True,
-            enable_thinking=False,
         )
         batch_generate(
             self.model, self.tokenizer, [dummy_user],
@@ -85,13 +93,13 @@ class SentimentClassifier:
             max_tokens=1,
         )
 
-        trimmed = trim_prompt_cache(cache, len(self._system_tokens))
+        trimmed = trim_prompt_cache(cache, len(self.system_tokens))
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        save_prompt_cache(str(PROMPT_CACHE_FILE), trimmed)
+        save_prompt_cache(str(self.prompt_cache_file), trimmed)
 
     def _load_prompt_caches(self, n: int) -> list:
         from mlx_lm.models.cache import load_prompt_cache
-        return [load_prompt_cache(str(PROMPT_CACHE_FILE)) for _ in range(n)]
+        return [load_prompt_cache(str(self.prompt_cache_file)) for _ in range(n)]
 
     def _score_chunk(self, buckets: list[ConversationBucket]) -> list[SentimentScore]:
         from mlx_lm import batch_generate
@@ -99,12 +107,11 @@ class SentimentClassifier:
         prompts = [
             self.tokenizer.apply_chat_template(
                 [
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": self.system_prompt},
                     {"role": "user", "content": f"CONVERSATION:\n{format_conversation(b)}"},
                 ],
                 tokenize=True,
                 add_generation_prompt=True,
-                enable_thinking=False,
             )
             for b in buckets
         ]
