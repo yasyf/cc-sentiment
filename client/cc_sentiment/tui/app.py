@@ -216,10 +216,9 @@ class CCSentimentApp(App[None]):
         self.run_flow()
 
     async def _load_nlp(self) -> None:
-        try:
-            await NLP.ensure_ready()
-        except (OSError, RuntimeError, ImportError) as exc:
-            self._set_debug(nlp_state=f"failed: {exc.__class__.__name__}")
+        await NLP.ensure_ready()
+        if NLP.failed:
+            self._set_debug(nlp_state="failed", nlp_output=NLP.last_download_output)
             return
         self._set_debug(nlp_state="ready")
 

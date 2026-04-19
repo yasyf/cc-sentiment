@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, fields
 class DebugState:
     engine_name: str = "—"
     nlp_state: str = "—"
+    nlp_output: str | None = None
     prewarm_uvx: str = "—"
     prewarm_model: str = "—"
     card_attempts: int = 0
