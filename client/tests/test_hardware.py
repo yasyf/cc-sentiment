@@ -68,12 +68,16 @@ class TestEstimateBucketsPerSec:
              patch.object(Hardware, "read_memory_gb", return_value=8):
             assert Hardware.estimate_buckets_per_sec("omlx") is None
 
-    def test_estimate_returns_none_when_baseline_is_zero(self) -> None:
-        with patch.object(Hardware, "BASELINE_OMLX_BUCKETS_PER_SEC", 0.0):
+    def test_estimate_returns_none_when_msgs_per_sec_is_zero(self) -> None:
+        with patch.object(Hardware, "BASELINE_OMLX_USER_MSGS_PER_SEC", 0.0):
+            assert Hardware.estimate_buckets_per_sec("omlx") is None
+
+    def test_estimate_returns_none_when_avg_msgs_per_bucket_is_zero(self) -> None:
+        with patch.object(Hardware, "AVG_NON_FILTERED_USER_MSGS_PER_BUCKET", 0.0):
             assert Hardware.estimate_buckets_per_sec("omlx") is None
 
     def test_estimate_returns_none_for_mlx_when_baseline_unfilled(self) -> None:
-        assert Hardware.BASELINE_MLX_BUCKETS_PER_SEC == 0.0
+        assert Hardware.BASELINE_MLX_USER_MSGS_PER_SEC == 0.0
         assert Hardware.estimate_buckets_per_sec("mlx") is None
 
     def test_estimate_scales_with_chip_family(self) -> None:
@@ -83,7 +87,8 @@ class TestEstimateBucketsPerSec:
                  patch.object(Hardware, "read_brand", return_value=brand), \
                  patch.object(Hardware, "read_p_cores", return_value=cores), \
                  patch.object(Hardware, "read_memory_gb", return_value=memory), \
-                 patch.object(Hardware, "BASELINE_OMLX_BUCKETS_PER_SEC", 10.0):
+                 patch.object(Hardware, "BASELINE_OMLX_USER_MSGS_PER_SEC", 10.0), \
+                 patch.object(Hardware, "AVG_NON_FILTERED_USER_MSGS_PER_BUCKET", 1.0):
                 return Hardware.estimate_buckets_per_sec("omlx")
 
         m5_max = rate_for("Apple M5 Max", 6, memory=128)
@@ -102,4 +107,6 @@ class TestEstimateBucketsPerSec:
              patch.object(Hardware, "read_p_cores", return_value=6), \
              patch.object(Hardware, "read_memory_gb", return_value=128):
             rate = Hardware.estimate_buckets_per_sec("omlx")
-        assert rate == pytest.approx(Hardware.BASELINE_OMLX_BUCKETS_PER_SEC)
+        assert rate == pytest.approx(
+            Hardware.BASELINE_OMLX_USER_MSGS_PER_SEC / Hardware.AVG_NON_FILTERED_USER_MSGS_PER_BUCKET
+        )

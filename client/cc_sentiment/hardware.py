@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import ClassVar, Literal, cast
 
 ChipVariant = Literal["base", "Pro", "Max", "Ultra"]
 
@@ -21,18 +21,19 @@ class HardwareProfile:
 
 
 class Hardware:
-    BASELINE_OMLX_BUCKETS_PER_SEC: float = 113.0
-    BASELINE_MLX_BUCKETS_PER_SEC: float = 0.0
+    BASELINE_OMLX_USER_MSGS_PER_SEC: ClassVar[float] = 950.0
+    BASELINE_MLX_USER_MSGS_PER_SEC: ClassVar[float] = 0.0
+    AVG_NON_FILTERED_USER_MSGS_PER_BUCKET: ClassVar[float] = 1.42
 
-    BANDWIDTH_GBPS: dict[tuple[int, ChipVariant], int] = {
+    BANDWIDTH_GBPS: ClassVar[dict[tuple[int, ChipVariant], int]] = {
         (1, "base"): 68,  (1, "Pro"): 200, (1, "Max"): 400, (1, "Ultra"): 800,
         (2, "base"): 100, (2, "Pro"): 200, (2, "Max"): 400, (2, "Ultra"): 800,
         (3, "base"): 100, (3, "Pro"): 150, (3, "Max"): 300,
         (4, "base"): 120, (4, "Pro"): 273, (4, "Max"): 546,
         (5, "Max"): 546,
     }
-    BASELINE_BANDWIDTH_GBPS: int = 546
-    MIN_MEMORY_GB: int = 16
+    BASELINE_BANDWIDTH_GBPS: ClassVar[int] = 546
+    MIN_MEMORY_GB: ClassVar[int] = 16
 
     @staticmethod
     def read_brand() -> str:
@@ -75,10 +76,10 @@ class Hardware:
     @classmethod
     def estimate_buckets_per_sec(cls, engine: str) -> float | None:
         match engine:
-            case "omlx": baseline = cls.BASELINE_OMLX_BUCKETS_PER_SEC
-            case "mlx":  baseline = cls.BASELINE_MLX_BUCKETS_PER_SEC
+            case "omlx": msgs_per_sec = cls.BASELINE_OMLX_USER_MSGS_PER_SEC
+            case "mlx":  msgs_per_sec = cls.BASELINE_MLX_USER_MSGS_PER_SEC
             case _:      return None
-        if baseline == 0.0:
+        if msgs_per_sec == 0.0 or cls.AVG_NON_FILTERED_USER_MSGS_PER_BUCKET == 0.0:
             return None
         profile = cls.detect_profile()
         if profile is None or profile.memory_gb < cls.MIN_MEMORY_GB:
@@ -87,4 +88,4 @@ class Hardware:
         if bandwidth is None:
             return None
         ratio = (bandwidth / cls.BASELINE_BANDWIDTH_GBPS) * (0.85 + 0.15 * profile.p_cores / 6)
-        return baseline * ratio
+        return (msgs_per_sec / cls.AVG_NON_FILTERED_USER_MSGS_PER_BUCKET) * ratio
