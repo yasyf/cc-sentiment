@@ -14,13 +14,13 @@ Needs macOS on Apple Silicon and [uv](https://docs.astral.sh/uv/). The first run
 
 ## What gets uploaded
 
-Only numbers and timestamps. For each 5-minute bucket of a conversation:
+Scoring runs locally on Gemma 4. The client uploads only numbers and timestamps for each 5-minute bucket of a conversation.
 
-- Sentiment score (1–5, scored locally by Gemma 4)
+- Sentiment score on a 1–5 scale
 - Read:edit ratio, edits-without-prior-read %, write:edit ratio, tool calls per turn, subagent spawn rate
 - Turn count, thinking present/chars
 - Claude model and Claude Code version
-- Your GitHub handle (so uploads are attributable)
+- Your GitHub handle, so uploads can be attributed
 
 Your conversation text, file contents, file paths, and tool inputs/outputs never leave your machine.
 
@@ -28,7 +28,7 @@ Your conversation text, file contents, file paths, and tool inputs/outputs never
 
 | Command | Description |
 |---------|-------------|
-| `cc-sentiment` | Run the whole flow — set up if needed, then scan and upload |
+| `cc-sentiment` | Run the whole flow. Sets up if needed, then scans and uploads. |
 | `cc-sentiment setup` | Link your GitHub account for attributable uploads |
 | `cc-sentiment scan --upload` | Score new transcripts and upload |
 | `cc-sentiment scan` | Score transcripts without uploading |
@@ -37,6 +37,4 @@ Your conversation text, file contents, file paths, and tool inputs/outputs never
 
 ## Links
 
-- Dashboard: [sentiments.cc](https://sentiments.cc)
-- Source: [github.com/yasyf/cc-sentiment](https://github.com/yasyf/cc-sentiment)
-- Issues: [github.com/yasyf/cc-sentiment/issues](https://github.com/yasyf/cc-sentiment/issues)
+Dashboard at [sentiments.cc](https://sentiments.cc). Source and issues live on [GitHub](https://github.com/yasyf/cc-sentiment).

@@ -19,7 +19,7 @@ Target Python 3.14 for server, 3.12+ for client. Both use `uv` for dependency ma
 
 **No comments or docstrings.** Code is self-documenting via names, types, and organization. Comments only for TODOs, non-obvious workarounds, or disabled code.
 
-**Functional over imperative.** Chain operations, use walrus `:=`, comprehensions over loops. No intermediate variables when a pipeline reads clearly.
+**Functional over imperative.** Chain operations, use walrus `:=`, comprehensions over loops. No intermediate variables when a pipeline reads well.
 
 **No underscore prefixes.** Use `__all__` for export control, not naming conventions.
 
@@ -29,7 +29,7 @@ Target Python 3.14 for server, 3.12+ for client. Both use `uv` for dependency ma
 
 **Minimal try/except.** Only the throwing line inside `try`. No broad exception handlers.
 
-**No defensive coding, backwards-compat, or optional modeling.** No fallbacks or shims. Crash on unexpected errors — `os.environ["KEY"]` not `.get()`. No sentinel values. No optional fields with fallback defaults — make fields required or split the model.
+**No defensive coding, backwards-compat, or optional modeling.** No fallbacks or shims. Crash on unexpected errors. Use `os.environ["KEY"]`, not `.get()`. No sentinel values. No optional fields with fallback defaults; make fields required or split the model.
 
 **Make invalid states unrepresentable.** `NewType` for branded primitives. Frozen dataclasses for immutable data. Required fields over optionals.
 

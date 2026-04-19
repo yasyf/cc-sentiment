@@ -1,4 +1,4 @@
-# server/ — Modal API
+# server: Modal API
 
 Python 3.14 backend deployed on Modal. Accepts signed sentiment uploads, verifies GitHub SSH signatures, stores timeseries data, and exposes query APIs for the dashboard app.
 
@@ -7,7 +7,7 @@ Python 3.14 backend deployed on Modal. Accepts signed sentiment uploads, verifie
 - **Runtime**: Python 3.14
 - **Deployment**: Modal (serverless)
 - **HTTP**: Modal web endpoints (`@modal.web_endpoint()` / `@modal.asgi_app()`)
-- **Timeseries storage**: TBD — starting with SQLite on a Modal Volume
+- **Timeseries storage**: TBD; starting with SQLite on a Modal Volume
 - **Signature verification**: `ssh-keygen -Y verify` via subprocess, GitHub API for public key lookup
 - **Models**: Pydantic for all API boundaries
 
@@ -103,7 +103,7 @@ Verification flow:
 
 Query parameters: `start`, `end`, `interval` (e.g. `1h`, `1d`), `group_by` (e.g. `hour_of_day`, `day_of_week`).
 
-Returns aggregated sentiment data as JSON. Responses should be cached aggressively — data only changes when new uploads arrive.
+Returns aggregated sentiment data as JSON. Responses should be cached aggressively; data only changes when new uploads arrive.
 
 ## Style Specifics
 
@@ -111,13 +111,13 @@ All rules from root `AGENTS.md` apply, plus:
 
 - **Pydantic models for all API boundaries.** Frozen models (`model_config = ConfigDict(frozen=True)`) for immutable data.
 - **No ORM.** Raw SQL for the timeseries DB. The schema is trivial.
-- **Signature verification is its own module.** Isolated, heavily tested. Subprocess calls to `ssh-keygen` with strict argument validation — never `shell=True`.
+- **Signature verification is its own module.** Isolated, heavily tested. Subprocess calls to `ssh-keygen` with strict argument validation, never `shell=True`.
 - **Modal volumes for persistence.** All persistent state on a Modal Volume at `/data`. No local filesystem assumptions.
 - **CORS configuration.** The Svelte app needs cross-origin access. Configure allowed origins explicitly, not `*`.
-- **Never call Modal functions directly from a FastAPI handler.** `create_app(...)` takes spawner Protocols (`RefreshSpawner`, `MyStatSpawner`, `RevalidateSpawner`) for every Modal side effect — `API.serve` wires them to `<fn>.spawn.aio(...)`, tests wire them to noops. Importing a Modal function symbol into the handler module and calling `.spawn.aio(...)` inline makes the request path depend on the Modal control plane and hang in tests. If you add a new Modal function that the request path triggers, add a new Protocol and a matching `create_app` parameter.
+- **Never call Modal functions directly from a FastAPI handler.** `create_app(...)` takes spawner Protocols (`RefreshSpawner`, `MyStatSpawner`, `RevalidateSpawner`) for every Modal side effect. `API.serve` wires them to `<fn>.spawn.aio(...)`, tests wire them to noops. Importing a Modal function symbol into the handler module and calling `.spawn.aio(...)` inline makes the request path depend on the Modal control plane and hang in tests. If you add a new Modal function that the request path triggers, add a new Protocol and a matching `create_app` parameter.
 
 ## Testing
 
 - **Postgres image must be `timescale/timescaledb-ha:pg17-all`.** Do not use `timescale/timescaledb:*` or any `*-oss` tag. `Database.seed()` installs `timescaledb_toolkit` (required by the `hyperloglog`/`distinct_count`/`rollup` usage in the totals continuous aggregate and lifetime stats query); toolkit is not in the pg17 OSS bundle as of 2026. Switching to an OSS tag makes every DB-backed test ERROR at fixture setup and the failure mode is noisy-but-silent (pool connect warnings, not a clean "extension not available" trace).
 - **Mock every Modal spawner with a noop.** Tests construct the app via `create_app(...)` with `async def noop(...): pass` for `spawn`, `spawn_my_stat`, and `revalidate`. No real `spawn.aio(...)` call should run in the test event loop.
-- **Keep the session-scoped DB container.** `_seeded_db` is session-scoped; `db` is function-scoped and truncates `sentiment` between tests. Do not introduce autouse fixtures that branch on `request.fixturenames`, and do not try to session-scope the `client` fixture — the mock `verifier` is mutated in-place by some tests and needs the fresh per-test reset that function scope gives.
+- **Keep the session-scoped DB container.** `_seeded_db` is session-scoped; `db` is function-scoped and truncates `sentiment` between tests. Do not introduce autouse fixtures that branch on `request.fixturenames`. Do not try to session-scope the `client` fixture; the mock `verifier` is mutated in-place by some tests and needs the fresh per-test reset that function scope gives.

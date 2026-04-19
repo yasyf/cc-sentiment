@@ -1,11 +1,3 @@
-## Project Configuration
-
-- **Language**: TypeScript
-- **Package Manager**: npm
-- **Add-ons**: none
-
----
-
 # app/ — Svelte Dashboard
 
 Svelte frontend that consumes the server's data APIs and renders sentiment charts. Heavily cached — prioritizes fast loads over real-time updates.
@@ -57,7 +49,7 @@ app/
 - **Heavy caching.** Server API responses include cache headers. The app should respect them and avoid unnecessary refetches. Use SvelteKit's `depends` and `invalidate` for controlled revalidation.
 - **No client-side-only data fetching.** All data flows through SvelteKit loaders. Components receive data as props.
 - **Chart components are self-contained.** Each chart type is its own component in `src/lib/charts/`. Takes data as props, handles its own rendering. No global chart state.
-- **Dark mode first.** The dashboard is a data visualization tool — dark backgrounds reduce eye strain and make charts pop.
+- **Dark mode first.** The dashboard is a data visualization tool. Dark backgrounds reduce eye strain and make charts pop.
 - **Minimal JavaScript.** The dashboard is primarily read-only. Avoid unnecessary interactivity. Static/cached where possible.
 - **Responsive but desktop-first.** Primary audience views this on desktop. Mobile should work but is not the priority.
 
@@ -65,7 +57,7 @@ app/
 
 - **Sentiment over time** — Rolling 7-day average line chart. The primary view.
 - **Sentiment by time of day** — Heatmap or bar chart showing which hours correlate with frustration.
-- **Sentiment by day of week** — Bar chart. Are Mondays worse?
+- **Sentiment by day of week** — Bar chart showing weekday vs. weekend frustration.
 - **Distribution histogram** — How sentiment scores are distributed across all data.
 - **Per-contributor trends** — If multiple users contribute, show individual trend lines (opt-in, keyed by GitHub username).
 

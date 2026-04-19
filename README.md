@@ -22,7 +22,7 @@ Needs [uv](https://docs.astral.sh/uv/). The first run links your GitHub account,
 
 ## What gets uploaded
 
-Per 5-minute slice of each conversation:
+The client records the following per 5-minute slice of each conversation.
 
 | Metric | What it captures |
 |---|---|
@@ -57,11 +57,11 @@ Conversation text, file contents, file paths, tool inputs, and tool outputs neve
 
 | Command | Description |
 |---------|-------------|
-| `cc-sentiment` | Interactive TUI — set up if needed, then score and upload |
-| `cc-sentiment setup` | Re-run the setup wizard (link GitHub, pick signing key) |
-| `cc-sentiment run` | Score new transcripts and upload, non-interactively (safe for cron / SSH / launchd) |
-| `cc-sentiment install` | Schedule a daily background run via launchd |
-| `cc-sentiment uninstall` | Stop and remove the scheduled run |
+| `cc-sentiment` | Interactive TUI. Sets up if needed, then scores and uploads. |
+| `cc-sentiment setup` | Re-run the setup wizard. Links GitHub and picks a signing key. |
+| `cc-sentiment run` | Score new transcripts and upload. Non-interactive; safe for cron, SSH, and launchd. |
+| `cc-sentiment install` | Schedule a daily background run via launchd. |
+| `cc-sentiment uninstall` | Stop and remove the scheduled run. |
 
 ## Development
 
