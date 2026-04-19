@@ -15,6 +15,7 @@ class DebugState:
     card_last_status: str = "idle"
     card_elapsed: float = 0.0
     card_stopped: str | None = None
+    share_prewarm: str = "—"
 
     def reset(self) -> None:
         for f in fields(self):

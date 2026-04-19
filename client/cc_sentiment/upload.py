@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import subprocess
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from urllib.parse import urlencode
 
 import anyio
 import anyio.streams.memory
@@ -270,6 +272,29 @@ class Uploader:
             case _:
                 response.raise_for_status()
                 return None
+
+    @staticmethod
+    def share_params(config: SSHConfig | GPGConfig | GistConfig, stat: MyStat) -> dict[str, str]:
+        return {"t": stat.text} | (
+            {"u": config.contributor_id} if config.contributor_type in ("github", "gist") else {}
+        )
+
+    @classmethod
+    def share_url(cls, config: SSHConfig | GPGConfig | GistConfig, stat: MyStat) -> str:
+        return f"{DASHBOARD_URL}/?{urlencode(cls.share_params(config, stat))}"
+
+    @classmethod
+    def og_url(cls, config: SSHConfig | GPGConfig | GistConfig, stat: MyStat) -> str:
+        return f"{DASHBOARD_URL}/og?{urlencode(cls.share_params(config, stat))}"
+
+    async def prewarm_share_card(
+        self, config: SSHConfig | GPGConfig | GistConfig, stat: MyStat
+    ) -> None:
+        headers = {"User-Agent": "Twitterbot/1.0", "Accept": "*/*"}
+        async with httpx.AsyncClient(headers=headers, timeout=10.0) as client:
+            for url in (self.share_url(config, stat), self.og_url(config, stat)):
+                with contextlib.suppress(httpx.HTTPError):
+                    await client.get(url)
 
 
 class UploadPool:

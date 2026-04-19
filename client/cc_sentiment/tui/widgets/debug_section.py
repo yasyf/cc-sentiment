@@ -27,5 +27,6 @@ class DebugSection(Section):
             f"prewarm:  uvx={s.prewarm_uvx}  model={s.prewarm_model}",
             f"card:     attempts={s.card_attempts}  status=[b]{s.card_last_status}[/]  "
             f"elapsed={s.card_elapsed:.0f}s{stopped}",
+            f"share:    prewarm={s.share_prewarm}",
         ]
         self.query_one("#debug-body", Static).update("\n".join(lines))

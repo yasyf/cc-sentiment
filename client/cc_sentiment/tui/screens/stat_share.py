@@ -16,7 +16,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Label, Static
 
 from cc_sentiment.models import GistConfig, GPGConfig, MyStat, SSHConfig
-from cc_sentiment.upload import DASHBOARD_URL, Uploader
+from cc_sentiment.upload import Uploader
 
 from cc_sentiment.tui.screens.dialog import Dialog
 
@@ -107,10 +107,7 @@ class StatShareScreen(Dialog[None]):
 
     @property
     def share_url(self) -> str:
-        params = {"t": self.stat.text} | (
-            {"u": self.contributor_id} if self.contributor_type in ("github", "gist") else {}
-        )
-        return f"{DASHBOARD_URL}/?{urlencode(params)}"
+        return Uploader.share_url(self.config, self.stat)
 
     @property
     def tweet_url(self) -> str:
@@ -127,6 +124,12 @@ class StatShareScreen(Dialog[None]):
             with Horizontal():
                 yield Button("Tweet it", id="stat-tweet", variant="primary")
                 yield Button("Not now", id="stat-skip", variant="default")
+
+    def on_mount(self) -> None:
+        self.app.run_worker(
+            Uploader().prewarm_share_card(self.config, self.stat),
+            name="card-prewarm-screen", exit_on_error=False,
+        )
 
     @on(Button.Pressed, "#stat-tweet")
     async def on_tweet_button(self) -> None:

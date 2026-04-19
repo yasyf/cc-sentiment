@@ -20,7 +20,6 @@ from textual.widgets import (
     Footer,
     Header,
     Label,
-    ProgressBar,
     Static,
 )
 
@@ -82,10 +81,9 @@ from cc_sentiment.tui.widgets import (
     DebugSection,
     HourlyChart,
     LiveFunBox,
+    ProgressRow,
     ScoreBar,
     Section,
-    SpinnerLine,
-    StatCard,
 )
 
 
@@ -104,21 +102,10 @@ class CCSentimentApp(App[None]):
     .section-header { height: 1; color: $text-muted; text-style: bold; }
     ProgressBar Bar > .bar--bar { color: $accent; }
     ProgressBar Bar > .bar--complete { color: $accent; }
-    #progress-label { height: 1; }
-    #scan-progress { width: 1fr; }
-    #upload-label { height: 1; }
-    #upload-progress { width: 1fr; }
-    #charts-row { height: 8; }
-    #hourly-column { width: 1fr; height: 100%; margin: 0 2 0 0; }
-    #hourly-chart-label { height: 1; color: $text-muted; }
+    .timeline-label { height: 1; color: $text-muted; margin: 1 0 0 0; }
     #hourly-chart { height: 7; }
-    #distribution { width: 1fr; height: 100%; }
-    #distribution-label { height: 1; color: $text-muted; }
-    #engine-boot-status { height: 1; }
-    #engine-boot-log { height: auto; max-height: 8; color: $text-muted; }
-    #stats-insights { height: 1; color: $text-muted; margin: 0 0 1 0; }
-    #stats-insights.inactive { display: none; }
-    #stats-row { height: 2; }
+    #moments-log { height: auto; min-height: 4; max-height: 10; }
+    #stats-rows { height: auto; }
     #status-line { height: auto; margin: 1 0 0 0; }
     """
 
@@ -170,44 +157,41 @@ class CCSentimentApp(App[None]):
                     yield Digits("-.--", id="score-digits", classes="inactive")
                 yield Static("[dim]average sentiment[/]", id="score-label", classes="inactive")
 
-            with Section(id="progress"):
-                yield Static("SCORING", classes="section-header")
-                yield Label("Preparing...", id="progress-label")
-                yield ProgressBar(id="scan-progress", total=100, show_eta=False, show_percentage=True)
+            with Section(id="progress-section", classes="inactive"):
+                yield Static("PROGRESS", classes="section-header")
+                yield ProgressRow(
+                    label="scoring",
+                    bar_id="scan-progress",
+                    context_id="progress-label",
+                    id="scoring-row",
+                    classes="inactive",
+                )
+                yield ProgressRow(
+                    label="uploading",
+                    bar_id="upload-progress",
+                    context_id="upload-label",
+                    id="upload-row",
+                    classes="inactive",
+                )
 
-            with Section(id="upload", classes="inactive"):
-                yield Static("UPLOADING", classes="section-header")
-                yield Label("", id="upload-label")
-                yield ProgressBar(id="upload-progress", total=100, show_eta=False, show_percentage=True)
-
-            with Section(id="chart", classes="inactive"):
+            with Section(id="sentiment-section", classes="inactive"):
                 yield Static("SENTIMENT", classes="section-header")
-                with Horizontal(id="charts-row"):
-                    with Vertical(id="hourly-column"):
-                        yield Static("[dim]Through the day[/]", id="hourly-chart-label")
-                        yield HourlyChart(id="hourly-chart")
-                    with Vertical(id="distribution"):
-                        yield Static("[dim]Distribution[/]", id="distribution-label")
-                        for s in range(5, 0, -1):
-                            bar = ScoreBar(s)
-                            bar.id = f"bar-{s}"
-                            self.view.register_score_bar(s, bar)
-                            yield bar
+                for s in range(5, 0, -1):
+                    bar = ScoreBar(s)
+                    bar.id = f"bar-{s}"
+                    self.view.register_score_bar(s, bar)
+                    yield bar
+                yield Static("[dim]through the day[/]", classes="timeline-label")
+                yield HourlyChart(id="hourly-chart")
 
-            with Section(id="engine-boot", classes="inactive"):
-                yield Static("ENGINE", classes="section-header")
-                yield SpinnerLine(id="engine-boot-status")
-                yield Static("", id="engine-boot-log")
+            with Section(id="moments-section", classes="inactive"):
+                yield Static("MOMENTS", classes="section-header")
+                yield Static("", id="moments-log")
                 yield LiveFunBox(id="live-fun")
 
-            with Section(id="stats", classes="inactive"):
+            with Section(id="stats-section", classes="inactive"):
                 yield Static("STATS", classes="section-header")
-                yield Static("", id="stats-insights", classes="inactive")
-                with Horizontal(id="stats-row"):
-                    yield StatCard(value_id="stat-buckets", label="moments")
-                    yield StatCard(value_id="stat-sessions", label="chats")
-                    yield StatCard(value_id="stat-files", label="transcripts")
-                    yield StatCard(value_id="stat-rate", label="moments/sec")
+                yield Static("", id="stats-rows")
 
             if self.debug_mode:
                 yield DebugSection(id="debug")
@@ -322,7 +306,7 @@ class CCSentimentApp(App[None]):
 
     def watch_stage(self, stage: Stage) -> None:
         if isinstance(stage, (Uploading, IdleEmpty, IdleCaughtUp, IdleAfterUpload)):
-            self.view.hide_engine_boot()
+            self.view.hide_moments()
         match stage:
             case Booting():
                 self._update_status("[dim]Initializing...[/]")
@@ -486,9 +470,8 @@ class CCSentimentApp(App[None]):
                     self._begin_scoring(bucket_count, engine, existing_files + len(scan.transcripts))
                     boot = EngineBootView(
                         app=self,
-                        section=self.query_one("#engine-boot"),
-                        status=self.query_one("#engine-boot-status", SpinnerLine),
-                        log=self.query_one("#engine-boot-log", Static),
+                        section=self.query_one("#moments-section"),
+                        log=self.query_one("#moments-log", Static),
                     )
                     await NLP.ensure_ready()
                     boot.show(engine)
@@ -497,7 +480,6 @@ class CCSentimentApp(App[None]):
                             self.repo, scan,
                             engine=engine, model_repo=self.model_repo,
                             on_records=self._add_records, on_bucket=self._add_buckets,
-                            on_engine_log=boot.write_from_thread,
                             on_snippet=boot.add_snippet,
                             on_transcript_complete=pool.queue_batch,
                             on_frustration=self._track_frustration,
@@ -569,9 +551,24 @@ class CCSentimentApp(App[None]):
     def _on_card_ready(self, stat: MyStat) -> None:
         if self.state.config is None:
             return
+        self.run_worker(
+            self._prewarm_share_card(self.state.config, stat),
+            name="card-prewarm", exit_on_error=False,
+        )
         self.push_screen(StatShareScreen(self.state.config, stat))
         if isinstance(self.stage, IdleAfterUpload):
             self._update_status(self._uploaded_status_text())
+
+    async def _prewarm_share_card(
+        self, config: SSHConfig | GPGConfig | GistConfig, stat: MyStat
+    ) -> None:
+        self._set_debug(share_prewarm="firing")
+        try:
+            await Uploader().prewarm_share_card(config, stat)
+        except (httpx.HTTPError, OSError) as exc:
+            self._set_debug(share_prewarm=f"err: {exc.__class__.__name__}")
+            return
+        self._set_debug(share_prewarm="ok")
 
     def _on_card_state(self, attempts: int, status: str, elapsed: float, stopped: str | None) -> None:
         self._set_debug(

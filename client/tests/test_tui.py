@@ -31,7 +31,7 @@ from cc_sentiment.tui.stages import (
     Stage,
     Uploading,
 )
-from cc_sentiment.tui.widgets import HourlyChart, SpinnerLine
+from cc_sentiment.tui.widgets import HourlyChart
 from cc_sentiment.upload import (
     DASHBOARD_URL,
     AuthOk,
@@ -1081,7 +1081,6 @@ async def test_hourly_chart_empty_records():
 class EngineBootHarness(App[None]):
     def compose(self):
         with Vertical(id="section"):
-            yield SpinnerLine(id="status")
             yield Static("", id="log")
 
 
@@ -1090,7 +1089,6 @@ async def test_engine_boot_snippet_survives_bracket_heavy_content():
         boot = EngineBootView(
             app=pilot.app,
             section=pilot.app.query_one("#section"),
-            status=pilot.app.query_one("#status", SpinnerLine),
             log=pilot.app.query_one("#log", Static),
         )
         boot.show("test-engine")
