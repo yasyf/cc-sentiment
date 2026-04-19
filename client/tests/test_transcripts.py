@@ -201,6 +201,111 @@ class TestStreamTranscripts:
         }).decode()
         assert parse_single_line(tmp_path, line) is None
 
+    def test_drops_stop_hook_feedback(self, tmp_path: Path) -> None:
+        line = orjson.dumps({
+            "parentUuid": None, "isSidechain": False, "type": "user",
+            "message": {"role": "user", "content": "Stop hook feedback: please finish the remaining tasks"},
+            "uuid": "u", "timestamp": "2026-04-10T07:36:00.000Z",
+            "sessionId": "s", "version": "2.1.92",
+        }).decode()
+        assert parse_single_line(tmp_path, line) is None
+
+    def test_drops_remaining_tasks_acknowledged(self, tmp_path: Path) -> None:
+        line = orjson.dumps({
+            "parentUuid": None, "isSidechain": False, "type": "user",
+            "message": {"role": "user", "content": "REMAINING_TASKS_ACKNOWLEDGED"},
+            "uuid": "u", "timestamp": "2026-04-10T07:36:00.000Z",
+            "sessionId": "s", "version": "2.1.92",
+        }).decode()
+        assert parse_single_line(tmp_path, line) is None
+
+    def test_drops_bare_request_interrupted(self, tmp_path: Path) -> None:
+        line = orjson.dumps({
+            "parentUuid": None, "isSidechain": False, "type": "user",
+            "message": {"role": "user", "content": "[Request interrupted by user]"},
+            "uuid": "u", "timestamp": "2026-04-10T07:36:00.000Z",
+            "sessionId": "s", "version": "2.1.92",
+        }).decode()
+        assert parse_single_line(tmp_path, line) is None
+
+    def test_drops_bucket_with_only_junk_user_text(self, tmp_path: Path) -> None:
+        lines = [
+            orjson.dumps({
+                "parentUuid": None, "isSidechain": False, "type": "user",
+                "message": {"role": "user", "content": "please implement the thing"},
+                "uuid": "u1", "timestamp": "2026-04-10T07:36:00.000Z",
+                "sessionId": "s", "version": "2.1.92",
+            }).decode(),
+            orjson.dumps({
+                "parentUuid": None, "type": "assistant",
+                "message": {"model": "m", "content": [{"type": "text", "text": "ok"}]},
+                "uuid": "a1", "timestamp": "2026-04-10T07:36:10.000Z",
+                "sessionId": "s",
+            }).decode(),
+            orjson.dumps({
+                "parentUuid": None, "isSidechain": False, "type": "user",
+                "message": {"role": "user", "content": "Stop hook feedback: keep going"},
+                "uuid": "u2", "timestamp": "2026-04-10T07:39:00.000Z",
+                "sessionId": "s", "version": "2.1.92",
+            }).decode(),
+            orjson.dumps({
+                "parentUuid": None, "type": "assistant",
+                "message": {"model": "m", "content": [{"type": "text", "text": "continuing"}]},
+                "uuid": "a2", "timestamp": "2026-04-10T07:39:10.000Z",
+                "sessionId": "s",
+            }).decode(),
+            orjson.dumps({
+                "parentUuid": None, "isSidechain": False, "type": "user",
+                "message": {"role": "user", "content": "now add the tests"},
+                "uuid": "u3", "timestamp": "2026-04-10T07:42:00.000Z",
+                "sessionId": "s", "version": "2.1.92",
+            }).decode(),
+            orjson.dumps({
+                "parentUuid": None, "type": "assistant",
+                "message": {"model": "m", "content": [{"type": "text", "text": "will do"}]},
+                "uuid": "a3", "timestamp": "2026-04-10T07:42:10.000Z",
+                "sessionId": "s",
+            }).decode(),
+        ]
+        f = tmp_path / "t.jsonl"
+        f.write_text("\n".join(lines) + "\n")
+        [parsed] = parse_paths([(f, 0.0)])
+        indices = sorted(k.bucket_index for k in parsed.bucket_keys)
+        assert indices == [0, 2]
+
+    def test_drops_bucket_with_sub_min_user_chars(self, tmp_path: Path) -> None:
+        lines = [
+            orjson.dumps({
+                "parentUuid": None, "isSidechain": False, "type": "user",
+                "message": {"role": "user", "content": "ok"},
+                "uuid": "u1", "timestamp": "2026-04-10T07:36:00.000Z",
+                "sessionId": "s", "version": "2.1.92",
+            }).decode(),
+            orjson.dumps({
+                "parentUuid": None, "type": "assistant",
+                "message": {"model": "m", "content": [{"type": "text", "text": "ack"}]},
+                "uuid": "a1", "timestamp": "2026-04-10T07:36:10.000Z",
+                "sessionId": "s",
+            }).decode(),
+            orjson.dumps({
+                "parentUuid": None, "isSidechain": False, "type": "user",
+                "message": {"role": "user", "content": "actually fix the bug"},
+                "uuid": "u2", "timestamp": "2026-04-10T07:39:00.000Z",
+                "sessionId": "s", "version": "2.1.92",
+            }).decode(),
+            orjson.dumps({
+                "parentUuid": None, "type": "assistant",
+                "message": {"model": "m", "content": [{"type": "text", "text": "sure"}]},
+                "uuid": "a2", "timestamp": "2026-04-10T07:39:10.000Z",
+                "sessionId": "s",
+            }).decode(),
+        ]
+        f = tmp_path / "t.jsonl"
+        f.write_text("\n".join(lines) + "\n")
+        [parsed] = parse_paths([(f, 0.0)])
+        indices = sorted(k.bucket_index for k in parsed.bucket_keys)
+        assert indices == [1]
+
     def test_parsed_transcript_includes_bucket_keys_and_mtime(self, tmp_path: Path) -> None:
         f = tmp_path / "t.jsonl"
         f.write_bytes(FIXTURE_PATH.read_bytes())
