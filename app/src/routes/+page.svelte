@@ -96,10 +96,11 @@
 	);
 
 	const worstSentimentHour = $derived.by(() => {
-		const eligible = hourlyData.filter((h) => h.count >= 3);
+		const MIN_SAMPLES = 30;
+		const SIGMA = 0.7;
+		const Z = 1.645;
+		const eligible = hourlyData.filter((h) => h.count >= MIN_SAMPLES);
 		if (eligible.length === 0) return null;
-		const SIGMA = 1.0;
-		const Z = 1.0;
 		const worst = eligible
 			.map((h) => ({ ...h, ucb: h.avg_score + (Z * SIGMA) / Math.sqrt(h.count) }))
 			.toSorted((a, b) => a.ucb - b.ucb)[0];
@@ -186,7 +187,7 @@
 						<p class="mt-0.5 text-xs text-text-muted">{sentimentEmoji(worstSentimentHour.score)} {worstSentimentHour.score.toFixed(2)} avg</p>
 					{:else}
 						<p class="mt-2 text-3xl font-semibold text-text-dim">--</p>
-						<p class="mt-0.5 text-xs text-text-dim">not enough data yet</p>
+						<p class="mt-0.5 text-xs text-text-dim">collect more sessions</p>
 					{/if}
 				</div>
 
