@@ -349,6 +349,7 @@ class AngriestHourStat(StatCandidate):
     FROM sentiment
     WHERE contributor_id = %(contributor_id)s
     GROUP BY hour
+    HAVING COUNT(*) >= 30
     ORDER BY avg_score ASC, count DESC
     LIMIT 1
     """

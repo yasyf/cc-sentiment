@@ -234,10 +234,7 @@ class TestQueryMyStat:
     @pytest.mark.asyncio
     async def test_solo_contributor_returns_self_stat(self, db: Database) -> None:
         await db.ingest(
-            [
-                make_record(score=4, conv_id="a"),
-                make_record(score=3, conv_id="b", bucket=1),
-            ],
+            [make_record(score=2, conv_id=f"c-{i}", bucket=i) for i in range(30)],
             "onlyuser",
             "github",
         )
@@ -251,6 +248,21 @@ class TestQueryMyStat:
         assert result.tweet_text.endswith("Check out yours at")
         assert result.percentile == 0
         assert result.total_contributors >= 1
+
+    @pytest.mark.asyncio
+    async def test_solo_contributor_below_threshold_returns_none(
+        self, db: Database
+    ) -> None:
+        await db.ingest(
+            [
+                make_record(score=4, conv_id="a"),
+                make_record(score=3, conv_id="b", bucket=1),
+            ],
+            "onlyuser",
+            "github",
+        )
+
+        assert await db.query_my_stat("onlyuser") is None
 
     @pytest.mark.asyncio
     async def test_self_stat_skipped_when_peer_candidate_qualifies(
