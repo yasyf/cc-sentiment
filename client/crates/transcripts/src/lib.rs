@@ -49,6 +49,7 @@ static JUNK_RE: Lazy<Regex> = Lazy::new(|| {
         r"|\[Request interrupted by user",
         r"|Stop hook feedback:",
         r"|REMAINING_TASKS_ACKNOWLEDGED",
+        r"|<<[a-z][a-z0-9-]*>>",
     ))
     .expect("static regex compiles")
 });

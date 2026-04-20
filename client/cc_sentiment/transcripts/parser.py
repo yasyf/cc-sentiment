@@ -43,7 +43,8 @@ JUNK_USER_MESSAGE_RE = re.compile(
     r"|This session is being continued from a previous conversation that ran out of context\."
     r"|\[Request interrupted by user"
     r"|Stop hook feedback:"
-    r"|REMAINING_TASKS_ACKNOWLEDGED",
+    r"|REMAINING_TASKS_ACKNOWLEDGED"
+    r"|<<[a-z][a-z0-9-]*>>",
     re.IGNORECASE,
 )
 

@@ -219,6 +219,15 @@ class TestStreamTranscripts:
         }).decode()
         assert parse_single_line(tmp_path, line) is None
 
+    def test_drops_user_message_with_autonomous_loop_sentinel(self, tmp_path: Path) -> None:
+        line = orjson.dumps({
+            "parentUuid": None, "isSidechain": False, "type": "user",
+            "message": {"role": "user", "content": "<<autonomous-loop-dynamic>>"},
+            "uuid": "u", "timestamp": "2026-04-10T07:36:00.000Z",
+            "sessionId": "s", "version": "2.1.92",
+        }).decode()
+        assert parse_single_line(tmp_path, line) is None
+
     def test_drops_bare_request_interrupted(self, tmp_path: Path) -> None:
         line = orjson.dumps({
             "parentUuid": None, "isSidechain": False, "type": "user",
