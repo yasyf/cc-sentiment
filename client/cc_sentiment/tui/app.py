@@ -326,6 +326,8 @@ class CCSentimentApp(App[None]):
     def watch_stage(self, stage: Stage) -> None:
         if isinstance(stage, (Uploading, IdleEmpty, IdleCaughtUp, IdleAfterUpload)):
             self.view.hide_moments()
+        if isinstance(stage, (IdleEmpty, IdleCaughtUp, IdleAfterUpload)):
+            self.view.activate_cta()
         match stage:
             case Booting():
                 self._update_status("[dim]Initializing...[/]")

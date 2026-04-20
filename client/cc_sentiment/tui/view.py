@@ -47,6 +47,7 @@ class CtaState:
     tweet_stat: MyStat | None = None
     schedule_available: bool = False
     showing: Literal["tweet", "schedule"] = "schedule"
+    active: bool = False
 
     @staticmethod
     def tweet_title(stat: MyStat) -> str:
@@ -66,6 +67,7 @@ class CtaState:
         self.tweet_stat = None
         self.schedule_available = False
         self.showing = "schedule"
+        self.active = False
 
 
 class ProcessingView:
@@ -140,9 +142,13 @@ class ProcessingView:
         self.cta.reset()
         self.render_cta()
 
+    def activate_cta(self) -> None:
+        self.cta.active = True
+        self.render_cta()
+
     def render_cta(self) -> None:
         section = self.app.query_one("#cta-section")
-        if not self.cta.has_any():
+        if not (self.cta.has_any() and self.cta.active):
             section.add_class("inactive")
             return
         section.remove_class("inactive")
