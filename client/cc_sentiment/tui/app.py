@@ -515,7 +515,7 @@ class CCSentimentApp(App[None]):
 
                 async def producer() -> None:
                     if pre_seed:
-                        pool.queue_batch(pre_seed)
+                        pool.queue_records(pre_seed)
                     if scan.transcripts and bucket_count > 0:
                         assert classifier is not None
                         _, _, existing_files = await anyio.to_thread.run_sync(self.repo.stats)
@@ -533,7 +533,7 @@ class CCSentimentApp(App[None]):
                                 classifier=classifier,
                                 on_records=self._add_records, on_bucket=self._add_buckets,
                                 on_snippet=boot.add_snippet,
-                                on_transcript_complete=pool.queue_batch,
+                                on_transcript_complete=pool.queue_records,
                                 on_frustration=self._track_frustration,
                             )
                         finally:

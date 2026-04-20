@@ -53,6 +53,12 @@ UPLOAD_WORKER_COUNT = 8
 
 UPLOAD_POOL_TIMEOUT_SECONDS = 600
 
+UPLOAD_BATCH_TARGET_RECORDS = 500
+
+UPLOAD_BATCH_MAX_AGE_SECONDS = 10.0
+
+UPLOAD_BATCH_TIMER_TICK_SECONDS = 1.0
+
 NOOP_UPLOAD_PROGRESS: Callable[[float], None] = lambda _: None
 
 
@@ -76,9 +82,11 @@ class UploadProgress:
     def all_settled(self) -> bool:
         return self.queued_batches > 0 and (self.done_batches + self.failed_batches) == self.queued_batches
 
-    def batch_queued(self, batch_size: int) -> None:
+    def records_queued(self, count: int) -> None:
+        self.queued_records += count
+
+    def batch_queued(self) -> None:
         self.queued_batches += 1
-        self.queued_records += batch_size
 
     def batch_started(self) -> None:
         self.in_flight_batches += 1
@@ -330,10 +338,27 @@ class UploadPool:
         self._send_stream, self._recv_stream = anyio.create_memory_object_stream[
             list[SentimentRecord]
         ](float("inf"))
+        self._buffer: list[SentimentRecord] = []
+        self._buffer_started_at: float = 0.0
 
-    def queue_batch(self, batch: list[SentimentRecord]) -> None:
-        self.progress.batch_queued(len(batch))
+    def queue_records(self, records: list[SentimentRecord]) -> None:
+        if not self._buffer:
+            self._buffer_started_at = time.monotonic()
+        self._buffer.extend(records)
+        self.progress.records_queued(len(records))
+        if len(self._buffer) >= UPLOAD_BATCH_TARGET_RECORDS:
+            self.flush()
+        else:
+            self.on_progress_change(self.progress)
+
+    def flush(self) -> None:
+        if not self._buffer:
+            return
+        batch, self._buffer = self._buffer, []
+        self._buffer_started_at = 0.0
+        self.progress.batch_queued()
         self._send_stream.send_nowait(batch)
+        self.debug(f"upload: flushed batch of {len(batch)} records")
         self.on_progress_change(self.progress)
 
     async def run(self, producer: Callable[[], Awaitable[None]]) -> None:
@@ -344,7 +369,13 @@ class UploadPool:
                     tg.start_soon(self._worker_loop, self._recv_stream.clone(), worker_id)
                 self._recv_stream.close()
                 try:
-                    await producer()
+                    async with anyio.create_task_group() as timer_tg:
+                        timer_tg.start_soon(self._flush_timer)
+                        try:
+                            await producer()
+                        finally:
+                            self.flush()
+                            timer_tg.cancel_scope.cancel()
                 finally:
                     self._send_stream.close()
         self.debug(
@@ -352,6 +383,12 @@ class UploadPool:
             f"{self.progress.failed_batches} failed, "
             f"elapsed {time.monotonic() - self.progress.started_at:.1f}s"
         )
+
+    async def _flush_timer(self) -> None:
+        while True:
+            await anyio.sleep(UPLOAD_BATCH_TIMER_TICK_SECONDS)
+            if self._buffer and (time.monotonic() - self._buffer_started_at) >= UPLOAD_BATCH_MAX_AGE_SECONDS:
+                self.flush()
 
     async def _worker_loop(
         self,
