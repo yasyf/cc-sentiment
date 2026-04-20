@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -13,5 +13,16 @@ def no_network_warmup(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     )
     monkeypatch.setattr(
         "cc_sentiment.nlp.NLP.ensure_ready", AsyncMock(return_value=None)
+    )
+    classifier = MagicMock()
+    classifier.score = AsyncMock(return_value=[])
+    classifier.close = AsyncMock()
+    monkeypatch.setattr(
+        "cc_sentiment.tui.app.EngineFactory.build",
+        AsyncMock(return_value=classifier),
+    )
+    monkeypatch.setattr(
+        "cc_sentiment.headless.EngineFactory.build",
+        AsyncMock(return_value=classifier),
     )
     yield

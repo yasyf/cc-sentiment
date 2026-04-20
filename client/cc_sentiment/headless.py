@@ -117,7 +117,11 @@ class HeadlessRunner:
 
         scored = 0
         if scan.transcripts:
-            records = await Pipeline.run(repo, scan, engine=engine)
+            classifier = await EngineFactory.build(engine)
+            try:
+                records = await Pipeline.run(repo, scan, classifier=classifier)
+            finally:
+                await classifier.close()
             scored = len(records)
 
         pending = await anyio.to_thread.run_sync(repo.pending_records)

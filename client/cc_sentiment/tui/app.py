@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import subprocess
 import webbrowser
 from dataclasses import replace
@@ -24,7 +25,12 @@ from textual.widgets import (
 )
 
 from cc_sentiment.daemon import LaunchAgent
-from cc_sentiment.engines import OMLX_UVX_SPEC, ClaudeCLIEngine, EngineFactory
+from cc_sentiment.engines import (
+    OMLX_UVX_SPEC,
+    ClaudeCLIEngine,
+    EngineFactory,
+    InferenceEngine,
+)
 from cc_sentiment.engines.protocol import DEFAULT_MODEL
 from cc_sentiment.hardware import Hardware
 from cc_sentiment.models import (
@@ -411,127 +417,166 @@ class CCSentimentApp(App[None]):
         self._debug(f"engine={engine}")
         self._debug(f"transcript-backend: {TranscriptParser.backend_name()}")
 
-        self.stage = Discovering()
-        self._set_boot_status("Discovering transcripts...")
-        scan = await Pipeline.scan(self.repo)
-        pending = await anyio.to_thread.run_sync(self.repo.pending_records)
-        self._debug(f"transcripts={len(scan.transcripts)} pending={len(pending)}")
-
-        if (scan.transcripts or pending) and not await self._authenticate():
-            await self._dismiss_boot_screen()
-            self.exit()
-            return
-
-        bucket_count = scan.total_new_buckets
-        if scan.transcripts:
-            self._set_boot_status("Sizing things up...")
-            self._debug(f"bucket_count={bucket_count}")
-            rate = Hardware.estimate_buckets_per_sec(engine)
-            if rate and rate > 0:
-                self._update_status(
-                    f"[dim]Found [b]{bucket_count:,}[/] moments. "
-                    f"About {TimeFormat.format_duration(bucket_count / rate)} to score on this Mac.[/]"
-                )
-            else:
-                self._update_status(f"[dim]Found [b]{bucket_count:,}[/] moments.[/]")
-
-        if engine == "claude" and bucket_count > 0:
-            ok = await self.push_screen_wait(
-                CostReviewScreen(bucket_count, self.model_repo or ClaudeCLIEngine.HAIKU_MODEL)
+        build_task: asyncio.Task[InferenceEngine] | None = None
+        if engine == "omlx":
+            build_task = asyncio.create_task(
+                EngineFactory.build(
+                    engine,
+                    self.model_repo,
+                    on_engine_log=lambda msg: self.call_from_thread(self._debug, msg),
+                ),
+                name="engine-build",
             )
-            if not ok:
+
+        classifier: InferenceEngine | None = None
+        try:
+            self.stage = Discovering()
+            self._set_boot_status("Discovering transcripts...")
+            scan = await Pipeline.scan(self.repo)
+            pending = await anyio.to_thread.run_sync(self.repo.pending_records)
+            self._debug(f"transcripts={len(scan.transcripts)} pending={len(pending)}")
+
+            if (scan.transcripts or pending) and not await self._authenticate():
                 await self._dismiss_boot_screen()
                 self.exit()
                 return
 
-        await self._dismiss_boot_screen()
-
-        pre_seed = await anyio.to_thread.run_sync(self.repo.pending_records)
-        has_work = (scan.transcripts and bucket_count > 0) or bool(pre_seed)
-        self._upload.reset()
-        self._upload.preseed_count = len(pre_seed)
-
-        if has_work:
-            pool = UploadPool(
-                uploader=Uploader(),
-                state=self.state,
-                repo=self.repo,
-                progress=self._upload,
-                on_progress_change=self._on_upload_progress_change,
-                debug=self._debug,
-            )
-
-            async def producer() -> None:
-                if pre_seed:
-                    pool.queue_batch(pre_seed)
-                if scan.transcripts and bucket_count > 0:
-                    _, _, existing_files = await anyio.to_thread.run_sync(self.repo.stats)
-                    self._begin_scoring(bucket_count, engine, existing_files + len(scan.transcripts))
-                    boot = EngineBootView(
-                        app=self,
-                        section=self.query_one("#moments-section"),
-                        log=self.query_one("#moments-log", Static),
+            bucket_count = scan.total_new_buckets
+            if scan.transcripts:
+                self._set_boot_status("Sizing things up...")
+                self._debug(f"bucket_count={bucket_count}")
+                rate = Hardware.estimate_buckets_per_sec(engine)
+                if rate and rate > 0:
+                    self._update_status(
+                        f"[dim]Found [b]{bucket_count:,}[/] moments. "
+                        f"About {TimeFormat.format_duration(bucket_count / rate)} to score on this Mac.[/]"
                     )
-                    await NLP.ensure_ready()
-                    boot.show(engine)
-                    try:
-                        await Pipeline.run(
-                            self.repo, scan,
-                            engine=engine, model_repo=self.model_repo,
-                            on_records=self._add_records, on_bucket=self._add_buckets,
-                            on_snippet=boot.add_snippet,
-                            on_transcript_complete=pool.queue_batch,
-                            on_frustration=self._track_frustration,
-                        )
-                    finally:
-                        self.stage = Uploading()
+                else:
+                    self._update_status(f"[dim]Found [b]{bucket_count:,}[/] moments.[/]")
 
-            try:
-                await pool.run(producer)
-            except TimeoutError:
-                self._debug(f"upload: pool timed out after {UPLOAD_POOL_TIMEOUT_SECONDS}s")
+            if engine == "claude" and bucket_count > 0:
+                ok = await self.push_screen_wait(
+                    CostReviewScreen(bucket_count, self.model_repo or ClaudeCLIEngine.HAIKU_MODEL)
+                )
+                if not ok:
+                    await self._dismiss_boot_screen()
+                    self.exit()
+                    return
+
+            pre_seed = await anyio.to_thread.run_sync(self.repo.pending_records)
+            has_work = (scan.transcripts and bucket_count > 0) or bool(pre_seed)
+            self._upload.reset()
+            self._upload.preseed_count = len(pre_seed)
+
+            needs_classifier = bool(scan.transcripts) and bucket_count > 0
+            if needs_classifier:
+                if build_task is not None:
+                    if not build_task.done():
+                        self._set_boot_status("Almost ready — warming up the local model...")
+                    try:
+                        classifier = await build_task
+                    except (TimeoutError, OSError, RuntimeError) as exc:
+                        await self._dismiss_boot_screen()
+                        self.stage = Error(
+                            f"[red]Couldn't start the local model.[/] [dim]{exc}[/]"
+                        )
+                        return
+                    build_task = None
+                else:
+                    classifier = await EngineFactory.build(engine, self.model_repo)
+
+            await self._dismiss_boot_screen()
+
+            if has_work:
+                pool = UploadPool(
+                    uploader=Uploader(),
+                    state=self.state,
+                    repo=self.repo,
+                    progress=self._upload,
+                    on_progress_change=self._on_upload_progress_change,
+                    debug=self._debug,
+                )
+
+                async def producer() -> None:
+                    if pre_seed:
+                        pool.queue_batch(pre_seed)
+                    if scan.transcripts and bucket_count > 0:
+                        assert classifier is not None
+                        _, _, existing_files = await anyio.to_thread.run_sync(self.repo.stats)
+                        self._begin_scoring(bucket_count, engine, existing_files + len(scan.transcripts))
+                        boot = EngineBootView(
+                            app=self,
+                            section=self.query_one("#moments-section"),
+                            log=self.query_one("#moments-log", Static),
+                        )
+                        await NLP.ensure_ready()
+                        boot.show(engine)
+                        try:
+                            await Pipeline.run(
+                                self.repo, scan,
+                                classifier=classifier,
+                                on_records=self._add_records, on_bucket=self._add_buckets,
+                                on_snippet=boot.add_snippet,
+                                on_transcript_complete=pool.queue_batch,
+                                on_frustration=self._track_frustration,
+                            )
+                        finally:
+                            self.stage = Uploading()
+
+                try:
+                    await pool.run(producer)
+                except TimeoutError:
+                    self._debug(f"upload: pool timed out after {UPLOAD_POOL_TIMEOUT_SECONDS}s")
+                    self.stage = Error(
+                        f"[red bold]Uploads timed out after {UPLOAD_POOL_TIMEOUT_SECONDS // 60} min.[/] "
+                        "Records kept locally — press R to retry once you're back online."
+                    )
+                    return
+
+            match self._upload.fatal:
+                case httpx.HTTPStatusError() as e if e.response.status_code in (401, 403):
+                    self.stage = Error(
+                        f"[red bold]Server rejected upload ({e.response.status_code}).[/] "
+                        "Run [b]cc-sentiment setup[/] again, or upload your key to GitHub/keys.openpgp.org."
+                    )
+                    return
+                case httpx.HTTPStatusError() as e:
+                    self.stage = Error(
+                        f"[red bold]Server rejected upload ({e.response.status_code}).[/] "
+                        f"Records kept locally — press R to retry."
+                    )
+                    return
+                case subprocess.CalledProcessError() as e:
+                    self.stage = Error(
+                        f"[red bold]Signing failed ({e.returncode}).[/] "
+                        "Check that your signing key is still accessible, or run "
+                        "[b]cc-sentiment[/] again to pick a different one."
+                    )
+                    return
+
+            if self._upload.failed_batches > 0:
                 self.stage = Error(
-                    f"[red bold]Uploads timed out after {UPLOAD_POOL_TIMEOUT_SECONDS // 60} min.[/] "
+                    f"[red bold]Couldn't upload {self._upload.failed_batches} "
+                    f"batch{'es' if self._upload.failed_batches != 1 else ''}.[/] "
                     "Records kept locally — press R to retry once you're back online."
                 )
                 return
 
-        match self._upload.fatal:
-            case httpx.HTTPStatusError() as e if e.response.status_code in (401, 403):
-                self.stage = Error(
-                    f"[red bold]Server rejected upload ({e.response.status_code}).[/] "
-                    "Run [b]cc-sentiment setup[/] again, or upload your key to GitHub/keys.openpgp.org."
-                )
-                return
-            case httpx.HTTPStatusError() as e:
-                self.stage = Error(
-                    f"[red bold]Server rejected upload ({e.response.status_code}).[/] "
-                    f"Records kept locally — press R to retry."
-                )
-                return
-            case subprocess.CalledProcessError() as e:
-                self.stage = Error(
-                    f"[red bold]Signing failed ({e.returncode}).[/] "
-                    "Check that your signing key is still accessible, or run "
-                    "[b]cc-sentiment[/] again to pick a different one."
-                )
-                return
+            uploaded = self.uploaded_count > 0
+            await self._enter_idle(uploaded=uploaded)
 
-        if self._upload.failed_batches > 0:
-            self.stage = Error(
-                f"[red bold]Couldn't upload {self._upload.failed_batches} "
-                f"batch{'es' if self._upload.failed_batches != 1 else ''}.[/] "
-                "Records kept locally — press R to retry once you're back online."
-            )
-            return
-
-        uploaded = self.uploaded_count > 0
-        await self._enter_idle(uploaded=uploaded)
-
-        if uploaded:
-            assert self.state.config is not None
-            self.run_worker(self._poll_card(self.state.config), name="card-poll", exclusive=True, exit_on_error=False)
-            await self._offer_daemon_install()
+            if uploaded:
+                assert self.state.config is not None
+                self.run_worker(self._poll_card(self.state.config), name="card-poll", exclusive=True, exit_on_error=False)
+                await self._offer_daemon_install()
+        finally:
+            if build_task is not None:
+                if not build_task.done():
+                    build_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await build_task
+            if classifier is not None:
+                await classifier.close()
 
     def _on_upload_progress_change(self, progress: UploadProgress) -> None:
         self.uploaded_count = progress.uploaded_records

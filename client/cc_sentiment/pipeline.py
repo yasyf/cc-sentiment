@@ -12,7 +12,6 @@ import anyio.to_thread
 from cc_sentiment.engines import (
     NOOP_PROGRESS,
     NOOP_SNIPPET,
-    EngineFactory,
     FrustrationFilter,
     InferenceEngine,
 )
@@ -216,37 +215,30 @@ class Pipeline:
         cls,
         repo: Repository,
         scan: ScanResult,
-        engine: str = "omlx",
-        model_repo: str | None = None,
+        classifier: InferenceEngine,
         on_records: Callable[[list[SentimentRecord]], None] = lambda _: None,
         on_bucket: Callable[[int], None] = NOOP_PROGRESS,
-        on_engine_log: Callable[[str], None] | None = None,
         on_snippet: Callable[[str, int], Awaitable[None]] = NOOP_SNIPPET,
         on_transcript_complete: Callable[[list[SentimentRecord]], None] = lambda _: None,
         on_frustration: Callable[[list[str]], None] = lambda _: None,
     ) -> list[SentimentRecord]:
-        classifier = await EngineFactory.build(engine, model_repo, on_engine_log)
+        if not scan.transcripts:
+            return []
 
-        try:
-            if not scan.transcripts:
-                return []
+        all_records: list[SentimentRecord] = []
 
-            all_records: list[SentimentRecord] = []
+        async for parsed in TranscriptParser.stream_transcripts(scan.paths):
+            scored = scan.scored_by_path.get(str(parsed.path), frozenset())
+            records = await cls.score_transcript(
+                parsed, classifier, scored,
+                on_bucket=on_bucket, on_snippet=on_snippet,
+                on_records=on_records, on_frustration=on_frustration,
+            )
+            all_records.extend(records)
+            await anyio.to_thread.run_sync(
+                repo.save_records, str(parsed.path), parsed.mtime, records
+            )
+            if records:
+                on_transcript_complete(records)
 
-            async for parsed in TranscriptParser.stream_transcripts(scan.paths):
-                scored = scan.scored_by_path.get(str(parsed.path), frozenset())
-                records = await cls.score_transcript(
-                    parsed, classifier, scored,
-                    on_bucket=on_bucket, on_snippet=on_snippet,
-                    on_records=on_records, on_frustration=on_frustration,
-                )
-                all_records.extend(records)
-                await anyio.to_thread.run_sync(
-                    repo.save_records, str(parsed.path), parsed.mtime, records
-                )
-                if records:
-                    on_transcript_complete(records)
-
-            return all_records
-        finally:
-            await classifier.close()
+        return all_records

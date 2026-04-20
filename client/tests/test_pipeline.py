@@ -227,12 +227,11 @@ class TestPipelineStateUpdate:
         mock_classifier.score = AsyncMock(return_value=[])
         mock_classifier.close = AsyncMock()
 
-        with patch("cc_sentiment.pipeline.EngineFactory.build", AsyncMock(return_value=mock_classifier)), \
-             patch.object(TranscriptParser, "stream_transcripts", new=_stub_stream([parsed])), \
+        with patch.object(TranscriptParser, "stream_transcripts", new=_stub_stream([parsed])), \
              patch.object(Pipeline, "score_transcript", new_callable=AsyncMock, return_value=[record]):
 
             async def do_run() -> list[SentimentRecord]:
-                return await Pipeline.run(repo, scan_result, engine="mlx")
+                return await Pipeline.run(repo, scan_result, classifier=mock_classifier)
 
             result = anyio.run(do_run)
 
@@ -285,10 +284,9 @@ class TestOnBucketPlumbing:
         )
 
         async def run() -> None:
-            with patch("cc_sentiment.pipeline.EngineFactory.build", AsyncMock(return_value=classifier)), \
-                 patch.object(TranscriptParser, "stream_transcripts", new=_stub_stream([parsed])), \
+            with patch.object(TranscriptParser, "stream_transcripts", new=_stub_stream([parsed])), \
                  patch.object(Pipeline, "score_transcript", new=fake_score):
-                await Pipeline.run(repo, scan_result, engine="omlx", on_bucket=cb)
+                await Pipeline.run(repo, scan_result, classifier=classifier, on_bucket=cb)
 
         anyio.run(run)
         assert captured["on_bucket"] is cb
