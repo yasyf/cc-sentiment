@@ -64,8 +64,6 @@ async def client(
         pass
     async def noop_revalidate(tag: str) -> None:
         pass
-    async def noop_warm_og(u: str, t: str) -> None:
-        pass
     async def record_warm_share(share_id: str) -> None:
         warm_share_calls.append(share_id)
     app = create_app(
@@ -76,9 +74,7 @@ async def client(
         spawn=noop_spawn,
         spawn_my_stat=noop_spawn_my_stat,
         revalidate=noop_revalidate,
-        warm_og=noop_warm_og,
         warm_share=record_warm_share,
-        dashboard_url="https://sentiments.cc",
         allowed_origins=["http://localhost:3000"],
         data_api_token="test-token",
     )

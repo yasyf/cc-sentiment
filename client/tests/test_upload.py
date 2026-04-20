@@ -180,9 +180,6 @@ class TestShareUrlHelpers:
     def test_share_url(self) -> None:
         assert Uploader.share_url("abc123") == "https://sentiments.cc/share/abc123"
 
-    def test_og_url(self) -> None:
-        assert Uploader.og_url("abc123") == "https://sentiments.cc/share/abc123/og"
-
     def test_tweet_url_includes_share_url_and_tweet_text(self) -> None:
         url = Uploader.tweet_url("abc123", "I'm nicer to Claude than most developers.")
         assert "twitter.com/intent/tweet" in url

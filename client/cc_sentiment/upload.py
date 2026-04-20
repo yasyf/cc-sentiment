@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import subprocess
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -308,19 +307,8 @@ class Uploader:
         return f"{DASHBOARD_URL}/share/{share_id}"
 
     @classmethod
-    def og_url(cls, share_id: str) -> str:
-        return f"{DASHBOARD_URL}/share/{share_id}/og"
-
-    @classmethod
     def tweet_url(cls, share_id: str, tweet_text: str) -> str:
         return f"{TWEET_INTENT_URL}?{urlencode({'text': tweet_text, 'url': cls.share_url(share_id)})}"
-
-    async def prewarm_share_card(self, share_id: str) -> None:
-        headers = {"User-Agent": "Twitterbot/1.0", "Accept": "*/*"}
-        async with httpx.AsyncClient(headers=headers, timeout=10.0) as client:
-            for url in (self.share_url(share_id), self.og_url(share_id)):
-                with contextlib.suppress(httpx.HTTPError):
-                    await client.get(url)
 
 
 class UploadPool:

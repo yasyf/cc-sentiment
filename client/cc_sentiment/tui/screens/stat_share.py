@@ -111,14 +111,13 @@ class StatShareScreen(Dialog[None]):
     def on_mount(self) -> None:
         self.share_id: str | None = None
         self.app.run_worker(
-            self._mint_and_prewarm(),
+            self._mint_share(),
             name="card-mint-screen", exit_on_error=False,
         )
 
-    async def _mint_and_prewarm(self) -> None:
-        uploader = Uploader()
+    async def _mint_share(self) -> None:
         try:
-            response = await uploader.mint_share(self.config)
+            response = await Uploader().mint_share(self.config)
         except (httpx.HTTPError, httpx.InvalidURL):
             self.query_one("#stat-tweet", Button).label = MINT_FAILED_LABEL
             return
@@ -126,7 +125,6 @@ class StatShareScreen(Dialog[None]):
         tweet_button = self.query_one("#stat-tweet", Button)
         tweet_button.label = TWEET_LABEL
         tweet_button.disabled = False
-        await uploader.prewarm_share_card(response.id)
 
     @on(Button.Pressed, "#stat-tweet")
     async def on_tweet_button(self) -> None:

@@ -55,10 +55,6 @@ class RevalidateSpawner(Protocol):
     async def __call__(self, tag: str) -> None: ...
 
 
-class OgWarmSpawner(Protocol):
-    async def __call__(self, u: str, t: str) -> None: ...
-
-
 class ShareWarmSpawner(Protocol):
     async def __call__(self, share_id: str) -> None: ...
 
@@ -160,6 +156,7 @@ class ShareStore:
 
 
 SHARE_REQUEST_MAX_AGE_SECONDS = 300
+DASHBOARD_URL = "https://sentiments.cc"
 
 
 def create_app(
@@ -170,9 +167,7 @@ def create_app(
     spawn: RefreshSpawner,
     spawn_my_stat: MyStatSpawner,
     revalidate: RevalidateSpawner,
-    warm_og: OgWarmSpawner,
     warm_share: ShareWarmSpawner,
-    dashboard_url: str,
     allowed_origins: list[str],
     data_api_token: str = "",
 ) -> FastAPI:
@@ -303,7 +298,7 @@ def create_app(
         )
         await share_store.put(record)
         await warm_share(record.id)
-        return ShareMintResponse(id=record.id, url=f"{dashboard_url}/share/{record.id}")
+        return ShareMintResponse(id=record.id, url=f"{DASHBOARD_URL}/share/{record.id}")
 
     @web_app.get("/share/{share_id}")
     @limiter.limit("120/minute")
@@ -343,10 +338,7 @@ image = (
 
 @app.cls(
     image=image,
-    secrets=[
-        modal.Secret.from_name("cc-sentiment-db"),
-        modal.Secret.from_name("cc-sentiment-vercel"),
-    ],
+    secrets=[modal.Secret.from_name("cc-sentiment-db")],
     scaledown_window=600,
     min_containers=1,
     enable_memory_snapshot=True,
@@ -383,8 +375,6 @@ class API:
             await refresh_my_stat.spawn.aio(contributor_id)
         async def revalidate(tag: str) -> None:
             await revalidate_dashboard.spawn.aio(tag)
-        async def warm_og(u: str, t: str) -> None:
-            await warm_og_image.spawn.aio(u, t)
         async def warm_share(share_id: str) -> None:
             await warm_share_card.spawn.aio(share_id)
         return create_app(
@@ -395,9 +385,7 @@ class API:
             spawn=spawn,
             spawn_my_stat=spawn_my_stat,
             revalidate=revalidate,
-            warm_og=warm_og,
             warm_share=warm_share,
-            dashboard_url=os.environ["DASHBOARD_URL"],
             allowed_origins=os.environ["ALLOWED_ORIGINS"].split(","),
             data_api_token=os.environ["DATA_API_TOKEN"],
         )
@@ -441,22 +429,12 @@ async def refresh_my_stat(contributor_ids: list[str]) -> list[None]:
 
 
 @app.function(image=image, enable_memory_snapshot=True)
-async def warm_og_image(u: str, t: str) -> None:
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        response = await client.get(
-            "https://sentiments.cc/og",
-            params={"u": u, "t": t},
-        )
-    print(f"warm_og u={u!r} t={t!r} status={response.status_code}")
-
-
-@app.function(image=image, enable_memory_snapshot=True)
 async def warm_share_card(share_id: str) -> None:
     headers = {"User-Agent": "Twitterbot/1.0", "Accept": "*/*"}
     async with httpx.AsyncClient(headers=headers, timeout=15.0) as client:
         page, og = await asyncio.gather(
-            client.get(f"https://sentiments.cc/share/{share_id}"),
-            client.get(f"https://sentiments.cc/share/{share_id}/og"),
+            client.get(f"{DASHBOARD_URL}/share/{share_id}"),
+            client.get(f"{DASHBOARD_URL}/share/{share_id}/og"),
             return_exceptions=True,
         )
     print(f"warm_share id={share_id!r} page={getattr(page, 'status_code', page)!r} og={getattr(og, 'status_code', og)!r}")
