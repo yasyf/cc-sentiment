@@ -428,10 +428,10 @@ class TestShare:
         assert set(body.keys()) == {"id", "url"}
         assert body["id"]
         assert body["url"] == f"https://sentiments.cc/share/{body['id']}"
-        warmed_urls = sorted(call.args[0] for call in warm_client_mock.get.call_args_list)
+        warmed_urls = [call.args[0] for call in warm_client_mock.get.call_args_list]
         assert warmed_urls == [
-            f"https://sentiments.cc/share/{body['id']}",
             f"https://sentiments.cc/share/{body['id']}/og",
+            f"https://sentiments.cc/share/{body['id']}",
         ]
 
     @pytest.mark.asyncio

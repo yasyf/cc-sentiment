@@ -298,11 +298,14 @@ def create_app(
             headers={"User-Agent": "Twitterbot/1.0", "Accept": "*/*"},
             timeout=15.0,
         ) as client:
-            await asyncio.gather(
-                client.get(f"{DASHBOARD_URL}/share/{record.id}"),
-                client.get(f"{DASHBOARD_URL}/share/{record.id}/og"),
-                return_exceptions=True,
-            )
+            try:
+                await client.get(f"{DASHBOARD_URL}/share/{record.id}/og")
+            except httpx.HTTPError:
+                pass
+            try:
+                await client.get(f"{DASHBOARD_URL}/share/{record.id}")
+            except httpx.HTTPError:
+                pass
         return ShareMintResponse(id=record.id, url=f"{DASHBOARD_URL}/share/{record.id}")
 
     @web_app.get("/share/{share_id}")

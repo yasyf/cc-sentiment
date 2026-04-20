@@ -1,5 +1,6 @@
 import { ImageResponse } from '@vercel/og';
 import { addCacheTag } from '@vercel/functions';
+import { put, head } from '@vercel/blob';
 import { error } from '@sveltejs/kit';
 import { fetchData, fetchMyStat, fetchShare } from '$lib/api.js';
 import { verdictFor, type VerdictSeverity } from '$lib/verdict.js';
@@ -18,21 +19,55 @@ export const config = { isr: { expiration: 2_592_000 } };
 
 const WIDTH = 1200;
 const HEIGHT = 630;
+const IMAGE_HEADERS = {
+	'content-type': 'image/png',
+	'cache-control': 'public, max-age=31536000, immutable',
+};
 
-export const GET: RequestHandler = async ({ fetch, params }) => {
+export const GET: RequestHandler = async ({ fetch, params, request }) => {
+	addCacheTag(`share:${params.id}`);
+
+	const blobPath = `share/${params.id}.png`;
+	const existing = await head(blobPath).catch(() => null);
+	const isTwitterbot = (request.headers.get('user-agent') ?? '')
+		.toLowerCase()
+		.includes('twitterbot');
+
+	if (existing) {
+		if (isTwitterbot) {
+			const upstream = await fetch(existing.url);
+			return new Response(upstream.body, { headers: IMAGE_HEADERS });
+		}
+		return new Response(null, {
+			status: 308,
+			headers: { location: existing.url, 'cache-control': IMAGE_HEADERS['cache-control'] },
+		});
+	}
+
 	const record = await fetchShare(fetch, params.id);
 	if (!record) throw error(404, 'Share not found');
 
-	addCacheTag(`share:${record.id}`);
-
 	const stat = await fetchMyStat(fetch, record.contributor_id);
-	if (!stat) return aggregateCard(fetch);
-	if (record.avatar_url) return personalCardWithPhoto(record.contributor_id, record.avatar_url, stat.text);
-	return personalCardNoPhoto(record.contributor_id, stat.text);
+	const html = stat
+		? record.avatar_url
+			? personalCardWithPhotoNode(record.contributor_id, record.avatar_url, stat.text)
+			: personalCardNoPhotoNode(record.contributor_id, stat.text)
+		: await aggregateCardNode(fetch);
+
+	const image = new ImageResponse(html, { width: WIDTH, height: HEIGHT });
+	const bytes = new Uint8Array(await image.arrayBuffer());
+	await put(blobPath, bytes, {
+		access: 'public',
+		addRandomSuffix: false,
+		contentType: 'image/png',
+		cacheControlMaxAge: 31_536_000,
+		allowOverwrite: true,
+	});
+	return new Response(bytes, { headers: IMAGE_HEADERS });
 };
 
-function personalCardWithPhoto(contributorId: string, avatarUrl: string, text: string): ImageResponse {
-	const html = {
+function personalCardWithPhotoNode(contributorId: string, avatarUrl: string, text: string) {
+	return {
 		type: 'div',
 		props: {
 			style: {
@@ -104,12 +139,10 @@ function personalCardWithPhoto(contributorId: string, avatarUrl: string, text: s
 			],
 		},
 	};
-
-	return new ImageResponse(html, { width: WIDTH, height: HEIGHT });
 }
 
-function personalCardNoPhoto(contributorId: string, text: string): ImageResponse {
-	const html = {
+function personalCardNoPhotoNode(contributorId: string, text: string) {
+	return {
 		type: 'div',
 		props: {
 			style: {
@@ -163,11 +196,9 @@ function personalCardNoPhoto(contributorId: string, text: string): ImageResponse
 			],
 		},
 	};
-
-	return new ImageResponse(html, { width: WIDTH, height: HEIGHT });
 }
 
-async function aggregateCard(fetch: typeof globalThis.fetch): Promise<ImageResponse> {
+async function aggregateCardNode(fetch: typeof globalThis.fetch) {
 	const data = await fetchData(fetch);
 
 	const total = data.distribution.reduce((s, d) => s + d.count, 0);
@@ -180,7 +211,7 @@ async function aggregateCard(fetch: typeof globalThis.fetch): Promise<ImageRespo
 
 	const trendText = describeTrend(data.trend.sentiment_current, data.trend.sentiment_previous);
 
-	const html = {
+	return {
 		type: 'div',
 		props: {
 			style: {
@@ -274,6 +305,4 @@ async function aggregateCard(fetch: typeof globalThis.fetch): Promise<ImageRespo
 			],
 		},
 	};
-
-	return new ImageResponse(html, { width: WIDTH, height: HEIGHT });
 }

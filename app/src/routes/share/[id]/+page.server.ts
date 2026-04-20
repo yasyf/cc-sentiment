@@ -1,5 +1,6 @@
 import { error } from '@sveltejs/kit';
 import { addCacheTag } from '@vercel/functions';
+import { head } from '@vercel/blob';
 import { fetchData, fetchMyStat, fetchShare } from '$lib/api.js';
 import type { PageServerLoad } from './$types.js';
 
@@ -11,10 +12,13 @@ export const load: PageServerLoad = async ({ fetch, params }) => {
 
 	addCacheTag(`share:${record.id}`);
 
-	const [stat, dashboard] = await Promise.all([
+	const [stat, dashboard, blob] = await Promise.all([
 		fetchMyStat(fetch, record.contributor_id),
 		fetchData(fetch),
+		head(`share/${record.id}.png`).catch(() => null),
 	]);
 
-	return { record, stat, ...dashboard };
+	const ogImageUrl = blob?.url ?? `https://sentiments.cc/share/${record.id}/og`;
+
+	return { record, stat, ...dashboard, ogImageUrl };
 };

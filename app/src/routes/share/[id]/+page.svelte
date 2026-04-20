@@ -4,7 +4,7 @@
 
 	let { data }: PageProps = $props();
 
-	const ogImage = $derived(`https://sentiments.cc/share/${data.record.id}/og`);
+	const ogImage = $derived(data.ogImageUrl);
 	const shareUrl = $derived(`https://sentiments.cc/share/${data.record.id}`);
 
 	const handleLabel = $derived(
