@@ -279,7 +279,8 @@ class CCSentimentApp(App[None]):
         if self._boot_screen is not None:
             self._boot_screen.append_detail(f"debug: {msg}")
             return
-        self.view.append_status(f"[red dim]debug:[/] {msg}")
+        with contextlib.suppress(NoMatches):
+            self.view.append_status(f"[red dim]debug:[/] {msg}")
 
     def _set_debug(self, **fields: object) -> None:
         for name, value in fields.items():
