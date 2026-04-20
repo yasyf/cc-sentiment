@@ -85,21 +85,10 @@ function personalCard(contributorId: string, text: string): ImageResponse {
 										marginTop: '24px',
 										fontSize: '52px',
 										fontWeight: 700,
-										color: '#18181b',
+										color: '#6366f1',
 										lineHeight: 1.15,
-										display: 'flex',
-										flexWrap: 'wrap',
 									},
-									children: [
-										{
-											type: 'span',
-											props: { style: { color: '#18181b' }, children: 'is ' },
-										},
-										{
-											type: 'span',
-											props: { style: { color: '#6366f1' }, children: `${text}.` },
-										},
-									],
+									children: `is ${text}.`,
 								},
 							},
 							{
