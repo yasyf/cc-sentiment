@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -49,15 +49,19 @@ def verifier() -> AsyncMock:
 
 
 @pytest.fixture
-def warm_share_calls() -> list[str]:
-    return []
+def warm_client_mock() -> MagicMock:
+    mock = AsyncMock()
+    mock.get.return_value = MagicMock(status_code=200)
+    mock.__aenter__ = AsyncMock(return_value=mock)
+    mock.__aexit__ = AsyncMock(return_value=False)
+    return mock
 
 
 @pytest.fixture
 async def client(
     db: Database,
     verifier: AsyncMock,
-    warm_share_calls: list[str],
+    warm_client_mock: MagicMock,
 ) -> httpx.AsyncClient:
     async def noop_spawn(days: int) -> None:
         pass
@@ -65,8 +69,6 @@ async def client(
         pass
     async def noop_revalidate(tag: str) -> None:
         pass
-    async def record_warm_share(share_id: str) -> None:
-        warm_share_calls.append(share_id)
     app = create_app(
         db=db,
         verifier=verifier,
@@ -75,13 +77,13 @@ async def client(
         spawn=noop_spawn,
         spawn_my_stat=noop_spawn_my_stat,
         revalidate=noop_revalidate,
-        warm_share=record_warm_share,
         allowed_origins=["http://localhost:3000"],
         data_api_token="test-token",
     )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+        with patch("cc_sentiment_server.app.httpx.AsyncClient", return_value=warm_client_mock):
+            yield c
 
 
 class TestUpload:
@@ -417,7 +419,7 @@ def share_payload(**overrides: object) -> dict:
 class TestShare:
     @pytest.mark.asyncio
     async def test_mint_happy_path(
-        self, client: httpx.AsyncClient, warm_share_calls: list[str]
+        self, client: httpx.AsyncClient, warm_client_mock: MagicMock
     ) -> None:
         response = await client.post("/share", json=share_payload())
 
@@ -426,7 +428,11 @@ class TestShare:
         assert set(body.keys()) == {"id", "url"}
         assert body["id"]
         assert body["url"] == f"https://sentiments.cc/share/{body['id']}"
-        assert warm_share_calls == [body["id"]]
+        warmed_urls = sorted(call.args[0] for call in warm_client_mock.get.call_args_list)
+        assert warmed_urls == [
+            f"https://sentiments.cc/share/{body['id']}",
+            f"https://sentiments.cc/share/{body['id']}/og",
+        ]
 
     @pytest.mark.asyncio
     async def test_mint_invalid_signature(
