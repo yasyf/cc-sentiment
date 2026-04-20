@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from statistics import mean
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from textual.app import App
-from textual.widgets import Digits, Label, ProgressBar, Static
+from textual.widgets import Button, Digits, Label, ProgressBar, Static
 
 from cc_sentiment.models import GistConfig, GPGConfig, MyStat, SentimentRecord, SSHConfig
 from cc_sentiment.upload import UploadProgress
@@ -30,22 +30,42 @@ class StatsState:
 
 
 @dataclass
-class ShareState:
-    TITLE: ClassVar[str] = "Your cc-sentiment snapshot"
-    DETAIL: ClassVar[str] = (
+class CtaState:
+    SNAPSHOT_TITLE: ClassVar[str] = "Your cc-sentiment snapshot"
+    TWEET_DETAIL: ClassVar[str] = (
         "Share it? The card on Twitter will show your GitHub avatar and this stat."
     )
+    TWEET_LABEL: ClassVar[str] = "Tweet it"
+    SCHEDULE_TITLE: ClassVar[str] = "Run this automatically each day?"
+    SCHEDULE_DETAIL: ClassVar[str] = (
+        "Refreshes your numbers daily in the background. "
+        "Undo any time with [b]cc-sentiment uninstall[/]."
+    )
+    SCHEDULE_LABEL: ClassVar[str] = "Schedule it"
 
-    config: SSHConfig | GPGConfig | GistConfig | None = None
-    stat: MyStat | None = None
+    tweet_config: SSHConfig | GPGConfig | GistConfig | None = None
+    tweet_stat: MyStat | None = None
+    schedule_available: bool = False
+    showing: Literal["tweet", "schedule"] = "schedule"
 
     @staticmethod
-    def stat_line(stat: MyStat) -> str:
+    def tweet_title(stat: MyStat) -> str:
         return f"You are {stat.text}."
 
+    def has_tweet(self) -> bool:
+        return self.tweet_config is not None and self.tweet_stat is not None
+
+    def has_any(self) -> bool:
+        return self.has_tweet() or self.schedule_available
+
+    def advance(self) -> None:
+        self.showing = "schedule" if self.showing == "tweet" else "tweet"
+
     def reset(self) -> None:
-        self.config = None
-        self.stat = None
+        self.tweet_config = None
+        self.tweet_stat = None
+        self.schedule_available = False
+        self.showing = "schedule"
 
 
 class ProcessingView:
@@ -58,7 +78,7 @@ class ProcessingView:
         self.app = app
         self.score_bars: dict[int, ScoreBar] = {}
         self.stats = StatsState()
-        self.share = ShareState()
+        self.cta = CtaState()
 
     def register_score_bar(self, s: int, bar: ScoreBar) -> None:
         self.score_bars[s] = bar
@@ -93,22 +113,52 @@ class ProcessingView:
         self.app.query_one("#hourly-section").add_class("inactive")
         self.app.query_one("#stats-rows", Static).update("")
         self.app.query_one("#stats-section").add_class("inactive")
-        self.hide_share()
+        self.reset_cta()
 
-    def show_share(
+    def set_tweet(
         self, config: SSHConfig | GPGConfig | GistConfig, stat: MyStat
     ) -> None:
-        self.share.config = config
-        self.share.stat = stat
-        self.app.query_one("#share-stat", Static).update(ShareState.stat_line(stat))
-        self.app.query_one("#share-detail", Static).update(ShareState.DETAIL)
-        self.app.query_one("#share-section").remove_class("inactive")
+        self.cta.tweet_config = config
+        self.cta.tweet_stat = stat
+        if not self.cta.schedule_available:
+            self.cta.showing = "tweet"
+        self.render_cta()
 
-    def hide_share(self) -> None:
-        self.share.reset()
-        self.app.query_one("#share-stat", Static).update("")
-        self.app.query_one("#share-detail", Static).update("")
-        self.app.query_one("#share-section").add_class("inactive")
+    def set_schedule_available(self, available: bool) -> None:
+        self.cta.schedule_available = available
+        if not available and self.cta.showing == "schedule":
+            self.cta.showing = "tweet"
+        self.render_cta()
+
+    def rotate_cta(self) -> None:
+        if not (self.cta.has_tweet() and self.cta.schedule_available):
+            return
+        self.cta.advance()
+        self.render_cta()
+
+    def reset_cta(self) -> None:
+        self.cta.reset()
+        self.render_cta()
+
+    def render_cta(self) -> None:
+        section = self.app.query_one("#cta-section")
+        if not self.cta.has_any():
+            section.add_class("inactive")
+            return
+        section.remove_class("inactive")
+        title = self.app.query_one("#cta-title", Static)
+        detail = self.app.query_one("#cta-detail", Static)
+        button = self.app.query_one("#cta-action", Button)
+        match self.cta.showing:
+            case "tweet":
+                assert self.cta.tweet_stat is not None
+                title.update(CtaState.tweet_title(self.cta.tweet_stat))
+                detail.update(CtaState.TWEET_DETAIL)
+                button.label = CtaState.TWEET_LABEL
+            case "schedule":
+                title.update(CtaState.SCHEDULE_TITLE)
+                detail.update(CtaState.SCHEDULE_DETAIL)
+                button.label = CtaState.SCHEDULE_LABEL
 
     def begin_scoring(self, total: int, total_files: int) -> None:
         self.app.query_one("#scan-progress", ProgressBar).update(total=total, progress=0)

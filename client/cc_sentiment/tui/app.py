@@ -64,7 +64,6 @@ from cc_sentiment.tui.progress import DebugState, ScoringProgress
 from cc_sentiment.tui.screens import (
     BootingScreen,
     CostReviewScreen,
-    DaemonPromptScreen,
     PlatformErrorScreen,
     SetupScreen,
     StatShareScreen,
@@ -95,6 +94,7 @@ from cc_sentiment.tui.widgets import (
 
 class CCSentimentApp(App[None]):
     RESCAN_CONFIRM_SECONDS: ClassVar[float] = 5.0
+    CTA_ROTATE_SECONDS: ClassVar[float] = 10.0
 
     CSS = """
     Screen { layout: vertical; background: $surface; }
@@ -114,10 +114,10 @@ class CCSentimentApp(App[None]):
     #hourly-section { width: 1fr; min-width: 32; }
     #moments-section { width: 2fr; }
     #stats-section { width: 1fr; min-width: 36; }
-    #share-section { width: 1fr; min-width: 36; }
-    #share-stat { color: $accent; text-style: bold; margin: 0 0 1 0; }
-    #share-detail { color: $text-muted; margin: 0 0 1 0; }
-    #share-buttons { height: auto; }
+    #cta-section { width: 1fr; min-width: 36; }
+    #cta-title { color: $accent; text-style: bold; margin: 0 0 1 0; }
+    #cta-detail { color: $text-muted; margin: 0 0 1 0; }
+    #cta-buttons { height: auto; }
     ProgressBar Bar > .bar--bar { color: $accent; }
     ProgressBar Bar > .bar--complete { color: $accent; }
     #hourly-chart { height: 7; }
@@ -204,11 +204,11 @@ class CCSentimentApp(App[None]):
                     yield Static("", id="moments-log")
                 with Card(id="stats-section", title="stats", classes="inactive"):
                     yield Static("", id="stats-rows")
-                with Card(id="share-section", title="share", classes="inactive"):
-                    yield Static("", id="share-stat")
-                    yield Static("", id="share-detail")
-                    with Horizontal(id="share-buttons"):
-                        yield Button("Tweet it", id="share-tweet", variant="primary")
+                with Card(id="cta-section", title="next", classes="inactive"):
+                    yield Static("", id="cta-title")
+                    yield Static("", id="cta-detail")
+                    with Horizontal(id="cta-buttons"):
+                        yield Button("", id="cta-action", variant="primary")
 
             if self.debug_mode:
                 yield DebugSection(id="debug")
@@ -225,6 +225,8 @@ class CCSentimentApp(App[None]):
         self._boot_screen.status = "Loading local cache..."
         self.repo = await anyio.to_thread.run_sync(Repository.open, self.db_path)
         await self._seed_from_repo()
+        self.view.set_schedule_available(not LaunchAgent.is_installed())
+        self.set_interval(self.CTA_ROTATE_SECONDS, self.view.rotate_cta)
         if self.setup_only:
             await self._dismiss_boot_screen()
             await self.push_screen_wait(SetupScreen(self.state))
@@ -580,7 +582,6 @@ class CCSentimentApp(App[None]):
             if uploaded:
                 assert self.state.config is not None
                 self.run_worker(self._poll_card(self.state.config), name="card-poll", exclusive=True, exit_on_error=False)
-                await self._offer_daemon_install()
         finally:
             if build_task is not None:
                 if not build_task.done():
@@ -607,16 +608,20 @@ class CCSentimentApp(App[None]):
     def _on_card_ready(self, stat: MyStat) -> None:
         if self.state.config is None:
             return
-        self.view.show_share(self.state.config, stat)
+        self.view.set_tweet(self.state.config, stat)
         self.push_screen(StatShareScreen(self.state.config, stat))
         if isinstance(self.stage, IdleAfterUpload):
             self._update_status(self._uploaded_status_text())
 
-    @on(Button.Pressed, "#share-tweet")
-    def on_share_tweet(self) -> None:
-        share = self.view.share
-        assert share.config is not None and share.stat is not None
-        self.push_screen(StatShareScreen(share.config, share.stat))
+    @on(Button.Pressed, "#cta-action")
+    async def on_cta_action(self) -> None:
+        cta = self.view.cta
+        match cta.showing:
+            case "tweet":
+                assert cta.tweet_config is not None and cta.tweet_stat is not None
+                self.push_screen(StatShareScreen(cta.tweet_config, cta.tweet_stat))
+            case "schedule":
+                await self._install_daemon()
 
     def _on_card_state(self, attempts: int, status: str, elapsed: float, stopped: str | None) -> None:
         self._set_debug(
@@ -626,13 +631,7 @@ class CCSentimentApp(App[None]):
             card_stopped=stopped,
         )
 
-    async def _offer_daemon_install(self) -> None:
-        if self.state.daemon_prompt_dismissed or LaunchAgent.is_installed():
-            return
-        if not await self.push_screen_wait(DaemonPromptScreen()):
-            self.state.daemon_prompt_dismissed = True
-            await anyio.to_thread.run_sync(self.state.save)
-            return
+    async def _install_daemon(self) -> None:
         try:
             await anyio.to_thread.run_sync(LaunchAgent.install)
         except subprocess.CalledProcessError as e:
@@ -641,6 +640,7 @@ class CCSentimentApp(App[None]):
                 "[dim]Try `cc-sentiment install` manually.[/]"
             )
             return
+        self.view.set_schedule_available(False)
         self._update_status(
             "[green]Scheduled.[/] It'll refresh your numbers daily in the background. "
             "[dim]Undo with `cc-sentiment uninstall`.[/]"

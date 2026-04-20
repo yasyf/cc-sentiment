@@ -18,10 +18,9 @@ from cc_sentiment.models import GistConfig, GPGConfig, MyStat, SSHConfig
 from cc_sentiment.upload import Uploader
 
 from cc_sentiment.tui.screens.dialog import Dialog
-from cc_sentiment.tui.view import ShareState
+from cc_sentiment.tui.view import CtaState
 
 PREPARING_LABEL = "Preparing share…"
-TWEET_LABEL = "Tweet it"
 MINT_FAILED_LABEL = "Share unavailable"
 
 
@@ -110,9 +109,9 @@ class StatShareScreen(Dialog[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog-box"):
-            yield Label(ShareState.TITLE, classes="title")
-            yield Static(ShareState.stat_line(self.stat), classes="stat")
-            yield Static(ShareState.DETAIL, classes="detail")
+            yield Label(CtaState.SNAPSHOT_TITLE, classes="title")
+            yield Static(CtaState.tweet_title(self.stat), classes="stat")
+            yield Static(CtaState.TWEET_DETAIL, classes="detail")
             with Horizontal():
                 yield Button(PREPARING_LABEL, id="stat-tweet", variant="primary", disabled=True)
                 yield Button("Not now", id="stat-skip", variant="default")
@@ -132,7 +131,7 @@ class StatShareScreen(Dialog[None]):
             return
         self.share_id = response.id
         tweet_button = self.query_one("#stat-tweet", Button)
-        tweet_button.label = TWEET_LABEL
+        tweet_button.label = CtaState.TWEET_LABEL
         tweet_button.disabled = False
 
     @on(Button.Pressed, "#stat-tweet")
