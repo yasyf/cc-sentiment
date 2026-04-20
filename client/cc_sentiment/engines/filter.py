@@ -17,6 +17,8 @@ FRUSTRATION_PATTERN = re.compile(
     r"dumbass|"
     r"you'?re\s*(?:fucking\s*)?(?:useless|stupid|broken|terrible|awful)|"
     r"this\s*(?:is\s*)?(?:fucking\s*)?(?:terrible|awful|horrible|useless|garbage)|"
+    r"stop\s+(?:guessing|making\s+(?:things|stuff|shit)\s*up|hallucinating|inventing|assuming|pretending|being\s+lazy|making\s+excuses|lying)|"
+    r"just\s+stop\s+(?:it|already)|"
     r"completely\s*useless|"
     r"i\s*give\s*up|giving\s*up"
     r")\b",

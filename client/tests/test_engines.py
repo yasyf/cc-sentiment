@@ -123,6 +123,81 @@ class TestFrustrationDetection:
     def test_detects_giving_up(self) -> None:
         assert FrustrationFilter.check_frustration(make_bucket("I give up"))
 
+    def test_detects_stop_guessing_caps(self) -> None:
+        assert FrustrationFilter.check_frustration(make_bucket("STOP GUESSING"))
+
+    def test_detects_stop_guessing_lower(self) -> None:
+        assert FrustrationFilter.check_frustration(make_bucket("stop guessing"))
+
+    def test_detects_stop_guessing_in_context(self) -> None:
+        assert FrustrationFilter.check_frustration(
+            make_bucket("> quoted AI proposal text here\n\nSTOP GUESSING")
+        )
+
+    def test_detects_stop_making_things_up(self) -> None:
+        assert FrustrationFilter.check_frustration(make_bucket("stop making things up"))
+
+    def test_detects_stop_making_shit_up(self) -> None:
+        assert FrustrationFilter.check_frustration(make_bucket("stop making shit up"))
+
+    def test_detects_stop_hallucinating(self) -> None:
+        assert FrustrationFilter.check_frustration(make_bucket("stop hallucinating"))
+
+    def test_detects_stop_being_lazy(self) -> None:
+        assert FrustrationFilter.check_frustration(make_bucket("stop being lazy"))
+
+    def test_detects_stop_making_excuses(self) -> None:
+        assert FrustrationFilter.check_frustration(make_bucket("stop making excuses, figure it out"))
+
+    def test_detects_stop_pretending(self) -> None:
+        assert FrustrationFilter.check_frustration(make_bucket("stop pretending you understand"))
+
+    def test_detects_stop_lying(self) -> None:
+        assert FrustrationFilter.check_frustration(make_bucket("stop lying to me"))
+
+    def test_detects_just_stop_it(self) -> None:
+        assert FrustrationFilter.check_frustration(make_bucket("just stop it"))
+
+    def test_detects_just_stop_already(self) -> None:
+        assert FrustrationFilter.check_frustration(
+            make_bucket("just stop already, this is getting worse")
+        )
+
+    def test_does_not_flag_stop_the_server(self) -> None:
+        assert not FrustrationFilter.check_frustration(make_bucket("stop the server"))
+
+    def test_does_not_flag_stop_at_line_10(self) -> None:
+        assert not FrustrationFilter.check_frustration(make_bucket("stop at line 10"))
+
+    def test_does_not_flag_stop_when_done(self) -> None:
+        assert not FrustrationFilter.check_frustration(make_bucket("stop when done"))
+
+    def test_does_not_flag_stop_processing(self) -> None:
+        assert not FrustrationFilter.check_frustration(make_bucket("stop processing"))
+
+    def test_does_not_flag_stop_the_build_caps(self) -> None:
+        assert not FrustrationFilter.check_frustration(make_bucket("STOP THE BUILD"))
+
+    def test_does_not_flag_stop_after_n(self) -> None:
+        assert not FrustrationFilter.check_frustration(make_bucket("stop after 5 iterations"))
+
+    def test_does_not_flag_just_stop_and_think(self) -> None:
+        assert not FrustrationFilter.check_frustration(make_bucket("just stop and think"))
+
+    def test_does_not_flag_dont_stop_force(self) -> None:
+        assert not FrustrationFilter.check_frustration(make_bucket("dont stop, force remove it"))
+
+    def test_does_not_flag_go_go_go(self) -> None:
+        assert not FrustrationFilter.check_frustration(make_bucket("GO GO GO"))
+
+    def test_does_not_flag_ship_it(self) -> None:
+        assert not FrustrationFilter.check_frustration(make_bucket("SHIP IT"))
+
+    def test_does_not_flag_great_monitor(self) -> None:
+        assert not FrustrationFilter.check_frustration(
+            make_bucket("great, monitor it and fix anything that goes wrong")
+        )
+
     def test_does_not_flag_this_sucks(self) -> None:
         assert not FrustrationFilter.check_frustration(make_bucket("this sucks"))
 
