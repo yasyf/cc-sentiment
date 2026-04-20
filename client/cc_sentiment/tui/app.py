@@ -84,12 +84,12 @@ from cc_sentiment.tui.stages import (
 )
 from cc_sentiment.tui.view import ProcessingView
 from cc_sentiment.tui.widgets import (
+    Card,
     DebugSection,
     HourlyChart,
     LiveFunBox,
     ProgressRow,
     ScoreBar,
-    Section,
 )
 
 
@@ -105,10 +105,15 @@ class CCSentimentApp(App[None]):
     #score-digits { width: auto; min-width: 20; color: $accent; }
     #score-label { text-align: right; height: 1; color: $text-muted; }
     #score-digits.inactive, #score-label.inactive { display: none; }
-    .section-header { height: 1; color: $text-muted; text-style: bold; }
+    .row { height: auto; }
+    .row > Card { margin-right: 1; }
+    .row > Card:last-of-type { margin-right: 0; }
+    #sentiment-section { width: 2fr; }
+    #hourly-section { width: 1fr; min-width: 32; }
+    #moments-section { width: 2fr; }
+    #stats-section { width: 1fr; min-width: 40; }
     ProgressBar Bar > .bar--bar { color: $accent; }
     ProgressBar Bar > .bar--complete { color: $accent; }
-    .timeline-label { height: 1; color: $text-muted; margin: 1 0 0 0; }
     #hourly-chart { height: 7; }
     #moments-log { height: auto; min-height: 4; max-height: 10; }
     #stats-rows { height: auto; }
@@ -163,8 +168,7 @@ class CCSentimentApp(App[None]):
                     yield Digits("-.--", id="score-digits", classes="inactive")
                 yield Static("[dim]average sentiment[/]", id="score-label", classes="inactive")
 
-            with Section(id="progress-section", classes="inactive"):
-                yield Static("PROGRESS", classes="section-header")
+            with Card(id="progress-section", title="progress", classes="inactive"):
                 yield ProgressRow(
                     label="scoring",
                     bar_id="scan-progress",
@@ -180,24 +184,22 @@ class CCSentimentApp(App[None]):
                     classes="inactive",
                 )
 
-            with Section(id="sentiment-section", classes="inactive"):
-                yield Static("SENTIMENT", classes="section-header")
-                for s in range(5, 0, -1):
-                    bar = ScoreBar(s)
-                    bar.id = f"bar-{s}"
-                    self.view.register_score_bar(s, bar)
-                    yield bar
-                yield Static("[dim]through the day[/]", classes="timeline-label")
-                yield HourlyChart(id="hourly-chart")
+            with Horizontal(classes="row"):
+                with Card(id="sentiment-section", title="sentiment", classes="inactive"):
+                    for s in range(5, 0, -1):
+                        bar = ScoreBar(s)
+                        bar.id = f"bar-{s}"
+                        self.view.register_score_bar(s, bar)
+                        yield bar
+                with Card(id="hourly-section", title="through the day", classes="inactive"):
+                    yield HourlyChart(id="hourly-chart")
 
-            with Section(id="moments-section", classes="inactive"):
-                yield Static("MOMENTS", classes="section-header")
-                yield Static("", id="moments-log")
-                yield LiveFunBox(id="live-fun")
-
-            with Section(id="stats-section", classes="inactive"):
-                yield Static("STATS", classes="section-header")
-                yield Static("", id="stats-rows")
+            with Horizontal(classes="row"):
+                with Card(id="moments-section", title="moments", classes="inactive"):
+                    yield Static("", id="moments-log")
+                    yield LiveFunBox(id="live-fun")
+                with Card(id="stats-section", title="stats", classes="inactive"):
+                    yield Static("", id="stats-rows")
 
             if self.debug_mode:
                 yield DebugSection(id="debug")

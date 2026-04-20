@@ -77,6 +77,7 @@ class ProcessingView:
         for s in range(1, 6):
             self.score_bars[s].update("")
         self.app.query_one("#sentiment-section").add_class("inactive")
+        self.app.query_one("#hourly-section").add_class("inactive")
         self.app.query_one("#stats-rows", Static).update("")
         self.app.query_one("#stats-section").add_class("inactive")
 
@@ -136,6 +137,7 @@ class ProcessingView:
         if not records:
             return
         self.app.query_one("#sentiment-section").remove_class("inactive")
+        self.app.query_one("#hourly-section").remove_class("inactive")
         self.app.query_one("#score-digits").remove_class("inactive")
         self.app.query_one("#score-label").remove_class("inactive")
         scores = [int(r.sentiment_score) for r in records]

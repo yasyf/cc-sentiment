@@ -6,15 +6,16 @@ from textual.app import ComposeResult
 from textual.widgets import Static
 
 from cc_sentiment.tui.progress import DebugState
-from cc_sentiment.tui.widgets.section import Section
+from cc_sentiment.tui.widgets.card import Card
 
 
-class DebugSection(Section):
-    BORDER_SUBTITLE: ClassVar[str] = "debug"
+class DebugSection(Card):
     DEFAULT_CSS: ClassVar[str] = """
-    DebugSection { border: round $surface; }
     DebugSection > #debug-body { color: $text-muted; height: auto; }
     """
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(title="debug", **kwargs)
 
     def compose(self) -> ComposeResult:
         yield Static("", id="debug-body")
