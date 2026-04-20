@@ -99,7 +99,8 @@ class CCSentimentApp(App[None]):
 
     CSS = """
     Screen { layout: vertical; background: $surface; }
-    Dialog { background: transparent; }
+    Dialog { background: $surface; }
+    StatShareScreen { background: $background 60%; }
     #main { height: 1fr; padding: 1 2; }
     #header-section { height: auto; }
     #title-row { height: 3; }

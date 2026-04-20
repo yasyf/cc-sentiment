@@ -88,6 +88,7 @@ class CardPoller:
 
 class StatShareScreen(Dialog[None]):
     DEFAULT_CSS = Dialog.DEFAULT_CSS + """
+    StatShareScreen { background: $background 60%; }
     StatShareScreen > #dialog-box .stat { width: 100%; color: $accent; text-style: bold; margin: 0 0 1 0; }
     StatShareScreen > #dialog-box .detail { width: 100%; }
     """
