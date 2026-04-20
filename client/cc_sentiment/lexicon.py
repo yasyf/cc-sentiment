@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import warnings
 from typing import ClassVar
 
 import anyio.to_thread
-from afinn import Afinn
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", SyntaxWarning)
+    from afinn import Afinn
 
 
 class Lexicon:
