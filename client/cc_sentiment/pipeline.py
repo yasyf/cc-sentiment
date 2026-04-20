@@ -36,7 +36,6 @@ SNIPPET_FENCED_CODE = re.compile(r"```.*?```", re.DOTALL)
 SNIPPET_INLINE_CODE = re.compile(r"`[^`]*`")
 SNIPPET_LONG_PATH = re.compile(r"\S{40,}")
 SNIPPET_WHITESPACE = re.compile(r"\s+")
-SNIPPET_MAX_LEN = 80
 STREAM_CHUNK_SIZE = 16
 
 
@@ -131,10 +130,7 @@ class Pipeline:
             line for line in stripped.splitlines() if not line.lstrip().startswith(">")
         )
         stripped = SNIPPET_LONG_PATH.sub(" ", stripped)
-        cleaned = SNIPPET_WHITESPACE.sub(" ", stripped).strip()
-        if not cleaned:
-            return ""
-        return cleaned[:SNIPPET_MAX_LEN - 1] + "…" if len(cleaned) > SNIPPET_MAX_LEN else cleaned
+        return SNIPPET_WHITESPACE.sub(" ", stripped).strip()
 
     @classmethod
     def snippet_for(cls, bucket: ConversationBucket, score: int) -> str:
