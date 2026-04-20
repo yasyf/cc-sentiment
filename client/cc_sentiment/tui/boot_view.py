@@ -54,6 +54,7 @@ class EngineBootView:
         "ridiculous", "absurd", "bug", "crash", "hang", "freeze", "slow",
         "dumb", "worst", "trash", "stupid", "idiotic", "insane", "infuriating",
         "painful", "mistake", "regression", "flaky", "impossible", "bad",
+        "stop", "halt", "quit", "guess", "guessing",
     })
     POSITIVE_LEMMAS: ClassVar[frozenset[str]] = frozenset({
         "perfect", "great", "nice", "awesome", "exactly", "beautiful", "love",
@@ -62,10 +63,12 @@ class EngineBootView:
         "smooth", "clean", "elegant", "clever", "neat", "sweet", "magic",
         "win", "work", "correct", "solve", "fix", "done", "ship",
         "lovely", "crisp", "tight", "solid",
+        "continue", "proceed", "resume",
     })
     PROFANITY_TOKENS: ClassVar[frozenset[str]] = frozenset({
         "fuck", "shit", "damn", "hell", "crap", "bastard", "bitch",
         "piss", "ass", "asshole", "bollocks", "bullshit", "dammit", "goddamn",
+        "fucker", "motherfucker",
     })
     NEGATION_TOKENS: ClassVar[frozenset[str]] = frozenset({
         "not", "no", "never", "nothing", "hardly", "barely",
@@ -124,10 +127,8 @@ class EngineBootView:
         tokens = list(nlp(full))
         candidates = cls.collect_candidates(full, tokens, score)
         if (anchor := cls.pick_anchor(candidates)) is None:
-            if (anchor := cls.fallback_anchor(tokens, score)) is None:
+            if (anchor := cls.fallback_anchor(tokens)) is None:
                 return cls.prefix_highlight(full, width, score)
-            if anchor.color:
-                candidates = [anchor]
         return cls.apply_styles(cls.slice_window(full, anchor, width), candidates)
 
     @classmethod
@@ -174,7 +175,7 @@ class EngineBootView:
 
     @classmethod
     def fallback_anchor(
-        cls, tokens: list[spacy.tokens.Token], score: int,
+        cls, tokens: list[spacy.tokens.Token],
     ) -> HighlightSpan | None:
         eligible = [
             t for t in tokens
@@ -185,14 +186,7 @@ class EngineBootView:
         if not eligible:
             return None
         tok = max(eligible, key=lambda t: len(t.text))
-        match score:
-            case 3:
-                color = ""
-            case s if s <= 2:
-                color = "red"
-            case _:
-                color = "green"
-        return HighlightSpan(tok.idx, tok.idx + len(tok.text), color, priority=1)
+        return HighlightSpan(tok.idx, tok.idx + len(tok.text), "", priority=1)
 
     @classmethod
     def slice_window(

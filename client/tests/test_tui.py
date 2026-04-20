@@ -1209,22 +1209,18 @@ def test_fallback_anchor_picks_longest_content_word():
         FakeToken(idx=16, text="it", pos_="PRON", lemma_="it"),
         FakeToken(idx=19, text="goes", pos_="VERB", lemma_="go"),
     ]
-    anchor = EngineBootView.fallback_anchor(tokens, score=2)
+    anchor = EngineBootView.fallback_anchor(tokens)
     assert anchor is not None
     assert (anchor.start, anchor.end) == (5, 15)
-    assert anchor.color == "red"
+    assert anchor.color == ""
     assert anchor.priority == 1
 
 
-def test_fallback_anchor_colors_by_score_polarity():
+def test_fallback_anchor_never_colors_by_score():
     tokens = [FakeToken(idx=0, text="thing", pos_="NOUN", lemma_="thing")]
-    red = EngineBootView.fallback_anchor(tokens, score=1)
-    green = EngineBootView.fallback_anchor(tokens, score=4)
-    neutral = EngineBootView.fallback_anchor(tokens, score=3)
-    assert red is not None and green is not None and neutral is not None
-    assert red.color == "red"
-    assert green.color == "green"
-    assert neutral.color == ""
+    anchor = EngineBootView.fallback_anchor(tokens)
+    assert anchor is not None
+    assert anchor.color == ""
 
 
 def test_fallback_anchor_returns_none_when_no_eligible_token():
@@ -1233,7 +1229,7 @@ def test_fallback_anchor_returns_none_when_no_eligible_token():
         FakeToken(idx=3, text="a", pos_="DET", lemma_="a"),
         FakeToken(idx=5, text="42", pos_="NUM", lemma_="42"),
     ]
-    assert EngineBootView.fallback_anchor(tokens, score=2) is None
+    assert EngineBootView.fallback_anchor(tokens) is None
 
 
 def test_windowed_highlight_prefix_fallback_applies_frustration_regex():
@@ -1274,22 +1270,26 @@ def test_windowed_highlight_anchors_on_profanity_past_prefix(real_nlp):
     assert any(str(s.style) == "red" for s in text.spans)
 
 
-def test_windowed_highlight_fallback_colors_neutral_long_message(real_nlp):
+def test_windowed_highlight_leaves_neutral_message_uncolored(real_nlp):
     full = (
         "keep monitoring it as it goes and give me an updated ETA for "
         "the server deployment so we can plan the rest of the launch"
     )
-    text = EngineBootView.windowed_highlight(full, score=4)
+    for score in (1, 2, 3, 4, 5):
+        text = EngineBootView.windowed_highlight(full, score=score)
+        assert not list(text.spans), f"score={score} produced spans {list(text.spans)}"
+
+
+def test_windowed_highlight_colors_stop_red_even_in_positive_bucket(real_nlp):
+    text = EngineBootView.windowed_highlight("STOP GUESSING", score=4)
+    assert any(str(s.style) == "red" for s in text.spans)
+    assert not any(str(s.style) == "green" for s in text.spans)
+
+
+def test_windowed_highlight_colors_continue_green_even_in_negative_bucket(real_nlp):
+    text = EngineBootView.windowed_highlight("Continue from where you left off.", score=2)
     assert any(str(s.style) == "green" for s in text.spans)
-
-
-def test_windowed_highlight_leaves_score_three_uncolored_when_neutral(real_nlp):
-    full = (
-        "keep monitoring it as it goes and give me an updated ETA for "
-        "the server deployment so we can plan the rest of the launch"
-    )
-    text = EngineBootView.windowed_highlight(full, score=3)
-    assert not list(text.spans)
+    assert not any(str(s.style) == "red" for s in text.spans)
 
 
 STAT = MyStat(
