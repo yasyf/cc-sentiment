@@ -29,6 +29,7 @@ from cc_sentiment.daemon import LaunchAgent
 from cc_sentiment.engines import (
     OMLX_UVX_SPEC,
     ClaudeCLIEngine,
+    ClaudeUnavailable,
     EngineFactory,
     InferenceEngine,
 )
@@ -426,9 +427,9 @@ class CCSentimentApp(App[None]):
         self._set_boot_status("Choosing local engine...")
         try:
             engine = await anyio.to_thread.run_sync(EngineFactory.resolve, None)
-        except RuntimeError as e:
+        except ClaudeUnavailable as e:
             await self._dismiss_boot_screen()
-            await self.push_screen_wait(PlatformErrorScreen(str(e)))
+            await self.push_screen_wait(PlatformErrorScreen(e.status))
             self.exit()
             return
         self._set_debug(engine_name=engine)

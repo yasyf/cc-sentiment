@@ -13,6 +13,10 @@ import pytest
 from cc_sentiment.engines import (
     NOOP_PROGRESS,
     ClaudeCLIEngine,
+    ClaudeNotAuthenticated,
+    ClaudeNotInstalled,
+    ClaudeReady,
+    ClaudeUnavailable,
     EngineFactory,
     FrustrationFilter,
 )
@@ -260,27 +264,28 @@ class TestEstimateClaudeCost:
         )
 
 
-class TestClaudeCliAvailable:
-    def test_false_when_binary_missing(self) -> None:
-        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value=None):
-            assert ClaudeCLIEngine.is_available() is False
+class TestClaudeCliStatus:
+    def test_not_installed_with_brew(self) -> None:
+        def which(name: str) -> str | None:
+            return "/opt/homebrew/bin/brew" if name == "brew" else None
+        with patch("cc_sentiment.engines.claude_cli.shutil.which", side_effect=which):
+            assert ClaudeCLIEngine.check_status() == ClaudeNotInstalled(brew_available=True)
 
-    def test_true_when_auth_status_zero(self) -> None:
+    def test_not_installed_without_brew(self) -> None:
+        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value=None):
+            assert ClaudeCLIEngine.check_status() == ClaudeNotInstalled(brew_available=False)
+
+    def test_ready_when_auth_status_zero(self) -> None:
         completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"), \
              patch("cc_sentiment.engines.claude_cli.subprocess.run", return_value=completed):
-            assert ClaudeCLIEngine.is_available() is True
+            assert ClaudeCLIEngine.check_status() == ClaudeReady()
 
-    def test_false_when_auth_status_nonzero(self) -> None:
+    def test_not_authenticated_when_auth_status_nonzero(self) -> None:
         completed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="not logged in")
         with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"), \
              patch("cc_sentiment.engines.claude_cli.subprocess.run", return_value=completed):
-            assert ClaudeCLIEngine.is_available() is False
-
-    def test_false_on_timeout(self) -> None:
-        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"), \
-             patch("cc_sentiment.engines.claude_cli.subprocess.run", side_effect=subprocess.TimeoutExpired("claude", 10)):
-            assert ClaudeCLIEngine.is_available() is False
+            assert ClaudeCLIEngine.check_status() == ClaudeNotAuthenticated()
 
 
 class TestDefaultEngine:
@@ -300,12 +305,31 @@ class TestDefaultEngine:
             assert EngineFactory.default() == "claude"
 
 
-class TestClaudeCLIEngine:
-    def test_init_raises_without_claude_binary(self) -> None:
-        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value=None), \
-             pytest.raises(RuntimeError, match="claude.*not found"):
-            ClaudeCLIEngine(model="claude-haiku-4-5")
+class TestResolveEngine:
+    def test_non_claude_skips_status_check(self) -> None:
+        with patch.object(ClaudeCLIEngine, "check_status") as m:
+            assert EngineFactory.resolve("omlx") == "omlx"
+            m.assert_not_called()
 
+    def test_claude_ready_returns_engine(self) -> None:
+        with patch.object(ClaudeCLIEngine, "check_status", return_value=ClaudeReady()):
+            assert EngineFactory.resolve("claude") == "claude"
+
+    def test_claude_not_installed_raises(self) -> None:
+        status = ClaudeNotInstalled(brew_available=True)
+        with patch.object(ClaudeCLIEngine, "check_status", return_value=status), \
+             pytest.raises(ClaudeUnavailable) as exc_info:
+            EngineFactory.resolve("claude")
+        assert exc_info.value.status == status
+
+    def test_claude_not_authenticated_raises(self) -> None:
+        with patch.object(ClaudeCLIEngine, "check_status", return_value=ClaudeNotAuthenticated()), \
+             pytest.raises(ClaudeUnavailable) as exc_info:
+            EngineFactory.resolve("claude")
+        assert exc_info.value.status == ClaudeNotAuthenticated()
+
+
+class TestClaudeCLIEngine:
     async def test_score_parses_json_response_and_tracks_cost(self) -> None:
         response = orjson.dumps({
             "type": "result",

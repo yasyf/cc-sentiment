@@ -11,9 +11,7 @@ class Dialog(ModalScreen[T]):
     DEFAULT_CSS = """
     Dialog { align: center middle; background: $surface; }
     Dialog > #dialog-box {
-        width: auto;
-        max-width: 80;
-        min-width: 50;
+        width: 72;
         height: auto;
         max-height: 24;
         border: heavy $accent;

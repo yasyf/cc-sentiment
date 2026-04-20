@@ -8,10 +8,16 @@ from functools import partial
 
 import anyio.to_thread
 
-from cc_sentiment.engines.claude_cli import ClaudeCLIEngine
+from cc_sentiment.engines.claude_cli import ClaudeCLIEngine, ClaudeReady, ClaudeStatus
 from cc_sentiment.engines.filter import FrustrationFilter
 from cc_sentiment.engines.omlx import OMLXEngine
 from cc_sentiment.engines.protocol import DEFAULT_MODEL, InferenceEngine
+
+
+class ClaudeUnavailable(Exception):
+    def __init__(self, status: ClaudeStatus) -> None:
+        super().__init__(repr(status))
+        self.status = status
 
 
 class EngineFactory:
@@ -26,15 +32,13 @@ class EngineFactory:
     @classmethod
     def resolve(cls, requested: str | None) -> str:
         engine = requested or cls.default()
-        if engine != "claude" or ClaudeCLIEngine.is_available():
+        if engine != "claude":
             return engine
-        raise RuntimeError(
-            "Can't run sentiment analysis on this platform.\n"
-            "cc-sentiment needs Apple Silicon for local inference, "
-            "or the `claude` CLI as a fallback.\n\n"
-            "Install Claude Code from https://claude.com/claude-code, "
-            "then run `claude auth login` and try again."
-        )
+        match ClaudeCLIEngine.check_status():
+            case ClaudeReady():
+                return engine
+            case status:
+                raise ClaudeUnavailable(status)
 
     @classmethod
     async def build(

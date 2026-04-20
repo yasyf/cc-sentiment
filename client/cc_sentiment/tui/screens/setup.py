@@ -46,19 +46,19 @@ from cc_sentiment.transcripts import TranscriptDiscovery
 from cc_sentiment.tui.format import TimeFormat
 from cc_sentiment.tui.screens.dialog import Dialog
 from cc_sentiment.tui.status import AutoSetup, StatusEmitter
+from cc_sentiment.tui.widgets import ButtonRow
 
 
 class SetupScreen(Dialog[bool]):
     ROUGH_BUCKETS_PER_FILE: ClassVar[int] = 6
 
     DEFAULT_CSS = Dialog.DEFAULT_CSS + """
-    SetupScreen > #dialog-box { width: auto; max-width: 70; max-height: 70%; overflow-y: auto; }
-    SetupScreen > #dialog-box Label { margin: 1 0 0 0; }
-    SetupScreen > #dialog-box .step-title { text-style: bold; color: $text; margin: 0 0 1 0; }
+    SetupScreen > #dialog-box { max-height: 90%; overflow-y: auto; }
+    SetupScreen > #dialog-box Label { width: 100%; margin: 1 0 0 0; }
+    SetupScreen > #dialog-box .step-title { width: 100%; text-style: bold; color: $text; margin: 0 0 1 0; }
     SetupScreen > #dialog-box Input { margin: 0 0 1 0; }
-    SetupScreen > #dialog-box Button { margin: 1 0 0 0; }
-    SetupScreen > #dialog-box .status { color: $text-muted; margin: 0 0 1 0; }
-    SetupScreen > #dialog-box .faq { color: $text-muted; margin: 1 0 0 0; }
+    SetupScreen > #dialog-box .status { width: 100%; color: $text-muted; margin: 0 0 1 0; }
+    SetupScreen > #dialog-box .faq { width: 100%; color: $text-muted; margin: 1 0 0 0; }
     SetupScreen > #dialog-box .error { color: $error; }
     SetupScreen > #dialog-box .success { color: $success; }
     SetupScreen > #dialog-box DataTable { height: auto; max-height: 10; margin: 0 0 1 0; }
@@ -108,8 +108,10 @@ class SetupScreen(Dialog[bool]):
             )
             yield Input(placeholder="GitHub username", id="username-input")
             yield Label("", id="username-status", classes="status")
-            yield Button("Next", id="username-next", variant="primary")
-            yield Button("I don't use GitHub", id="username-skip", variant="default")
+            yield ButtonRow(
+                Button("Next", id="username-next", variant="primary"),
+                Button("I don't use GitHub", id="username-skip", variant="default"),
+            )
 
     def compose_discovery_step(self) -> ComposeResult:
         with Vertical(id="step-discovery"):
@@ -127,8 +129,10 @@ class SetupScreen(Dialog[bool]):
                 "private. We never read or upload your private key.[/]",
                 classes="faq",
             )
-            yield Button("Next", id="discovery-next", variant="primary", disabled=True)
-            yield Button("Back", id="discovery-back", variant="default")
+            yield ButtonRow(
+                Button("Next", id="discovery-next", variant="primary", disabled=True),
+                Button("Back", id="discovery-back", variant="default"),
+            )
 
     def compose_remote_step(self) -> ComposeResult:
         with Vertical(id="step-remote"):
@@ -138,8 +142,10 @@ class SetupScreen(Dialog[bool]):
                 id="remote-status", classes="status",
             )
             yield Static("", id="remote-checks")
-            yield Button("Next", id="remote-next", variant="primary", disabled=True)
-            yield Button("Back", id="remote-back", variant="default")
+            yield ButtonRow(
+                Button("Next", id="remote-next", variant="primary", disabled=True),
+                Button("Back", id="remote-back", variant="default"),
+            )
 
     def compose_upload_step(self) -> ComposeResult:
         with Vertical(id="step-upload"):
@@ -152,9 +158,11 @@ class SetupScreen(Dialog[bool]):
             yield RadioSet(id="upload-options")
             yield Label("", id="upload-key-text", classes="key-text")
             yield Label("", id="upload-result", classes="status")
-            yield Button("Link my key", id="upload-go", variant="primary", disabled=True)
-            yield Button("I'll do it myself", id="upload-skip", variant="default")
-            yield Button("Back", id="upload-back", variant="default")
+            yield ButtonRow(
+                Button("Link my key", id="upload-go", variant="primary", disabled=True),
+                Button("I'll do it myself", id="upload-skip", variant="default"),
+                Button("Back", id="upload-back", variant="default"),
+            )
 
     def compose_done_step(self) -> ComposeResult:
         with Vertical(id="step-done"):

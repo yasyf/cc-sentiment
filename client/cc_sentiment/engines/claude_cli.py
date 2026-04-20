@@ -4,6 +4,7 @@ import asyncio
 import shutil
 import subprocess
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import orjson
 
@@ -11,6 +12,24 @@ from cc_sentiment.models import ConversationBucket, SentimentScore
 from cc_sentiment.text import extract_score, format_conversation
 
 from cc_sentiment.engines.protocol import NOOP_PROGRESS, SYSTEM_PROMPT
+
+
+@dataclass(frozen=True)
+class ClaudeReady:
+    pass
+
+
+@dataclass(frozen=True)
+class ClaudeNotInstalled:
+    brew_available: bool
+
+
+@dataclass(frozen=True)
+class ClaudeNotAuthenticated:
+    pass
+
+
+ClaudeStatus = ClaudeReady | ClaudeNotInstalled | ClaudeNotAuthenticated
 
 
 class ClaudeCLIEngine:
@@ -22,10 +41,6 @@ class ClaudeCLIEngine:
     CONCURRENCY = 4
 
     def __init__(self, model: str) -> None:
-        if not shutil.which("claude"):
-            raise RuntimeError(
-                "`claude` CLI not found. Install Claude Code from https://claude.com/claude-code"
-            )
         self.model = model
         self.system_prompt = SYSTEM_PROMPT
         self.total_cost_usd = 0.0
@@ -40,17 +55,16 @@ class ClaudeCLIEngine:
         ) / 1_000_000
 
     @staticmethod
-    def is_available() -> bool:
+    def check_status() -> ClaudeStatus:
         if not shutil.which("claude"):
-            return False
-        try:
-            result = subprocess.run(
-                ["claude", "auth", "status"],
-                capture_output=True, text=True, timeout=10, check=False,
-            )
-        except subprocess.TimeoutExpired:
-            return False
-        return result.returncode == 0
+            return ClaudeNotInstalled(brew_available=bool(shutil.which("brew")))
+        result = subprocess.run(
+            ["claude", "auth", "status"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        if result.returncode == 0:
+            return ClaudeReady()
+        return ClaudeNotAuthenticated()
 
     async def score_one(self, bucket: ConversationBucket) -> SentimentScore:
         proc = await asyncio.create_subprocess_exec(

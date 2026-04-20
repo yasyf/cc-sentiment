@@ -12,6 +12,12 @@ from textual.widgets import Button, ContentSwitcher, DataTable, Input, Label, St
 from cc_sentiment.models import AppState, ContributorId, GistConfig, GPGConfig, MyStat, SSHConfig
 from cc_sentiment.repo import Repository
 from cc_sentiment.signing import GPGKeyInfo, SSHKeyInfo
+from cc_sentiment.engines import (
+    ClaudeNotAuthenticated,
+    ClaudeNotInstalled,
+    ClaudeStatus,
+    ClaudeUnavailable,
+)
 from cc_sentiment.tui import CCSentimentApp
 from cc_sentiment.tui.moments_view import MomentsView
 from cc_sentiment.tui.format import TimeFormat
@@ -31,7 +37,7 @@ from cc_sentiment.tui.stages import (
     Stage,
     Uploading,
 )
-from cc_sentiment.tui.widgets import HourlyChart
+from cc_sentiment.tui.widgets import CommandBox, HourlyChart
 from cc_sentiment.upload import (
     DASHBOARD_URL,
     AuthOk,
@@ -454,28 +460,47 @@ async def test_cost_review_escape_dismisses_false():
 
 
 class ErrorHarness(App[None]):
-    def __init__(self, message: str) -> None:
+    def __init__(self, status: ClaudeStatus) -> None:
         super().__init__()
-        self.message = message
+        self.status = status
         self.dismissed: object = "not-yet"
 
     def on_mount(self) -> None:
-        self.push_screen(PlatformErrorScreen(self.message), self._capture)
+        self.push_screen(PlatformErrorScreen(self.status), self._capture)
 
     def _capture(self, result: object) -> None:
         self.dismissed = result
 
 
-async def test_platform_error_renders_message():
-    harness = ErrorHarness("Can't run on this platform")
+async def test_platform_error_not_installed_shows_brew_install():
+    harness = ErrorHarness(ClaudeNotInstalled(brew_available=True))
     async with harness.run_test() as pilot:
         await pilot.pause()
-        text = " ".join(str(lbl.content) for lbl in pilot.app.screen.query(Label))
-        assert "Can't run on this platform" in text
+        boxes = pilot.app.screen.query(CommandBox)
+        commands = [b.command for b in boxes]
+        assert "brew install --cask claude-code" in commands
+        assert "claude auth login" in commands
+
+
+async def test_platform_error_not_installed_without_brew_shows_curl():
+    harness = ErrorHarness(ClaudeNotInstalled(brew_available=False))
+    async with harness.run_test() as pilot:
+        await pilot.pause()
+        commands = [b.command for b in pilot.app.screen.query(CommandBox)]
+        assert any("install.sh" in c for c in commands)
+        assert "claude auth login" in commands
+
+
+async def test_platform_error_not_authenticated_shows_auth_only():
+    harness = ErrorHarness(ClaudeNotAuthenticated())
+    async with harness.run_test() as pilot:
+        await pilot.pause()
+        commands = [b.command for b in pilot.app.screen.query(CommandBox)]
+        assert commands == ["claude auth login"]
 
 
 async def test_platform_error_quit_dismisses():
-    harness = ErrorHarness("error")
+    harness = ErrorHarness(ClaudeNotAuthenticated())
     async with harness.run_test() as pilot:
         await pilot.pause()
         await pilot.click("#quit-btn")
@@ -486,8 +511,10 @@ async def test_platform_error_quit_dismisses():
 async def test_ccsentiment_app_engine_failure_shows_error_and_exits(tmp_path: Path):
     state = AppState()
     db_path = tmp_path / "records.db"
-    with patch("cc_sentiment.tui.app.EngineFactory.resolve", side_effect=RuntimeError("no engine")), \
-         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
+    with patch(
+        "cc_sentiment.tui.app.EngineFactory.resolve",
+        side_effect=ClaudeUnavailable(ClaudeNotInstalled(brew_available=True)),
+    ), patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
@@ -499,8 +526,10 @@ async def test_ccsentiment_app_debug_mode_composes(tmp_path: Path):
 
     state = AppState()
     db_path = tmp_path / "records.db"
-    with patch("cc_sentiment.tui.app.EngineFactory.resolve", side_effect=RuntimeError("no engine")), \
-         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
+    with patch(
+        "cc_sentiment.tui.app.EngineFactory.resolve",
+        side_effect=ClaudeUnavailable(ClaudeNotInstalled(brew_available=True)),
+    ), patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path, debug=True)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.1)

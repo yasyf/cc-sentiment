@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.widgets import Button, Label, Static
 
 from cc_sentiment.engines import ClaudeCLIEngine
 from cc_sentiment.tui.screens.dialog import Dialog
+from cc_sentiment.tui.widgets import ButtonRow
 
 
 class CostReviewScreen(Dialog[bool]):
@@ -42,9 +43,10 @@ class CostReviewScreen(Dialog[bool]):
                 "Your conversation text still leaves the machine only as part of this API call.",
                 classes="detail",
             )
-            with Horizontal():
-                yield Button("Continue", id="cost-yes", variant="primary")
-                yield Button("Cancel", id="cost-no", variant="default")
+            yield ButtonRow(
+                Button("Continue", id="cost-yes", variant="primary"),
+                Button("Cancel", id="cost-no", variant="default"),
+            )
 
     @on(Button.Pressed, "#cost-yes")
     def on_confirm(self) -> None:

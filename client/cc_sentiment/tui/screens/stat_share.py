@@ -11,7 +11,7 @@ import anyio.to_thread
 import httpx
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.widgets import Button, Label, Static
 
 from cc_sentiment.models import GistConfig, GPGConfig, MyStat, SSHConfig
@@ -19,6 +19,7 @@ from cc_sentiment.upload import Uploader
 
 from cc_sentiment.tui.screens.dialog import Dialog
 from cc_sentiment.tui.view import CtaState
+from cc_sentiment.tui.widgets import ButtonRow
 
 PREPARING_LABEL = "Preparing share…"
 MINT_FAILED_LABEL = "Share unavailable"
@@ -88,16 +89,13 @@ class CardPoller:
 class StatShareScreen(Dialog[None]):
     DEFAULT_CSS = Dialog.DEFAULT_CSS + """
     StatShareScreen { background: $background 60%; }
-    StatShareScreen > #dialog-box { max-width: 64; }
     StatShareScreen > #dialog-box .title { text-align: center; }
     StatShareScreen > #dialog-box .stat {
         width: 100%; color: $accent; text-style: bold;
         text-align: center; margin: 0 0 1 0;
     }
     StatShareScreen > #dialog-box .detail { width: 100%; text-align: center; }
-    StatShareScreen > #dialog-box Horizontal {
-        width: 100%; height: auto; align-horizontal: center;
-    }
+    StatShareScreen > #dialog-box ButtonRow { align-horizontal: center; }
     """
 
     BINDINGS = [("escape", "skip", "Skip")]
@@ -112,9 +110,10 @@ class StatShareScreen(Dialog[None]):
             yield Label(CtaState.SNAPSHOT_TITLE, classes="title")
             yield Static(CtaState.tweet_title(self.stat), classes="stat")
             yield Static(CtaState.TWEET_DETAIL, classes="detail")
-            with Horizontal():
-                yield Button(PREPARING_LABEL, id="stat-tweet", variant="primary", disabled=True)
-                yield Button("Not now", id="stat-skip", variant="default")
+            yield ButtonRow(
+                Button(PREPARING_LABEL, id="stat-tweet", variant="primary", disabled=True),
+                Button("Not now", id="stat-skip", variant="default"),
+            )
 
     def on_mount(self) -> None:
         self.share_id: str | None = None
