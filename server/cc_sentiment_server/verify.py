@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import re
 import subprocess
@@ -8,6 +9,7 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Any
 
+import anyio.to_thread
 import gnupg
 import httpx
 
@@ -148,6 +150,48 @@ class Verifier:
             return await self.check_gpg_signature(fresh_armor, payload, signature)
 
         return False
+
+    async def resolve_avatar_url(self, contributor_type: str, contributor_id: str) -> str | None:
+        match contributor_type:
+            case "github" | "gist":
+                return f"https://github.com/{contributor_id}.png?size=400"
+            case "gpg":
+                armor: str = await self.get_or_fetch(
+                    f"gpg-openpgp:{contributor_id}", self.fetch_openpgp_key, contributor_id,
+                )
+                if not armor:
+                    return None
+                email = await anyio.to_thread.run_sync(self.extract_primary_email, armor)
+                if email is None:
+                    return None
+                digest = hashlib.md5(email.encode()).hexdigest()
+                url: str = await self.get_or_fetch(
+                    f"gravatar:{digest}", self.fetch_gravatar_url, digest,
+                )
+                return url or None
+            case _:
+                raise ValueError(f"Unknown contributor type: {contributor_type!r}")
+
+    async def fetch_gravatar_url(self, digest: str) -> str:
+        url = f"https://www.gravatar.com/avatar/{digest}?s=400&d=404"
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            response = await client.head(url, timeout=5.0)
+        return url if response.status_code == 200 else ""
+
+    @staticmethod
+    def extract_primary_email(armor: str) -> str | None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            g = gnupg.GPG(gnupghome=tmpdir)
+            g.import_keys(armor)
+            return next(
+                (
+                    m.group(1).strip().lower()
+                    for key in g.list_keys()
+                    for uid in key.get("uids", [])
+                    if (m := re.search(r"<([^>]+)>", uid))
+                ),
+                None,
+            )
 
     def github_headers(self) -> dict[str, str]:
         token = os.environ.get("GITHUB_TOKEN")

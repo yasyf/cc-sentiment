@@ -184,6 +184,7 @@ class ShareRecord(BaseModel):
     id: str = Field(min_length=1)
     contributor_type: Literal["github", "gpg", "gist"]
     contributor_id: str = Field(min_length=1)
+    avatar_url: str | None
     created_at: datetime
 
 

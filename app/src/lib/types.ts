@@ -64,6 +64,7 @@ export interface ShareRecord {
 	id: string;
 	contributor_type: ContributorType;
 	contributor_id: string;
+	avatar_url: string | null;
 	created_at: string;
 }
 

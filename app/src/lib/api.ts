@@ -8,6 +8,7 @@ const ShareRecordSchema = z.object({
 	id: z.string(),
 	contributor_type: z.enum(['github', 'gpg', 'gist']),
 	contributor_id: z.string(),
+	avatar_url: z.string().nullable(),
 	created_at: z.string(),
 });
 

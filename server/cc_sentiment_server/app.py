@@ -290,10 +290,12 @@ def create_app(
             if body.contributor_type == "gist"
             else body.contributor_id
         )
+        avatar_url = await verifier.resolve_avatar_url(body.contributor_type, db_contributor_id)
         record = ShareRecord(
             id=secrets.token_urlsafe(6),
             contributor_type=body.contributor_type,
             contributor_id=db_contributor_id,
+            avatar_url=avatar_url,
             created_at=now,
         )
         await share_store.put(record)

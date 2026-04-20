@@ -26,16 +26,12 @@ export const GET: RequestHandler = async ({ fetch, params }) => {
 	addCacheTag(`share:${record.id}`);
 
 	const stat = await fetchMyStat(fetch, record.contributor_id);
-	const canShowAvatar =
-		(record.contributor_type === 'github' || record.contributor_type === 'gist') && stat;
-
-	if (canShowAvatar) return personalCard(record.contributor_id, stat.text);
-	return aggregateCard(fetch);
+	if (!stat) return aggregateCard(fetch);
+	if (record.avatar_url) return personalCardWithPhoto(record.contributor_id, record.avatar_url, stat.text);
+	return personalCardNoPhoto(record.contributor_id, stat.text);
 };
 
-function personalCard(contributorId: string, text: string): ImageResponse {
-	const avatarUrl = `https://github.com/${encodeURIComponent(contributorId)}.png?size=400`;
-
+function personalCardWithPhoto(contributorId: string, avatarUrl: string, text: string): ImageResponse {
 	const html = {
 		type: 'div',
 		props: {
@@ -103,6 +99,65 @@ function personalCard(contributorId: string, text: string): ImageResponse {
 								},
 							},
 						],
+					},
+				},
+			],
+		},
+	};
+
+	return new ImageResponse(html, { width: WIDTH, height: HEIGHT });
+}
+
+function personalCardNoPhoto(contributorId: string, text: string): ImageResponse {
+	const html = {
+		type: 'div',
+		props: {
+			style: {
+				display: 'flex',
+				flexDirection: 'column',
+				justifyContent: 'center',
+				alignItems: 'center',
+				textAlign: 'center',
+				width: '100%',
+				height: '100%',
+				padding: '60px 80px',
+				backgroundColor: '#fafafa',
+				fontFamily: 'Inter, system-ui, sans-serif',
+			},
+			children: [
+				{
+					type: 'span',
+					props: {
+						style: {
+							fontSize: '28px',
+							color: '#71717a',
+							letterSpacing: '0.02em',
+						},
+						children: `@${contributorId}`,
+					},
+				},
+				{
+					type: 'div',
+					props: {
+						style: {
+							marginTop: '32px',
+							fontSize: '64px',
+							fontWeight: 700,
+							color: '#6366f1',
+							lineHeight: 1.15,
+						},
+						children: `is ${text}.`,
+					},
+				},
+				{
+					type: 'div',
+					props: {
+						style: {
+							marginTop: '48px',
+							fontSize: '22px',
+							color: '#71717a',
+						},
+						children: 'cc-sentiment · sentiments.cc',
 					},
 				},
 			],

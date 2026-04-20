@@ -44,6 +44,7 @@ AUTH_HEADER: dict = {"Authorization": "Bearer test-token"}
 def verifier() -> AsyncMock:
     v = AsyncMock()
     v.verify_signature.return_value = True
+    v.resolve_avatar_url.return_value = "https://github.com/octocat.png?size=400"
     return v
 
 
@@ -471,6 +472,39 @@ class TestShare:
         assert record["contributor_id"] == "octocat"
 
     @pytest.mark.asyncio
+    async def test_mint_gpg_with_gravatar(
+        self, client: httpx.AsyncClient, verifier: AsyncMock
+    ) -> None:
+        gravatar = "https://www.gravatar.com/avatar/aabbccddeeff?s=400&d=404"
+        verifier.resolve_avatar_url.return_value = gravatar
+
+        response = await client.post("/share", json=share_payload(
+            contributor_type="gpg",
+            contributor_id="ABCDEF0123456789",
+        ))
+        assert response.status_code == 200
+
+        fetched = await client.get(f"/share/{response.json()['id']}")
+        assert fetched.status_code == 200
+        assert fetched.json()["avatar_url"] == gravatar
+
+    @pytest.mark.asyncio
+    async def test_mint_gpg_without_gravatar(
+        self, client: httpx.AsyncClient, verifier: AsyncMock
+    ) -> None:
+        verifier.resolve_avatar_url.return_value = None
+
+        response = await client.post("/share", json=share_payload(
+            contributor_type="gpg",
+            contributor_id="ABCDEF0123456789",
+        ))
+        assert response.status_code == 200
+
+        fetched = await client.get(f"/share/{response.json()['id']}")
+        assert fetched.status_code == 200
+        assert fetched.json()["avatar_url"] is None
+
+    @pytest.mark.asyncio
     async def test_get_share_happy_path(self, client: httpx.AsyncClient) -> None:
         mint = await client.post("/share", json=share_payload())
         share_id = mint.json()["id"]
@@ -483,6 +517,7 @@ class TestShare:
         assert record["id"] == share_id
         assert record["contributor_type"] == "github"
         assert record["contributor_id"] == "octocat"
+        assert record["avatar_url"] == "https://github.com/octocat.png?size=400"
         assert record["created_at"]
 
     @pytest.mark.asyncio
