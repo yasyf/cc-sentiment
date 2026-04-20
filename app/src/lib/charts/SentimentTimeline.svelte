@@ -15,6 +15,7 @@
 		filterWindow,
 		dayBoundaryAnnotations,
 		dayPartBandAnnotations,
+		dayPartRange,
 		dayPartFor,
 		DAY_PART_EMOJI
 	} from '$lib/bucket.js';
@@ -26,19 +27,24 @@
 
 	const DISPLAY_TZ = 'America/Los_Angeles';
 
-	const buckets = $derived.by(() => {
-		if (range === 'week') {
-			const all = bucketByDayPart(raw, DISPLAY_TZ);
-			const filled = fillMissingDayParts(all, 7, DISPLAY_TZ);
-			const smoothed = smoothSeries(filled, (b) => b.avg_score, { halfWindow: 1, priorWeight: 1.0, priorValue: 3 });
-			const merged = filled.map((b, i) => ({ ...b, smoothed_score: smoothed[i] }));
-			return filterWindow(merged, 7, DISPLAY_TZ);
-		}
+	const weekBuckets = $derived.by(() => {
+		if (range !== 'week') return [];
+		const all = bucketByDayPart(raw, DISPLAY_TZ);
+		const filled = fillMissingDayParts(all, 7, DISPLAY_TZ);
+		const smoothed = smoothSeries(filled, (b) => b.avg_score, { halfWindow: 1, priorWeight: 1.0, priorValue: 3 });
+		const merged = filled.map((b, i) => ({ ...b, smoothed_score: smoothed[i] }));
+		return filterWindow(merged, 7, DISPLAY_TZ);
+	});
+
+	const monthBuckets = $derived.by(() => {
+		if (range !== 'month') return [];
 		const all = bucketByDay(raw, DISPLAY_TZ);
 		const smoothed = smoothSeries(all, (b) => b.avg_score, { halfWindow: 2, priorWeight: 1.0, priorValue: 3 });
 		const merged = all.map((b, i) => ({ ...b, smoothed_score: smoothed[i], label: '' }));
 		return filterWindow(merged, 30, DISPLAY_TZ);
 	});
+
+	const buckets = $derived(range === 'week' ? weekBuckets : monthBuckets);
 
 	const timeRange = $derived.by(() => {
 		if (buckets.length === 0) return { min: 0, max: 0 };
@@ -48,11 +54,17 @@
 		};
 	});
 
+	const axisRange = $derived.by(() => {
+		const bounds = dayPartRange(weekBuckets, DISPLAY_TZ);
+		if (!bounds) return null;
+		return { min: new Date(bounds.startISO).getTime(), max: new Date(bounds.endISO).getTime() };
+	});
+
 	const annotations = $derived.by(() => {
 		const out: Record<string, object> = {};
 		if (range === 'week') {
-			Object.assign(out, dayPartBandAnnotations(buckets, DISPLAY_TZ));
-			Object.assign(out, dayBoundaryAnnotations(buckets, DISPLAY_TZ));
+			Object.assign(out, dayPartBandAnnotations(weekBuckets, DISPLAY_TZ));
+			Object.assign(out, dayBoundaryAnnotations(weekBuckets, DISPLAY_TZ));
 		}
 		for (const evt of EVENTS) {
 			const t = new Date(evt.date).getTime();
@@ -124,6 +136,7 @@
 		scales: {
 			x: {
 				type: 'time' as const,
+				...(axisRange ? { min: axisRange.min, max: axisRange.max } : {}),
 				time: {
 					unit: (range === 'week' ? 'hour' : 'day') as 'hour' | 'day',
 					tooltipFormat: range === 'week' ? 'LLL d, yyyy · h a' : 'LLL d, yyyy'

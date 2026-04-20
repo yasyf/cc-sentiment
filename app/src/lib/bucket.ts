@@ -304,10 +304,40 @@ export function dayBoundaryAnnotations(points: { time: string }[], zone: string)
 	return annotations;
 }
 
-export function dayPartBandAnnotations(points: { time: string }[], zone: string): Record<string, object> {
-	if (points.length === 0) return {};
-	const first = DateTime.fromISO(points[0].time, { zone });
-	const last = DateTime.fromISO(points[points.length - 1].time, { zone });
+function partBoundsOn(date: DateTime, part: DayPart): { start: DateTime; end: DateTime } {
+	const start = date.set({ hour: part.start, minute: 0, second: 0, millisecond: 0 });
+	const end = part.start < part.end
+		? date.set({ hour: part.end, minute: 0, second: 0, millisecond: 0 })
+		: date.plus({ days: 1 }).set({ hour: part.end, minute: 0, second: 0, millisecond: 0 });
+	return { start, end };
+}
+
+function partFor(key: DayPartKey): DayPart {
+	const part = DAY_PARTS.find((p) => p.key === key);
+	if (!part) throw new Error(`unknown day part key: ${key}`);
+	return part;
+}
+
+export function dayPartRange(buckets: readonly DayPartBucket[], zone: string): { startISO: string; endISO: string } | null {
+	if (buckets.length === 0) return null;
+	const firstBucket = buckets[0];
+	const lastBucket = buckets[buckets.length - 1];
+	const firstDate = DateTime.fromISO(firstBucket.date, { zone });
+	const lastDate = DateTime.fromISO(lastBucket.date, { zone });
+	if (!firstDate.isValid || !lastDate.isValid) return null;
+	const { start } = partBoundsOn(firstDate, partFor(firstBucket.part));
+	const { end } = partBoundsOn(lastDate, partFor(lastBucket.part));
+	const startISO = start.toISO();
+	const endISO = end.toISO();
+	if (!startISO || !endISO) return null;
+	return { startISO, endISO };
+}
+
+export function dayPartBandAnnotations(buckets: readonly DayPartBucket[], zone: string): Record<string, object> {
+	const range = dayPartRange(buckets, zone);
+	if (!range) return {};
+	const first = DateTime.fromISO(range.startISO, { zone });
+	const last = DateTime.fromISO(range.endISO, { zone });
 	if (!first.isValid || !last.isValid) return {};
 	const annotations: Record<string, object> = {};
 	let cursor = first.startOf('day').minus({ days: 1 });
@@ -319,10 +349,7 @@ export function dayPartBandAnnotations(points: { time: string }[], zone: string)
 			continue;
 		}
 		for (const part of DAY_PARTS) {
-			const xMin = cursor.set({ hour: part.start, minute: 0, second: 0, millisecond: 0 });
-			const xMax = part.start < part.end
-				? cursor.set({ hour: part.end, minute: 0, second: 0, millisecond: 0 })
-				: cursor.plus({ days: 1 }).set({ hour: part.end, minute: 0, second: 0, millisecond: 0 });
+			const { start: xMin, end: xMax } = partBoundsOn(cursor, part);
 			const clampedMin = xMin < first ? first : xMin;
 			const clampedMax = xMax > last ? last : xMax;
 			if (clampedMax <= clampedMin) continue;
