@@ -53,7 +53,6 @@ class SetupScreen(Dialog[bool]):
     ROUGH_BUCKETS_PER_FILE: ClassVar[int] = 6
 
     DEFAULT_CSS = Dialog.DEFAULT_CSS + """
-    SetupScreen > #dialog-box { max-height: 90%; overflow-y: auto; }
     SetupScreen > #dialog-box Label { width: 100%; margin: 1 0 0 0; }
     SetupScreen > #dialog-box .step-title { width: 100%; text-style: bold; color: $text; margin: 0 0 1 0; }
     SetupScreen > #dialog-box Input { margin: 0 0 1 0; }
@@ -61,9 +60,9 @@ class SetupScreen(Dialog[bool]):
     SetupScreen > #dialog-box .faq { width: 100%; color: $text-muted; margin: 1 0 0 0; }
     SetupScreen > #dialog-box .error { color: $error; }
     SetupScreen > #dialog-box .success { color: $success; }
-    SetupScreen > #dialog-box DataTable { height: auto; max-height: 10; margin: 0 0 1 0; }
-    SetupScreen > #dialog-box RadioSet { margin: 0 0 1 0; }
-    SetupScreen > #dialog-box .key-text { color: $text-muted; margin: 0 0 1 0; max-height: 3; overflow-y: auto; }
+    SetupScreen > #dialog-box DataTable { width: 100%; height: auto; max-height: 30%; margin: 0 0 1 0; }
+    SetupScreen > #dialog-box RadioSet { width: 100%; margin: 0 0 1 0; }
+    SetupScreen > #dialog-box .key-text { width: 100%; color: $text-muted; margin: 0 0 1 0; max-height: 5; overflow-y: auto; }
     """
 
     BINDINGS = [
@@ -328,51 +327,65 @@ class SetupScreen(Dialog[bool]):
         radio = self.query_one("#key-select", RadioSet)
         status = self.query_one("#discovery-status", Label)
         no_keys = self.query_one("#no-keys-msg", Label)
+        next_btn = self.query_one("#discovery-next", Button)
 
         all_keys: list[SSHKeyInfo | GPGKeyInfo] = (
             [*ssh_keys, *gpg_keys] if self.username else list(gpg_keys)
         )
         self._discovered_keys = all_keys
+        self._generation_mode = self._pick_generation_mode()
+        self._generation_radio_index = None
+
+        if not all_keys and self._generation_mode is None:
+            status.update("No signing keys found on your machine.")
+            if not self.username:
+                no_keys.update(
+                    "Go back and enter a GitHub username, or install gpg "
+                    "([dim]brew install gnupg[/]) to use GPG."
+                )
+            else:
+                no_keys.update(
+                    "To create a signing key for cc-sentiment, install the GitHub CLI "
+                    "([dim]brew install gh[/]) or gpg ([dim]brew install gnupg[/])."
+                )
+            next_btn.disabled = True
+            return
 
         if not all_keys:
             status.update("No signing keys found on your machine.")
-            if self.username and KeyDiscovery.gh_authenticated():
-                no_keys.update(
-                    "We can make a small signing key just for cc-sentiment and save its "
-                    "public half as a gist on your GitHub. Press Next."
-                )
-                self.query_one("#discovery-next", Button).disabled = False
-                self._generation_mode = "gist"
-            elif KeyDiscovery.has_tool("gpg"):
-                no_keys.update("No problem. We'll create one for you. Just press Next.")
-                self.query_one("#discovery-next", Button).disabled = False
-                self._generation_mode = "gpg"
-            elif not self.username:
-                no_keys.update("Go back and enter a GitHub username, or install gpg (brew install gnupg) to use GPG.")
-                self._generation_mode = None
-            else:
-                no_keys.update("Install the GitHub CLI (brew install gh) to save a signing key as a gist, or run: ssh-keygen -t ed25519.")
-                self._generation_mode = None
+            no_keys.update(self._generation_prompt())
+            next_btn.disabled = False
             return
 
-        self._generation_mode = None
+        no_keys.update("")
         table.display = True
-        status.update(f"Found {len(all_keys)} key{'s' if len(all_keys) != 1 else ''} on your machine:")
-
-        if len(all_keys) == 1:
-            radio.display = False
-            self.query_one("#discovery-next", Button).disabled = False
+        if self._generation_mode:
+            hint = " Pick one, or create a new cc-sentiment key."
+        elif len(all_keys) > 1:
+            hint = " Pick one."
         else:
+            hint = ""
+        plural = "s" if len(all_keys) != 1 else ""
+        status.update(f"Found {len(all_keys)} key{plural} on your machine.{hint}")
+
+        radio_children: list[RadioButton] = []
+        for key in all_keys:
+            match key:
+                case SSHKeyInfo(path=p, algorithm=a):
+                    radio_children.append(RadioButton(f"SSH: {p.name} ({a})"))
+                case GPGKeyInfo(fpr=f, email=e):
+                    radio_children.append(RadioButton(f"GPG: {f[-8:]} ({e})"))
+        if self._generation_mode is not None:
+            radio_children.append(RadioButton("Create a new cc-sentiment key"))
+            self._generation_radio_index = len(all_keys)
+
+        if len(radio_children) > 1:
             radio.display = True
-            radio_children = []
-            for key in all_keys:
-                match key:
-                    case SSHKeyInfo(path=p, algorithm=a):
-                        radio_children.append(RadioButton(f"SSH: {p.name} ({a})"))
-                    case GPGKeyInfo(fpr=f, email=e):
-                        radio_children.append(RadioButton(f"GPG: {f[-8:]} ({e})"))
             radio.mount_all(radio_children)
-            self.query_one("#discovery-next", Button).disabled = False
+        else:
+            radio.display = False
+
+        next_btn.disabled = False
 
         for key in all_keys:
             match key:
@@ -381,24 +394,58 @@ class SetupScreen(Dialog[bool]):
                 case GPGKeyInfo(fpr=f, email=e):
                     table.add_row("GPG", f"{f[:4]} {f[4:8]} ... {f[-8:-4]} {f[-4:]}", e)
 
+    def _pick_generation_mode(self) -> str | None:
+        if self.username and KeyDiscovery.gh_authenticated():
+            return "gist"
+        if self.username and KeyDiscovery.has_tool("ssh-keygen"):
+            return "ssh"
+        if KeyDiscovery.has_tool("gpg"):
+            return "gpg"
+        return None
+
+    def _generation_prompt(self) -> str:
+        match self._generation_mode:
+            case "gist":
+                return (
+                    "We can make a small signing key just for cc-sentiment and save its "
+                    "public half as a gist on your GitHub. Press Next."
+                )
+            case "ssh":
+                return (
+                    "We'll create a small SSH key just for cc-sentiment on this machine, "
+                    "then help you paste its public half into your GitHub settings. Press Next."
+                )
+            case "gpg":
+                return "No problem. We'll create one for you. Just press Next."
+            case _:
+                return ""
+
     @on(Button.Pressed, "#discovery-back")
     def on_discovery_back(self) -> None:
         self.query_one(ContentSwitcher).current = "step-username"
 
     @on(Button.Pressed, "#discovery-next")
     def on_discovery_next(self) -> None:
-        match getattr(self, "_generation_mode", None):
-            case "gist":
-                self.generate_gist_key()
-                return
-            case "gpg":
-                self.generate_gpg_key()
-                return
+        if not self._discovered_keys:
+            self._dispatch_generation()
+            return
         radio = self.query_one("#key-select", RadioSet)
         idx = radio.pressed_index if radio.pressed_index >= 0 else 0
+        if self._generation_radio_index is not None and idx == self._generation_radio_index:
+            self._dispatch_generation()
+            return
         self.selected_key = self._discovered_keys[idx]
         self.query_one(ContentSwitcher).current = "step-remote"
         self.check_remotes()
+
+    def _dispatch_generation(self) -> None:
+        match self._generation_mode:
+            case "gist":
+                self.generate_gist_key()
+            case "ssh":
+                self.generate_managed_ssh_key()
+            case "gpg":
+                self.generate_gpg_key()
 
     @work(thread=True)
     def generate_gpg_key(self) -> None:
@@ -434,6 +481,25 @@ Expire-Date: 0
 
         self.selected_key = new_key
         self.app.call_from_thread(status.update, f"[green]Generated key: {new_key.fpr[-8:]}[/]")
+        self.app.call_from_thread(self._go_to_remote)
+
+    @work(thread=True)
+    def generate_managed_ssh_key(self) -> None:
+        status = self.query_one("#discovery-status", Label)
+        self.app.call_from_thread(status.update, "Creating a local signing key for cc-sentiment...")
+        try:
+            key_path = KeyDiscovery.generate_gist_keypair()
+        except subprocess.CalledProcessError as e:
+            err = (e.stderr.decode() if isinstance(e.stderr, bytes) else e.stderr or str(e)).strip()
+            self.app.call_from_thread(status.update, f"[red]Couldn't create the key: {err}[/]")
+            return
+        parts = key_path.with_suffix(key_path.suffix + ".pub").read_text().strip().split()
+        self.selected_key = SSHKeyInfo(
+            path=key_path,
+            algorithm=parts[0] if len(parts) >= 2 else "unknown",
+            comment=parts[2] if len(parts) >= 3 else "",
+        )
+        self.app.call_from_thread(status.update, "[green]Created a local key. Let's link it next.[/]")
         self.app.call_from_thread(self._go_to_remote)
 
     @work(thread=True)
@@ -548,6 +614,8 @@ Expire-Date: 0
     async def _populate_upload_options(self) -> None:
         radio = self.query_one("#upload-options", RadioSet)
         has_gh = shutil.which("gh") is not None
+        gh_authed = has_gh and await anyio.to_thread.run_sync(KeyDiscovery.gh_authenticated)
+        gh_suffix = "" if gh_authed else (" (needs `gh auth login`)" if has_gh else " (needs gh CLI)")
         key = self.selected_key
 
         options: list[RadioButton] = []
@@ -555,15 +623,15 @@ Expire-Date: 0
 
         match key:
             case SSHKeyInfo():
-                rb = RadioButton(f"Link to GitHub{'' if has_gh else ' (needs gh CLI)'}")
-                rb.disabled = not has_gh
+                rb = RadioButton(f"Link to GitHub{gh_suffix}")
+                rb.disabled = not gh_authed
                 options.append(rb)
                 self._upload_actions.append("github-ssh")
 
             case GPGKeyInfo():
                 if self.username:
-                    rb = RadioButton(f"Link to GitHub{'' if has_gh else ' (needs gh CLI)'}")
-                    rb.disabled = not has_gh
+                    rb = RadioButton(f"Link to GitHub{gh_suffix}")
+                    rb.disabled = not gh_authed
                     options.append(rb)
                     self._upload_actions.append("github-gpg")
 

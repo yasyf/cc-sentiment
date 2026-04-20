@@ -11,10 +11,6 @@ from cc_sentiment.tui.widgets import ButtonRow
 
 
 class CostReviewScreen(Dialog[bool]):
-    DEFAULT_CSS = Dialog.DEFAULT_CSS + """
-    CostReviewScreen > #dialog-box { max-height: 22; }
-    """
-
     BINDINGS = [("escape", "cancel", "Cancel")]
 
     def __init__(self, bucket_count: int, model: str) -> None:

@@ -361,6 +361,76 @@ async def test_setup_no_keys_with_gh_auth_uses_gist_mode(no_auto_setup):
             assert screen.query_one("#discovery-next", Button).disabled is False
 
 
+async def test_setup_no_gh_auth_with_ssh_keygen_picks_ssh_mode(no_auto_setup):
+    def has_tool(name: str) -> bool:
+        return name == "ssh-keygen"
+
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=False), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.has_tool", side_effect=has_tool):
+        async with SetupHarness(AppState()).run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.5)
+
+            assert screen._generation_mode == "ssh"
+            assert screen.query_one("#discovery-next", Button).disabled is False
+
+
+async def test_setup_existing_keys_offer_create_new_as_last_option(no_auto_setup):
+    ssh_keys = (SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host"),)
+
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=ssh_keys), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True):
+        async with SetupHarness(AppState()).run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.5)
+
+            assert screen._generation_mode == "gist"
+            assert screen._generation_radio_index == 1
+            from textual.widgets import RadioButton
+            labels = [str(rb.label) for rb in screen.query("#key-select RadioButton").results(RadioButton)]
+            assert any("Create a new cc-sentiment key" in label for label in labels)
+
+
+async def test_generate_managed_ssh_key_routes_to_remote(tmp_path: Path, no_auto_setup):
+    state = AppState()
+    key_path = tmp_path / "id_ed25519"
+    pub_path = tmp_path / "id_ed25519.pub"
+    pub_path.write_text("ssh-ed25519 AAAA cc-sentiment\n")
+
+    def has_tool(name: str) -> bool:
+        return name == "ssh-keygen"
+
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=False), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.has_tool", side_effect=has_tool), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.generate_gist_keypair", return_value=key_path), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.fetch_github_ssh_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.SSHBackend.fingerprint", return_value="ssh-ed25519 AAAA"):
+        async with SetupHarness(state).run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.5)
+
+            await pilot.click("#discovery-next")
+            await pilot.pause(delay=0.5)
+
+            assert isinstance(screen.selected_key, SSHKeyInfo)
+            assert screen.selected_key.path == key_path
+            assert screen.query_one(ContentSwitcher).current == "step-remote"
+
+
 async def test_generate_gist_key_saves_gist_config(tmp_path: Path, no_auto_setup, auth_ok):
     state = AppState()
     state_file = tmp_path / "state.json"
