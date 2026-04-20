@@ -14,6 +14,9 @@ def no_network_warmup(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(
         "cc_sentiment.nlp.NLP.ensure_ready", AsyncMock(return_value=None)
     )
+    monkeypatch.setattr(
+        "cc_sentiment.lexicon.Lexicon.ensure_ready", AsyncMock(return_value=None)
+    )
     classifier = MagicMock()
     classifier.score = AsyncMock(return_value=[])
     classifier.close = AsyncMock()

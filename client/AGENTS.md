@@ -15,6 +15,8 @@ Root `AGENTS.md` rules apply unless overridden here. The client follows a functi
 4. **No free-floating functions outside named pure utility modules.** Methods on classes belong in classes; everything else gets a class to live on. The named utility modules are:
    - `cc_sentiment/text.py` — `format_conversation`, `extract_score`, `MAX_CONVERSATION_CHARS`
    - `cc_sentiment/nlp.py` — spaCy lazy loader (`NLP` classmethods)
+   - `cc_sentiment/lexicon.py` — AFINN + domain-overrides (`Lexicon` classmethods; async `ensure_ready` + sync `polarity`)
+   - `cc_sentiment/highlight.py` — snippet styling (`Highlighter` classmethods + `HighlightSpan`/`WindowedSlice` dataclasses)
    - `cc_sentiment/transcripts/parser.py` — carve-out: hosts `Backend`-implementing class plus picklable parsing helpers (`build_message`, `python_parse_chunk`, etc.) that must stay module-level for `anyio.to_process.run_sync`
    - `cc_sentiment/patches/__init__.py` — `apply_kv_cache_patch`
    - `cc_sentiment/_transcripts_rs.pyi` — `.pyi` stub; free `def` is required syntax
@@ -79,8 +81,9 @@ client/
     ├── models/              # split: transcript, bucket, record, stats, config
     ├── engines/             # split: protocol, filter, omlx, claude_cli, factory
     ├── signing/             # split: backends, discovery, signer
+    ├── highlight.py         # Highlighter — snippet styling (AFINN + profanity + negation)
     ├── tui/                 # split: stages, progress, status, format, widgets,
-    │                        #        boot_view, view, app, screens/
+    │                        #        moments_view, view, app, screens/
     ├── transcripts/         # parser, backend, rust
     └── patches/             # mlx-lm KV cache patch
 ```

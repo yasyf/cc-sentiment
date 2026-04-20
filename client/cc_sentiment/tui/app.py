@@ -43,6 +43,7 @@ from cc_sentiment.models import (
     SentimentRecord,
     SSHConfig,
 )
+from cc_sentiment.lexicon import Lexicon
 from cc_sentiment.nlp import NLP
 from cc_sentiment.repo import Repository
 from cc_sentiment.transcripts import TranscriptParser
@@ -58,7 +59,7 @@ from cc_sentiment.upload import (
     Uploader,
 )
 
-from cc_sentiment.tui.boot_view import EngineBootView
+from cc_sentiment.tui.moments_view import MomentsView
 from cc_sentiment.tui.format import TimeFormat
 from cc_sentiment.tui.progress import DebugState, ScoringProgress
 from cc_sentiment.tui.screens import (
@@ -236,6 +237,7 @@ class CCSentimentApp(App[None]):
 
     async def _load_nlp(self) -> None:
         await NLP.ensure_ready()
+        await Lexicon.ensure_ready()
         if NLP.failed:
             self._set_debug(nlp_state="failed", nlp_output=NLP.last_download_output)
             return
@@ -520,19 +522,20 @@ class CCSentimentApp(App[None]):
                         assert classifier is not None
                         _, _, existing_files = await anyio.to_thread.run_sync(self.repo.stats)
                         self._begin_scoring(bucket_count, engine, existing_files + len(scan.transcripts))
-                        boot = EngineBootView(
+                        moments = MomentsView(
                             app=self,
                             section=self.query_one("#moments-section"),
                             log=self.query_one("#moments-log", Static),
                         )
                         await NLP.ensure_ready()
-                        boot.show(engine)
+                        await Lexicon.ensure_ready()
+                        moments.show()
                         try:
                             await Pipeline.run(
                                 self.repo, scan,
                                 classifier=classifier,
                                 on_records=self._add_records, on_bucket=self._add_buckets,
-                                on_snippet=boot.add_snippet,
+                                on_snippet=moments.add_snippet,
                                 on_transcript_complete=pool.queue_records,
                                 on_frustration=self._track_frustration,
                             )

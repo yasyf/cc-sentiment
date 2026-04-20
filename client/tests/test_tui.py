@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -14,7 +13,7 @@ from cc_sentiment.models import AppState, ContributorId, GistConfig, GPGConfig, 
 from cc_sentiment.repo import Repository
 from cc_sentiment.signing import GPGKeyInfo, SSHKeyInfo
 from cc_sentiment.tui import CCSentimentApp
-from cc_sentiment.tui.boot_view import EngineBootView, HighlightSpan, WindowedSlice
+from cc_sentiment.tui.moments_view import MomentsView
 from cc_sentiment.tui.format import TimeFormat
 from cc_sentiment.tui.screens import (
     CostReviewScreen,
@@ -1078,218 +1077,30 @@ async def test_hourly_chart_empty_records():
         assert "no data yet" in str(chart.content)
 
 
-class EngineBootHarness(App[None]):
+class MomentsHarness(App[None]):
     def compose(self):
         with Vertical(id="section"):
             yield Static("", id="log")
 
 
-async def test_engine_boot_snippet_survives_bracket_heavy_content():
-    async with EngineBootHarness().run_test() as pilot:
-        boot = EngineBootView(
+async def test_moments_view_snippet_survives_bracket_heavy_content():
+    async with MomentsHarness().run_test() as pilot:
+        moments = MomentsView(
             app=pilot.app,
             section=pilot.app.query_one("#section"),
             log=pilot.app.query_one("#log", Static),
         )
-        boot.show("test-engine")
-        await boot.add_snippet(
+        moments.show()
+        await moments.add_snippet(
             "2026-04-03T11:14:13.287367+0000 +13m26s [🐞][DSPyCompilationServer.compile] 'ignore'",
             1,
         )
-        boot.last_snippet_at = 0.0
-        await boot.add_snippet("prefix text [dim", 1)
-        boot.last_snippet_at = 0.0
-        await boot.add_snippet("<task-notification> <task-id>abc</task-id> body", 5)
+        moments.last_snippet_at = 0.0
+        await moments.add_snippet("prefix text [dim", 1)
+        moments.last_snippet_at = 0.0
+        await moments.add_snippet("<task-notification> <task-id>abc</task-id> body", 5)
         await pilot.pause()
-        assert len(boot.lines) >= 1
-
-
-@dataclass
-class FakeToken:
-    idx: int
-    text: str
-    pos_: str
-    lemma_: str
-
-
-def test_slice_window_both_ellipses_center():
-    full = "a" * 30 + "BUG" + "b" * 30
-    anchor = HighlightSpan(start=30, end=33, color="red", priority=2)
-    slice_ = EngineBootView.slice_window(full, anchor, width=20)
-    assert slice_.leading
-    assert slice_.body.startswith("…")
-    assert slice_.body.endswith("…")
-    assert "BUG" in slice_.body
-    assert len(slice_.body) == 20
-
-
-def test_slice_window_drops_leading_near_start():
-    full = "bug " + "a" * 100
-    anchor = HighlightSpan(start=0, end=3, color="red", priority=2)
-    slice_ = EngineBootView.slice_window(full, anchor, width=20)
-    assert not slice_.leading
-    assert not slice_.body.startswith("…")
-    assert slice_.body.endswith("…")
-    assert slice_.body.startswith("bug")
-    assert len(slice_.body) == 20
-
-
-def test_slice_window_drops_trailing_near_end():
-    full = "a" * 100 + " bug"
-    anchor = HighlightSpan(start=101, end=104, color="red", priority=2)
-    slice_ = EngineBootView.slice_window(full, anchor, width=20)
-    assert slice_.leading
-    assert slice_.body.startswith("…")
-    assert slice_.body.endswith("bug")
-    assert len(slice_.body) == 20
-
-
-def test_slice_window_returns_full_when_short():
-    full = "short text with bug"
-    anchor = HighlightSpan(start=16, end=19, color="red", priority=2)
-    slice_ = EngineBootView.slice_window(full, anchor, width=60)
-    assert slice_.body == full
-    assert slice_.full_offset == 0
-    assert not slice_.leading
-
-
-def test_apply_styles_translates_indices_into_body():
-    slice_ = WindowedSlice(body="…abc bug def…", full_offset=30, kept_len=11, leading=True)
-    candidates = [HighlightSpan(start=34, end=37, color="red", priority=2)]
-    text = EngineBootView.apply_styles(slice_, candidates)
-    assert any(
-        str(s.style) == "red" and (s.start, s.end) == (5, 8)
-        for s in text.spans
-    )
-
-
-def test_apply_styles_drops_out_of_window_candidates():
-    slice_ = WindowedSlice(body="…abc bug def…", full_offset=30, kept_len=11, leading=True)
-    candidates = [HighlightSpan(start=100, end=103, color="green", priority=2)]
-    text = EngineBootView.apply_styles(slice_, candidates)
-    assert not list(text.spans)
-
-
-def test_apply_styles_skips_empty_color():
-    slice_ = WindowedSlice(body="hello", full_offset=0, kept_len=5, leading=False)
-    candidates = [HighlightSpan(start=0, end=5, color="", priority=1)]
-    text = EngineBootView.apply_styles(slice_, candidates)
-    assert not list(text.spans)
-
-
-def test_collect_candidates_tags_profanity_and_lemmas():
-    full = "this is perfect but the bug is broken"
-    tokens = [
-        FakeToken(idx=0, text="this", pos_="PRON", lemma_="this"),
-        FakeToken(idx=5, text="is", pos_="AUX", lemma_="be"),
-        FakeToken(idx=8, text="perfect", pos_="ADJ", lemma_="perfect"),
-        FakeToken(idx=16, text="but", pos_="CCONJ", lemma_="but"),
-        FakeToken(idx=20, text="the", pos_="DET", lemma_="the"),
-        FakeToken(idx=24, text="bug", pos_="NOUN", lemma_="bug"),
-        FakeToken(idx=28, text="is", pos_="AUX", lemma_="be"),
-        FakeToken(idx=31, text="broken", pos_="ADJ", lemma_="broken"),
-    ]
-    candidates = EngineBootView.collect_candidates(full, tokens, score=2)
-    colors = {(c.start, c.color) for c in candidates}
-    assert (8, "green") in colors
-    assert (24, "red") in colors
-    assert (31, "red") in colors
-
-
-def test_collect_candidates_catches_frustration_pattern_for_low_scores():
-    full = "wtf is happening here, completely useless"
-    candidates = EngineBootView.collect_candidates(full, [], score=1)
-    assert any(c.priority == 3 and c.color == "red" for c in candidates)
-
-
-def test_fallback_anchor_picks_longest_content_word():
-    tokens = [
-        FakeToken(idx=0, text="keep", pos_="VERB", lemma_="keep"),
-        FakeToken(idx=5, text="monitoring", pos_="VERB", lemma_="monitor"),
-        FakeToken(idx=16, text="it", pos_="PRON", lemma_="it"),
-        FakeToken(idx=19, text="goes", pos_="VERB", lemma_="go"),
-    ]
-    anchor = EngineBootView.fallback_anchor(tokens)
-    assert anchor is not None
-    assert (anchor.start, anchor.end) == (5, 15)
-    assert anchor.color == ""
-    assert anchor.priority == 1
-
-
-def test_fallback_anchor_never_colors_by_score():
-    tokens = [FakeToken(idx=0, text="thing", pos_="NOUN", lemma_="thing")]
-    anchor = EngineBootView.fallback_anchor(tokens)
-    assert anchor is not None
-    assert anchor.color == ""
-
-
-def test_fallback_anchor_returns_none_when_no_eligible_token():
-    tokens = [
-        FakeToken(idx=0, text="is", pos_="VERB", lemma_="be"),
-        FakeToken(idx=3, text="a", pos_="DET", lemma_="a"),
-        FakeToken(idx=5, text="42", pos_="NUM", lemma_="42"),
-    ]
-    assert EngineBootView.fallback_anchor(tokens) is None
-
-
-def test_windowed_highlight_prefix_fallback_applies_frustration_regex():
-    text = EngineBootView.windowed_highlight("wtf this is broken", score=2)
-    assert any(
-        str(s.style) == "red" and s.start == 0 and s.end == 3
-        for s in text.spans
-    )
-
-
-def test_windowed_highlight_prefix_fallback_truncates_when_no_nlp():
-    long = "x" * 200
-    text = EngineBootView.windowed_highlight(long, score=4)
-    assert len(text.plain) == EngineBootView.MAX_SNIPPET_CHARS
-    assert text.plain.endswith("…")
-
-
-@pytest.fixture
-def real_nlp(monkeypatch):
-    spacy = pytest.importorskip("spacy")
-    try:
-        model = spacy.load("en_core_web_sm", disable=["parser"])
-    except OSError:
-        pytest.skip("spaCy en_core_web_sm not available")
-    monkeypatch.setattr("cc_sentiment.nlp.NLP.model", model)
-    return model
-
-
-def test_windowed_highlight_anchors_on_profanity_past_prefix(real_nlp):
-    prefix = (
-        "neutral filler text that says nothing special just padding "
-        "here too here still more filler going on and on and on "
-    )
-    assert len(prefix) > EngineBootView.MAX_SNIPPET_CHARS
-    full = prefix + "fuck this"
-    text = EngineBootView.windowed_highlight(full, score=1)
-    assert "fuck" in text.plain
-    assert any(str(s.style) == "red" for s in text.spans)
-
-
-def test_windowed_highlight_leaves_neutral_message_uncolored(real_nlp):
-    full = (
-        "keep monitoring it as it goes and give me an updated ETA for "
-        "the server deployment so we can plan the rest of the launch"
-    )
-    for score in (1, 2, 3, 4, 5):
-        text = EngineBootView.windowed_highlight(full, score=score)
-        assert not list(text.spans), f"score={score} produced spans {list(text.spans)}"
-
-
-def test_windowed_highlight_colors_stop_red_even_in_positive_bucket(real_nlp):
-    text = EngineBootView.windowed_highlight("STOP GUESSING", score=4)
-    assert any(str(s.style) == "red" for s in text.spans)
-    assert not any(str(s.style) == "green" for s in text.spans)
-
-
-def test_windowed_highlight_colors_continue_green_even_in_negative_bucket(real_nlp):
-    text = EngineBootView.windowed_highlight("Continue from where you left off.", score=2)
-    assert any(str(s.style) == "green" for s in text.spans)
-    assert not any(str(s.style) == "red" for s in text.spans)
+        assert len(moments.lines) >= 1
 
 
 STAT = MyStat(

@@ -1,24 +1,13 @@
 from __future__ import annotations
 
-import random
-import time
-from collections import deque
-from dataclasses import dataclass, field
-from typing import ClassVar
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, ClassVar
 
-from typing import TYPE_CHECKING
-
-import anyio
-import anyio.to_thread
 from rich.text import Text
-from textual.app import App
-from textual.widget import Widget
-from textual.widgets import Static
 
 from cc_sentiment.engines.filter import FRUSTRATION_PATTERN
+from cc_sentiment.lexicon import Lexicon
 from cc_sentiment.nlp import NLP
-
-from cc_sentiment.tui.widgets import ScoreBar
 
 if TYPE_CHECKING:
     import spacy.tokens
@@ -40,84 +29,40 @@ class WindowedSlice:
     leading: bool
 
 
-@dataclass
-class EngineBootView:
+class Highlighter:
     MAX_SNIPPET_CHARS: ClassVar[int] = 60
-    SNIPPET_RATE_LIMIT: ClassVar[float] = 2.5
-    SNIPPET_WEIGHTS: ClassVar[dict[int, float]] = {1: 0.7, 2: 0.5, 3: 0.02, 4: 0.5, 5: 0.7}
     FALLBACK_MIN_LEN: ClassVar[int] = 3
-    NEGATIVE_LEMMAS: ClassVar[frozenset[str]] = frozenset({
-        "break", "wrong", "fail", "error", "stuck", "confuse", "nope", "useless",
-        "terrible", "awful", "frustrate", "hate", "suck", "annoy", "broken",
-        "confused", "frustrating", "annoying",
-        "garbage", "mess", "disaster", "nightmare", "horrible", "pathetic",
-        "ridiculous", "absurd", "bug", "crash", "hang", "freeze", "slow",
-        "dumb", "worst", "trash", "stupid", "idiotic", "insane", "infuriating",
-        "painful", "mistake", "regression", "flaky", "impossible", "bad",
-        "stop", "halt", "quit", "guess", "guessing",
-    })
-    POSITIVE_LEMMAS: ClassVar[frozenset[str]] = frozenset({
-        "perfect", "great", "nice", "awesome", "exactly", "beautiful", "love",
-        "finally", "amazing", "incredible", "brilliant", "excellent", "wonderful",
-        "fantastic", "thank",
-        "smooth", "clean", "elegant", "clever", "neat", "sweet", "magic",
-        "win", "work", "correct", "solve", "fix", "done", "ship",
-        "lovely", "crisp", "tight", "solid",
-        "continue", "proceed", "resume",
-    })
-    PROFANITY_TOKENS: ClassVar[frozenset[str]] = frozenset({
-        "fuck", "shit", "damn", "hell", "crap", "bastard", "bitch",
-        "piss", "ass", "asshole", "bollocks", "bullshit", "dammit", "goddamn",
-        "fucker", "motherfucker",
-    })
-    NEGATION_TOKENS: ClassVar[frozenset[str]] = frozenset({
-        "not", "no", "never", "nothing", "hardly", "barely",
-    })
-    SENTIMENT_POS: ClassVar[frozenset[str]] = frozenset({"ADJ", "ADV", "VERB", "INTJ", "NOUN"})
-    WITTY_COMMENTS: ClassVar[dict[int, tuple[str, ...]]] = {
-        1: ("oof", "yikes", "time to take a walk", "we've all been there", "send help", "cursed"),
-        2: ("mood", "same energy", "try again later", "nope nope nope", "sigh", "bargaining stage"),
-        3: ("just business", "getting it done", "ok then", "fine", "the work continues", "transactional"),
-        4: ("nice", "smooth", "working as intended", "as you were", "on track", "we're cooking"),
-        5: ("vibes", "flow state", "chef's kiss", "absolute unit", "sparkles", "heck yeah"),
-    }
-
-    app: App
-    section: Widget
-    log: Static
-    lines: deque[Text] = field(default_factory=lambda: deque(maxlen=8))
-    last_snippet_at: float = 0.0
-    last_snippet_score: int | None = None
-
-    def show(self, engine: str) -> None:
-        self.lines.clear()
-        self.log.update("")
-        self.last_snippet_at = 0.0
-        self.last_snippet_score = None
-        self.section.remove_class("inactive")
-
-    def hide(self) -> None:
-        self.section.add_class("inactive")
-
-    async def add_snippet(self, snippet: str, score: int) -> None:
-        now = time.monotonic()
-        if now - self.last_snippet_at < self.SNIPPET_RATE_LIMIT:
-            return
-        if score == self.last_snippet_score:
-            return
-        if random.random() > self.SNIPPET_WEIGHTS[score]:
-            return
-        self.last_snippet_at = now
-        self.last_snippet_score = score
-        comment = random.choice(self.WITTY_COMMENTS[score])
-        highlighted = await anyio.to_thread.run_sync(self.windowed_highlight, snippet, score)
-        self.lines.append(Text.assemble(
-            f"{ScoreBar.ICONS[score]} {score}  \"",
-            highlighted,
-            "\"  ",
-            (comment, "dim"),
-        ))
-        self.log.update(Text("\n").join(self.lines))
+    PROFANITY_TOKENS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "fuck", "fucks", "fucker", "fuckers", "fucking", "fucked", "fuckin",
+            "motherfucker", "motherfuckers", "motherfucking", "mf", "mofo",
+            "shit", "shits", "shitty", "shite", "shitshow", "shitstorm", "shithead",
+            "bullshit", "horseshit",
+            "damn", "damned", "damnit", "dammit",
+            "goddamn", "goddamned", "goddammit", "goddamnit",
+            "hell", "hellish",
+            "crap", "crappy",
+            "piss", "pissed", "pissing",
+            "ass", "asses", "asshole", "assholes", "asshat",
+            "arse", "arsehole", "arseholes",
+            "dumbass", "jackass", "smartass",
+            "bastard", "bastards",
+            "bitch", "bitches", "bitchy", "bitching",
+            "bollocks", "bollox",
+            "wanker", "wankers", "twat", "twats",
+            "prick", "pricks", "dickhead", "dickheads",
+            "bugger", "buggered", "bloody",
+            "feck", "fecking",
+            "frick", "frickin", "freakin", "freaking", "frigging",
+            "wtf", "ffs", "jfc", "stfu", "gtfo",
+        }
+    )
+    NEGATION_TOKENS: ClassVar[frozenset[str]] = frozenset(
+        {"not", "no", "never", "nothing", "hardly", "barely"}
+    )
+    SENTIMENT_POS: ClassVar[frozenset[str]] = frozenset(
+        {"ADJ", "ADV", "VERB", "INTJ", "NOUN"}
+    )
 
     @classmethod
     def windowed_highlight(cls, full: str, score: int) -> Text:
@@ -133,7 +78,7 @@ class EngineBootView:
 
     @classmethod
     def prefix_highlight(cls, full: str, width: int, score: int) -> Text:
-        body = full[:width - 1] + "…" if len(full) > width else full
+        body = full[: width - 1] + "…" if len(full) > width else full
         text = Text(body)
         if score <= 2:
             for m in FRUSTRATION_PATTERN.finditer(body):
@@ -142,7 +87,10 @@ class EngineBootView:
 
     @classmethod
     def collect_candidates(
-        cls, full: str, tokens: list[spacy.tokens.Token], score: int,
+        cls,
+        full: str,
+        tokens: list[spacy.tokens.Token],
+        score: int,
     ) -> list[HighlightSpan]:
         spans: list[HighlightSpan] = []
         if score <= 2:
@@ -158,12 +106,10 @@ class EngineBootView:
                 continue
             if tok.pos_ not in cls.SENTIMENT_POS:
                 continue
-            if lemma in cls.POSITIVE_LEMMAS:
-                color = "green"
-            elif lemma in cls.NEGATIVE_LEMMAS:
-                color = "red"
-            else:
+            polarity = Lexicon.polarity(lemma)
+            if polarity == 0:
                 continue
+            color = "green" if polarity > 0 else "red"
             if cls.is_negated(tokens, i):
                 color = "red" if color == "green" else "green"
             spans.append(HighlightSpan(start, end, color, priority=2))
@@ -175,10 +121,12 @@ class EngineBootView:
 
     @classmethod
     def fallback_anchor(
-        cls, tokens: list[spacy.tokens.Token],
+        cls,
+        tokens: list[spacy.tokens.Token],
     ) -> HighlightSpan | None:
         eligible = [
-            t for t in tokens
+            t
+            for t in tokens
             if t.pos_ in cls.SENTIMENT_POS
             and len(t.text) >= cls.FALLBACK_MIN_LEN
             and t.text.isalpha()
@@ -190,7 +138,10 @@ class EngineBootView:
 
     @classmethod
     def slice_window(
-        cls, full: str, anchor: HighlightSpan, width: int,
+        cls,
+        full: str,
+        anchor: HighlightSpan,
+        width: int,
     ) -> WindowedSlice:
         n = len(full)
         if n <= width:
@@ -201,27 +152,27 @@ class EngineBootView:
             ideal = (anchor.start + anchor.end) // 2 - kept_c // 2
             ks = max(lo, min(ideal, hi))
             return WindowedSlice(
-                body="…" + full[ks:ks + kept_c] + "…",
+                body="…" + full[ks : ks + kept_c] + "…",
                 full_offset=ks,
                 kept_len=kept_c,
                 leading=True,
             )
         if anchor.end <= width - 1:
             return WindowedSlice(
-                body=full[:width - 1] + "…",
+                body=full[: width - 1] + "…",
                 full_offset=0,
                 kept_len=width - 1,
                 leading=False,
             )
         if anchor.start >= n - width + 1:
             return WindowedSlice(
-                body="…" + full[n - width + 1:],
+                body="…" + full[n - width + 1 :],
                 full_offset=n - width + 1,
                 kept_len=width - 1,
                 leading=True,
             )
         return WindowedSlice(
-            body=full[:width - 1] + "…",
+            body=full[: width - 1] + "…",
             full_offset=0,
             kept_len=width - 1,
             leading=False,
@@ -229,7 +180,9 @@ class EngineBootView:
 
     @classmethod
     def apply_styles(
-        cls, window: WindowedSlice, candidates: list[HighlightSpan],
+        cls,
+        window: WindowedSlice,
+        candidates: list[HighlightSpan],
     ) -> Text:
         text = Text(window.body)
         claimed = [False] * len(window.body)
