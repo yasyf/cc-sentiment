@@ -35,6 +35,8 @@ DEFAULT_SERVER_URL = "https://anetaco--cc-sentiment-api-serve.modal.run"
 
 DASHBOARD_URL = "https://sentiments.cc"
 
+TWEET_INTENT_URL = "https://twitter.com/intent/tweet"
+
 TEST_PAYLOAD = "cc-sentiment-verify"
 
 RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
@@ -286,6 +288,10 @@ class Uploader:
     @classmethod
     def og_url(cls, config: SSHConfig | GPGConfig | GistConfig, stat: MyStat) -> str:
         return f"{DASHBOARD_URL}/og?{urlencode(cls.share_params(config, stat))}"
+
+    @classmethod
+    def tweet_url(cls, config: SSHConfig | GPGConfig | GistConfig, stat: MyStat) -> str:
+        return f"{TWEET_INTENT_URL}?{urlencode({'text': stat.tweet_text, 'url': cls.share_url(config, stat)})}"
 
     async def prewarm_share_card(
         self, config: SSHConfig | GPGConfig | GistConfig, stat: MyStat

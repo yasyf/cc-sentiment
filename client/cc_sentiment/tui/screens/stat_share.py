@@ -5,7 +5,6 @@ import webbrowser
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import ClassVar
-from urllib.parse import urlencode
 
 import anyio
 import anyio.to_thread
@@ -90,28 +89,10 @@ class StatShareScreen(Dialog[None]):
 
     BINDINGS = [("escape", "skip", "Skip")]
 
-    TWEET_INTENT_URL: ClassVar[str] = "https://twitter.com/intent/tweet"
-
     def __init__(self, config: SSHConfig | GPGConfig | GistConfig, stat: MyStat) -> None:
         super().__init__()
         self.config = config
         self.stat = stat
-
-    @property
-    def contributor_id(self) -> str:
-        return self.config.contributor_id
-
-    @property
-    def contributor_type(self) -> str:
-        return self.config.contributor_type
-
-    @property
-    def share_url(self) -> str:
-        return Uploader.share_url(self.config, self.stat)
-
-    @property
-    def tweet_url(self) -> str:
-        return f"{self.TWEET_INTENT_URL}?{urlencode({'text': self.stat.tweet_text, 'url': self.share_url})}"
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog-box"):
@@ -133,7 +114,9 @@ class StatShareScreen(Dialog[None]):
 
     @on(Button.Pressed, "#stat-tweet")
     async def on_tweet_button(self) -> None:
-        await anyio.to_thread.run_sync(webbrowser.open, self.tweet_url)
+        await anyio.to_thread.run_sync(
+            webbrowser.open, Uploader.tweet_url(self.config, self.stat)
+        )
         self.dismiss(None)
 
     @on(Button.Pressed, "#stat-skip")

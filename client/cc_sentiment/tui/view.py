@@ -8,7 +8,7 @@ from typing import ClassVar
 from textual.app import App
 from textual.widgets import Digits, Label, ProgressBar, Static
 
-from cc_sentiment.models import SentimentRecord
+from cc_sentiment.models import GistConfig, GPGConfig, MyStat, SentimentRecord, SSHConfig
 from cc_sentiment.upload import UploadProgress
 
 from cc_sentiment.tui.format import TimeFormat
@@ -26,6 +26,16 @@ class StatsState:
     toughest_hour: int | None = None
     toughest_day: int | None = None
     toughest_model: str | None = None
+
+
+@dataclass
+class ShareState:
+    config: SSHConfig | GPGConfig | GistConfig | None = None
+    stat: MyStat | None = None
+
+    def reset(self) -> None:
+        self.config = None
+        self.stat = None
 
 
 class ProcessingView:
@@ -46,6 +56,7 @@ class ProcessingView:
         self.app = app
         self.score_bars: dict[int, ScoreBar] = {}
         self.stats = StatsState()
+        self.share = ShareState()
 
     def register_score_bar(self, s: int, bar: ScoreBar) -> None:
         self.score_bars[s] = bar
@@ -80,6 +91,24 @@ class ProcessingView:
         self.app.query_one("#hourly-section").add_class("inactive")
         self.app.query_one("#stats-rows", Static).update("")
         self.app.query_one("#stats-section").add_class("inactive")
+        self.hide_share()
+
+    def show_share(
+        self, config: SSHConfig | GPGConfig | GistConfig, stat: MyStat
+    ) -> None:
+        self.share.config = config
+        self.share.stat = stat
+        self.app.query_one("#share-stat", Static).update(f"You are {stat.text}.")
+        self.app.query_one("#share-detail", Static).update(
+            "Share it? The card on Twitter will show your GitHub avatar and this stat."
+        )
+        self.app.query_one("#share-section").remove_class("inactive")
+
+    def hide_share(self) -> None:
+        self.share.reset()
+        self.app.query_one("#share-stat", Static).update("")
+        self.app.query_one("#share-detail", Static).update("")
+        self.app.query_one("#share-section").add_class("inactive")
 
     def begin_scoring(self, total: int, total_files: int) -> None:
         self.app.query_one("#scan-progress", ProgressBar).update(total=total, progress=0)

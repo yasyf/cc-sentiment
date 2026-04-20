@@ -11,12 +11,13 @@ from typing import ClassVar
 import anyio
 import anyio.to_thread
 import httpx
-from textual import work
+from textual import on, work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widgets import (
+    Button,
     Digits,
     Footer,
     Header,
@@ -98,6 +99,7 @@ class CCSentimentApp(App[None]):
 
     CSS = """
     Screen { layout: vertical; background: $surface; }
+    Dialog { background: transparent; }
     #main { height: 1fr; padding: 1 2; }
     #header-section { height: auto; }
     #title-row { height: 3; }
@@ -111,7 +113,11 @@ class CCSentimentApp(App[None]):
     #sentiment-section { width: 2fr; }
     #hourly-section { width: 1fr; min-width: 32; }
     #moments-section { width: 2fr; }
-    #stats-section { width: 1fr; min-width: 40; }
+    #stats-section { width: 1fr; min-width: 36; }
+    #share-section { width: 1fr; min-width: 36; }
+    #share-stat { color: $accent; text-style: bold; margin: 0 0 1 0; }
+    #share-detail { color: $text-muted; margin: 0 0 1 0; }
+    #share-buttons { height: auto; }
     ProgressBar Bar > .bar--bar { color: $accent; }
     ProgressBar Bar > .bar--complete { color: $accent; }
     #hourly-chart { height: 7; }
@@ -200,6 +206,11 @@ class CCSentimentApp(App[None]):
                     yield LiveFunBox(id="live-fun")
                 with Card(id="stats-section", title="stats", classes="inactive"):
                     yield Static("", id="stats-rows")
+                with Card(id="share-section", title="share", classes="inactive"):
+                    yield Static("", id="share-stat")
+                    yield Static("", id="share-detail")
+                    with Horizontal(id="share-buttons"):
+                        yield Button("Tweet it", id="share-tweet", variant="primary")
 
             if self.debug_mode:
                 yield DebugSection(id="debug")
@@ -602,9 +613,18 @@ class CCSentimentApp(App[None]):
             self._prewarm_share_card(self.state.config, stat),
             name="card-prewarm", exit_on_error=False,
         )
+        self.view.show_share(self.state.config, stat)
         self.push_screen(StatShareScreen(self.state.config, stat))
         if isinstance(self.stage, IdleAfterUpload):
             self._update_status(self._uploaded_status_text())
+
+    @on(Button.Pressed, "#share-tweet")
+    async def on_share_tweet(self) -> None:
+        share = self.view.share
+        assert share.config is not None and share.stat is not None
+        await anyio.to_thread.run_sync(
+            webbrowser.open, Uploader.tweet_url(share.config, share.stat)
+        )
 
     async def _prewarm_share_card(
         self, config: SSHConfig | GPGConfig | GistConfig, stat: MyStat

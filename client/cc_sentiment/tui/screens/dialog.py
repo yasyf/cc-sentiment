@@ -21,12 +21,12 @@ class Dialog(ModalScreen[T]):
     Dialog { align: center middle; background: transparent; }
     Dialog > #dialog-box {
         width: auto;
-        max-width: 60;
-        min-width: 40;
+        max-width: 80;
+        min-width: 50;
         height: auto;
-        max-height: 16;
+        max-height: 24;
         border: heavy $accent;
-        padding: 1 2;
+        padding: 1 3;
         background: $panel;
     }
     Dialog > #dialog-box Button { margin: 1 1 0 0; }
