@@ -89,8 +89,16 @@ class CardPoller:
 class StatShareScreen(Dialog[None]):
     DEFAULT_CSS = Dialog.DEFAULT_CSS + """
     StatShareScreen { background: $background 60%; }
-    StatShareScreen > #dialog-box .stat { width: 100%; color: $accent; text-style: bold; margin: 0 0 1 0; }
-    StatShareScreen > #dialog-box .detail { width: 100%; }
+    StatShareScreen > #dialog-box { max-width: 64; }
+    StatShareScreen > #dialog-box .title { text-align: center; }
+    StatShareScreen > #dialog-box .stat {
+        width: 100%; color: $accent; text-style: bold;
+        text-align: center; margin: 0 0 1 0;
+    }
+    StatShareScreen > #dialog-box .detail { width: 100%; text-align: center; }
+    StatShareScreen > #dialog-box Horizontal {
+        width: 100%; height: auto; align-horizontal: center;
+    }
     """
 
     BINDINGS = [("escape", "skip", "Skip")]
