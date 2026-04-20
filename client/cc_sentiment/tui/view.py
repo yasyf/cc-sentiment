@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from statistics import mean
 from typing import ClassVar
 
@@ -13,7 +13,7 @@ from cc_sentiment.upload import UploadProgress
 
 from cc_sentiment.tui.format import TimeFormat
 from cc_sentiment.tui.progress import LiveFunStats, ScoringProgress
-from cc_sentiment.tui.widgets import HourlyChart, LiveFunBox, ScoreBar
+from cc_sentiment.tui.widgets import HourlyChart, ScoreBar
 
 
 @dataclass
@@ -26,6 +26,7 @@ class StatsState:
     toughest_hour: int | None = None
     toughest_day: int | None = None
     toughest_model: str | None = None
+    live_fun: LiveFunStats = field(default_factory=LiveFunStats)
 
 
 @dataclass
@@ -52,14 +53,6 @@ class ProcessingView:
     INSIGHTS_MIN_RECORDS: ClassVar[int] = 20
     INSIGHTS_MIN_SAMPLES: ClassVar[int] = 3
     LABEL_WIDTH: ClassVar[int] = 10
-    VERDICTS: ClassVar[tuple[tuple[float, str, str], ...]] = (
-        (2.0, "developers are struggling", "red"),
-        (2.5, "developers are hanging on", "red"),
-        (3.0, "developers are getting by", "yellow"),
-        (3.5, "developers are holding steady", "yellow"),
-        (4.0, "developers are flowing", "green"),
-        (100.0, "developers are cooking", "green"),
-    )
 
     def __init__(self, app: App[None]) -> None:
         self.app = app
@@ -166,8 +159,9 @@ class ProcessingView:
     def hide_moments(self) -> None:
         self.app.query_one("#moments-section").add_class("inactive")
 
-    def update_live_fun(self, stats: LiveFunStats) -> None:
-        self.app.query_one("#live-fun", LiveFunBox).render_stats(stats)
+    def track_frustration(self, words: list[str]) -> None:
+        self.stats.live_fun.bump(words)
+        self.render_stats()
 
     def render_scores(self, records: list[SentimentRecord]) -> None:
         if not records:
@@ -224,10 +218,6 @@ class ProcessingView:
         self.stats.toughest_day = self.pick_toughest(days, self.INSIGHTS_MIN_SAMPLES)
         self.stats.toughest_model = self.pick_toughest(models, self.INSIGHTS_MIN_SAMPLES)
 
-    @classmethod
-    def verdict_for(cls, avg: float) -> tuple[str, str]:
-        return next((copy, color) for threshold, copy, color in cls.VERDICTS if avg < threshold)
-
     def render_stats(self) -> None:
         section = self.app.query_one("#stats-section")
         if self.stats.total_buckets == 0:
@@ -235,10 +225,7 @@ class ProcessingView:
             self.app.query_one("#stats-rows", Static).update("")
             return
         section.remove_class("inactive")
-        lines: list[str] = []
-        if self.stats.avg_score > 0:
-            copy, color = self.verdict_for(self.stats.avg_score)
-            lines.append(self.stats_row("verdict", f"[b {color}]{copy}[/]"))
+        lines: list[str] = [self.stats_row("venting", self.venting_phrase())]
         volume_parts = [
             f"[b cyan]{self.stats.total_buckets:,}[/] moments",
             f"[b cyan]{self.stats.total_sessions:,}[/] chats",
@@ -258,6 +245,13 @@ class ProcessingView:
     @classmethod
     def stats_row(cls, label: str, value: str) -> str:
         return f"[dim]{label:<{cls.LABEL_WIDTH}}[/] {value}"
+
+    def venting_phrase(self) -> str:
+        top = self.stats.live_fun.top()
+        if top is None:
+            return "[dim]no swearing yet — you're kind to Claude[/]"
+        word, count = top
+        return f'[b yellow]"{word}"[/] ×[b cyan]{count}[/]'
 
     def peaks_phrase(self) -> str:
         parts: list[str] = []

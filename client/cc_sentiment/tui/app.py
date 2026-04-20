@@ -60,7 +60,7 @@ from cc_sentiment.upload import (
 
 from cc_sentiment.tui.boot_view import EngineBootView
 from cc_sentiment.tui.format import TimeFormat
-from cc_sentiment.tui.progress import DebugState, LiveFunStats, ScoringProgress
+from cc_sentiment.tui.progress import DebugState, ScoringProgress
 from cc_sentiment.tui.screens import (
     BootingScreen,
     CostReviewScreen,
@@ -88,7 +88,6 @@ from cc_sentiment.tui.widgets import (
     Card,
     DebugSection,
     HourlyChart,
-    LiveFunBox,
     ProgressRow,
     ScoreBar,
 )
@@ -162,7 +161,6 @@ class CCSentimentApp(App[None]):
         self._scoring = ScoringProgress()
         self._upload = UploadProgress()
         self._debug_state = DebugState()
-        self._live_fun = LiveFunStats()
         self._boot_screen: BootingScreen | None = None
         self._prewarmed = False
 
@@ -204,7 +202,6 @@ class CCSentimentApp(App[None]):
             with Horizontal(classes="row"):
                 with Card(id="moments-section", title="moments", classes="inactive"):
                     yield Static("", id="moments-log")
-                    yield LiveFunBox(id="live-fun")
                 with Card(id="stats-section", title="stats", classes="inactive"):
                     yield Static("", id="stats-rows")
                 with Card(id="share-section", title="share", classes="inactive"):
@@ -698,9 +695,7 @@ class CCSentimentApp(App[None]):
         self._scoring.reset()
         self._upload.reset()
         self._debug_state.reset()
-        self._live_fun.reset()
         self.view.reset()
-        self.view.update_live_fun(self._live_fun)
 
     def _begin_scoring(self, total: int, engine: str, total_files: int) -> None:
         self.total = total
@@ -708,7 +703,6 @@ class CCSentimentApp(App[None]):
         self._scoring.begin(Hardware.estimate_buckets_per_sec(engine), total)
         self.view.begin_scoring(total, total_files)
         self.view.update_progress_label(self._scoring, self.scored, self.total)
-        self.view.update_live_fun(self._live_fun)
         self.stage = Scoring(total=total, engine=engine)
 
     def _add_buckets(self, n: int) -> None:
@@ -723,8 +717,7 @@ class CCSentimentApp(App[None]):
 
     def _track_frustration(self, words: list[str]) -> None:
         asyncio.get_running_loop()
-        self._live_fun.bump(words)
-        self.view.update_live_fun(self._live_fun)
+        self.view.track_frustration(words)
 
     def _update_status(self, text: str) -> None:
         self.status_text = text
