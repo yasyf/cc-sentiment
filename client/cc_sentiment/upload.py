@@ -25,6 +25,9 @@ from cc_sentiment.models import (
     GPGConfig,
     MyStat,
     SentimentRecord,
+    ShareMintPayload,
+    ShareMintRequest,
+    ShareMintResponse,
     SSHConfig,
     UploadPayload,
 )
@@ -275,30 +278,47 @@ class Uploader:
                 response.raise_for_status()
                 return None
 
-    @staticmethod
-    def share_params(config: SSHConfig | GPGConfig | GistConfig, stat: MyStat) -> dict[str, str]:
-        return {"t": stat.text} | (
-            {"u": config.contributor_id} if config.contributor_type in ("github", "gist") else {}
+    async def mint_share(
+        self, config: SSHConfig | GPGConfig | GistConfig
+    ) -> ShareMintResponse:
+        mint_payload = ShareMintPayload(issued_at=datetime.now(timezone.utc))
+        canonical = orjson.dumps(
+            mint_payload.model_dump(mode="json"), option=orjson.OPT_SORT_KEYS
+        ).decode()
+        backend = self.backend_from_config(config)
+        signature = await anyio.to_thread.run_sync(PayloadSigner.sign, canonical, backend)
+        request = ShareMintRequest(
+            contributor_type=config.contributor_type,
+            contributor_id=self.wire_contributor_id(config),
+            signature=signature,
+            payload=mint_payload,
         )
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.server_url}/share",
+                content=request.model_dump_json().encode(),
+                headers={"Content-Type": "application/json"},
+                timeout=15.0,
+            )
+        response.raise_for_status()
+        return ShareMintResponse.model_validate_json(response.text)
+
+    @staticmethod
+    def share_url(share_id: str) -> str:
+        return f"{DASHBOARD_URL}/share/{share_id}"
 
     @classmethod
-    def share_url(cls, config: SSHConfig | GPGConfig | GistConfig, stat: MyStat) -> str:
-        return f"{DASHBOARD_URL}/?{urlencode(cls.share_params(config, stat))}"
+    def og_url(cls, share_id: str) -> str:
+        return f"{DASHBOARD_URL}/share/{share_id}/og"
 
     @classmethod
-    def og_url(cls, config: SSHConfig | GPGConfig | GistConfig, stat: MyStat) -> str:
-        return f"{DASHBOARD_URL}/og?{urlencode(cls.share_params(config, stat))}"
+    def tweet_url(cls, share_id: str, tweet_text: str) -> str:
+        return f"{TWEET_INTENT_URL}?{urlencode({'text': tweet_text, 'url': cls.share_url(share_id)})}"
 
-    @classmethod
-    def tweet_url(cls, config: SSHConfig | GPGConfig | GistConfig, stat: MyStat) -> str:
-        return f"{TWEET_INTENT_URL}?{urlencode({'text': stat.tweet_text, 'url': cls.share_url(config, stat)})}"
-
-    async def prewarm_share_card(
-        self, config: SSHConfig | GPGConfig | GistConfig, stat: MyStat
-    ) -> None:
+    async def prewarm_share_card(self, share_id: str) -> None:
         headers = {"User-Agent": "Twitterbot/1.0", "Accept": "*/*"}
         async with httpx.AsyncClient(headers=headers, timeout=10.0) as client:
-            for url in (self.share_url(config, stat), self.og_url(config, stat)):
+            for url in (self.share_url(share_id), self.og_url(share_id)):
                 with contextlib.suppress(httpx.HTTPError):
                     await client.get(url)
 

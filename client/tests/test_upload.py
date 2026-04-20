@@ -176,6 +176,94 @@ class TestProbeCredentials:
         assert isinstance(anyio.run(run), AuthUnreachable)
 
 
+class TestShareUrlHelpers:
+    def test_share_url(self) -> None:
+        assert Uploader.share_url("abc123") == "https://sentiments.cc/share/abc123"
+
+    def test_og_url(self) -> None:
+        assert Uploader.og_url("abc123") == "https://sentiments.cc/share/abc123/og"
+
+    def test_tweet_url_includes_share_url_and_tweet_text(self) -> None:
+        url = Uploader.tweet_url("abc123", "I'm nicer to Claude than most developers.")
+        assert "twitter.com/intent/tweet" in url
+        assert "share%2Fabc123" in url or "share/abc123" in url
+        assert "nicer" in url
+
+
+class TestMintShare:
+    def test_signs_payload_and_parses_response(self) -> None:
+        config = SSHConfig(
+            contributor_id=ContributorId("testuser"),
+            key_path=Path("/home/.ssh/id_ed25519"),
+        )
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.text = '{"id":"sh-abc123","url":"https://sentiments.cc/share/sh-abc123"}'
+
+        mock_http_client = AsyncMock()
+        mock_http_client.post.return_value = mock_response
+
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_http_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("cc_sentiment.upload.PayloadSigner.sign", return_value="fake-sig") as sign, \
+             patch("cc_sentiment.upload.httpx.AsyncClient", return_value=mock_ctx):
+            uploader = Uploader()
+
+            async def do_mint() -> object:
+                return await uploader.mint_share(config)
+
+            result = anyio.run(do_mint)
+
+        assert result.id == "sh-abc123"
+        assert result.url == "https://sentiments.cc/share/sh-abc123"
+
+        sign.assert_called_once()
+        canonical = sign.call_args[0][0]
+        assert '"issued_at":' in canonical
+        assert canonical.startswith('{"issued_at":')
+
+        mock_http_client.post.assert_called_once()
+        posted = mock_http_client.post.call_args
+        body = posted.kwargs["content"].decode()
+        assert '"contributor_type":"github"' in body
+        assert '"contributor_id":"testuser"' in body
+        assert '"signature":"fake-sig"' in body
+        assert '"issued_at":' in body
+
+    def test_gist_wires_packed_contributor_id(self) -> None:
+        config = GistConfig(
+            contributor_id=ContributorId("octocat"),
+            key_path=Path("/tmp/id_ed25519"),
+            gist_id="abcdef1234567890abcd",
+        )
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.text = '{"id":"sh-x","url":"https://sentiments.cc/share/sh-x"}'
+
+        mock_http_client = AsyncMock()
+        mock_http_client.post.return_value = mock_response
+
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_http_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("cc_sentiment.upload.PayloadSigner.sign", return_value="sig"), \
+             patch("cc_sentiment.upload.httpx.AsyncClient", return_value=mock_ctx):
+            uploader = Uploader()
+
+            async def do_mint() -> object:
+                return await uploader.mint_share(config)
+
+            anyio.run(do_mint)
+
+        body = mock_http_client.post.call_args.kwargs["content"].decode()
+        assert '"contributor_id":"octocat/abcdef1234567890abcd"' in body
+
+
 class TestWireContributorId:
     def test_gist_packs_username_and_gist_id(self) -> None:
         config = GistConfig(

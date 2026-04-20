@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
 import httpx
@@ -48,7 +48,16 @@ def verifier() -> AsyncMock:
 
 
 @pytest.fixture
-async def client(db: Database, verifier: AsyncMock) -> httpx.AsyncClient:
+def warm_share_calls() -> list[str]:
+    return []
+
+
+@pytest.fixture
+async def client(
+    db: Database,
+    verifier: AsyncMock,
+    warm_share_calls: list[str],
+) -> httpx.AsyncClient:
     async def noop_spawn(days: int) -> None:
         pass
     async def noop_spawn_my_stat(contributor_id: str) -> None:
@@ -57,14 +66,19 @@ async def client(db: Database, verifier: AsyncMock) -> httpx.AsyncClient:
         pass
     async def noop_warm_og(u: str, t: str) -> None:
         pass
+    async def record_warm_share(share_id: str) -> None:
+        warm_share_calls.append(share_id)
     app = create_app(
         db=db,
         verifier=verifier,
         data_cache=DictCache(),
+        share_cache=DictCache(),
         spawn=noop_spawn,
         spawn_my_stat=noop_spawn_my_stat,
         revalidate=noop_revalidate,
         warm_og=noop_warm_og,
+        warm_share=record_warm_share,
+        dashboard_url="https://sentiments.cc",
         allowed_origins=["http://localhost:3000"],
         data_api_token="test-token",
     )
@@ -390,3 +404,94 @@ class TestData:
 
         r2 = await client.get("/data", headers=AUTH_HEADER)
         assert r2.json()["total_records"] == 1  # still cached
+
+
+def share_payload(**overrides: object) -> dict:
+    issued_at = overrides.pop("issued_at", datetime.now(timezone.utc).isoformat())
+    return {
+        "contributor_type": overrides.pop("contributor_type", "github"),
+        "contributor_id": overrides.pop("contributor_id", "octocat"),
+        "signature": overrides.pop("signature", "sig-content"),
+        "payload": {"issued_at": issued_at},
+        **overrides,
+    }
+
+
+class TestShare:
+    @pytest.mark.asyncio
+    async def test_mint_happy_path(
+        self, client: httpx.AsyncClient, warm_share_calls: list[str]
+    ) -> None:
+        response = await client.post("/share", json=share_payload())
+
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body.keys()) == {"id", "url"}
+        assert body["id"]
+        assert body["url"] == f"https://sentiments.cc/share/{body['id']}"
+        assert warm_share_calls == [body["id"]]
+
+    @pytest.mark.asyncio
+    async def test_mint_invalid_signature(
+        self, client: httpx.AsyncClient, verifier: AsyncMock
+    ) -> None:
+        verifier.verify_signature.return_value = False
+
+        response = await client.post("/share", json=share_payload())
+
+        assert response.status_code == 401
+        assert "Signature verification failed" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_mint_stale_issued_at(self, client: httpx.AsyncClient) -> None:
+        stale = (datetime.now(timezone.utc) - timedelta(seconds=600)).isoformat()
+        response = await client.post("/share", json=share_payload(issued_at=stale))
+
+        assert response.status_code == 400
+        assert "Stale" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_mint_future_issued_at(self, client: httpx.AsyncClient) -> None:
+        future = (datetime.now(timezone.utc) + timedelta(seconds=600)).isoformat()
+        response = await client.post("/share", json=share_payload(issued_at=future))
+
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_mint_gist_normalizes_contributor(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        response = await client.post("/share", json=share_payload(
+            contributor_type="gist",
+            contributor_id="octocat/abcdef1234567890abcd",
+        ))
+        assert response.status_code == 200
+
+        share_id = response.json()["id"]
+        fetched = await client.get(f"/share/{share_id}")
+        assert fetched.status_code == 200
+        record = fetched.json()
+        assert record["contributor_type"] == "gist"
+        assert record["contributor_id"] == "octocat"
+
+    @pytest.mark.asyncio
+    async def test_get_share_happy_path(self, client: httpx.AsyncClient) -> None:
+        mint = await client.post("/share", json=share_payload())
+        share_id = mint.json()["id"]
+
+        response = await client.get(f"/share/{share_id}")
+
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "public, max-age=86400"
+        record = response.json()
+        assert record["id"] == share_id
+        assert record["contributor_type"] == "github"
+        assert record["contributor_id"] == "octocat"
+        assert record["created_at"]
+
+    @pytest.mark.asyncio
+    async def test_get_share_not_found(self, client: httpx.AsyncClient) -> None:
+        response = await client.get("/share/does-not-exist")
+
+        assert response.status_code == 404
+        assert "Share not found" in response.json()["detail"]

@@ -3,13 +3,15 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import secrets
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Callable, ClassVar, Protocol
 
 import httpx
 import modal
-from fastapi import FastAPI, Header, Query, Request
+from fastapi import FastAPI, Header, Path, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -22,6 +24,9 @@ from cc_sentiment_server.models import (
     DaemonEventPayload,
     DataResponse,
     MyStatResponse,
+    ShareMintRequest,
+    ShareMintResponse,
+    ShareRecord,
     StatusResponse,
     UploadPayload,
     UploadResponse,
@@ -52,6 +57,10 @@ class RevalidateSpawner(Protocol):
 
 class OgWarmSpawner(Protocol):
     async def __call__(self, u: str, t: str) -> None: ...
+
+
+class ShareWarmSpawner(Protocol):
+    async def __call__(self, share_id: str) -> None: ...
 
 
 @dataclass
@@ -132,20 +141,45 @@ class MyStatCache:
         return payload
 
 
+@dataclass(frozen=True)
+class ShareStore:
+    cache: Cache
+
+    @staticmethod
+    def key(share_id: str) -> str:
+        return f"share:{share_id}"
+
+    async def get(self, share_id: str) -> dict | None:
+        try:
+            return await self.cache.get(self.key(share_id))
+        except KeyError:
+            return None
+
+    async def put(self, record: ShareRecord) -> None:
+        await self.cache.put(self.key(record.id), record.model_dump(mode="json"))
+
+
+SHARE_REQUEST_MAX_AGE_SECONDS = 300
+
+
 def create_app(
     db: Database,
     verifier: Verifier,
     data_cache: Cache,
+    share_cache: Cache,
     spawn: RefreshSpawner,
     spawn_my_stat: MyStatSpawner,
     revalidate: RevalidateSpawner,
     warm_og: OgWarmSpawner,
+    warm_share: ShareWarmSpawner,
+    dashboard_url: str,
     allowed_origins: list[str],
     data_api_token: str = "",
 ) -> FastAPI:
     limiter = Limiter(key_func=get_remote_address)
     stats_cache = StatsCache(data_cache, db, spawn)
     my_stat_cache = MyStatCache(data_cache, db)
+    share_store = ShareStore(share_cache)
 
     web_app = FastAPI(title="cc-sentiment", docs_url=None, redoc_url=None)
     web_app.state.limiter = limiter
@@ -231,12 +265,56 @@ def create_app(
         payload = await my_stat_cache.get_or_compute(contributor_id)
         if payload is None:
             return JSONResponse({"detail": "Not enough data yet"}, status_code=404)
-        if payload.get("text"):
-            await warm_og(contributor_id, payload["text"])
         return JSONResponse(
             payload,
             headers={"Cache-Control": "public, max-age=86400"},
         )
+
+    @web_app.post("/share")
+    @limiter.limit("10/minute")
+    async def mint_share(request: Request, body: ShareMintRequest) -> ShareMintResponse:
+        now = datetime.now(timezone.utc)
+        age = abs((now - body.payload.issued_at).total_seconds())
+        if age > SHARE_REQUEST_MAX_AGE_SECONDS:
+            return JSONResponse({"detail": "Stale or future issued_at"}, status_code=400)
+
+        if not await verifier.verify_signature(
+            body.contributor_type,
+            body.contributor_id,
+            json.dumps(
+                body.payload.model_dump(mode="json"),
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            body.signature,
+        ):
+            return JSONResponse({"detail": "Signature verification failed"}, status_code=401)
+
+        db_contributor_id = (
+            body.contributor_id.split("/", 1)[0]
+            if body.contributor_type == "gist"
+            else body.contributor_id
+        )
+        record = ShareRecord(
+            id=secrets.token_urlsafe(6),
+            contributor_type=body.contributor_type,
+            contributor_id=db_contributor_id,
+            created_at=now,
+        )
+        await share_store.put(record)
+        await warm_share(record.id)
+        return ShareMintResponse(id=record.id, url=f"{dashboard_url}/share/{record.id}")
+
+    @web_app.get("/share/{share_id}")
+    @limiter.limit("120/minute")
+    async def get_share(
+        request: Request,
+        share_id: str = Path(min_length=1, max_length=64),
+    ) -> ShareRecord:
+        record = await share_store.get(share_id)
+        if record is None:
+            return JSONResponse({"detail": "Share not found"}, status_code=404)
+        return JSONResponse(record, headers={"Cache-Control": "public, max-age=86400"})
 
     @web_app.get("/data")
     @limiter.limit("120/minute")
@@ -265,7 +343,10 @@ image = (
 
 @app.cls(
     image=image,
-    secrets=[modal.Secret.from_name("cc-sentiment-db")],
+    secrets=[
+        modal.Secret.from_name("cc-sentiment-db"),
+        modal.Secret.from_name("cc-sentiment-vercel"),
+    ],
     scaledown_window=600,
     min_containers=1,
     enable_memory_snapshot=True,
@@ -274,10 +355,12 @@ image = (
 class API:
     KEYS_DICT: ClassVar[modal.Dict] = modal.Dict.from_name("github-keys", create_if_missing=True)
     DATA_DICT: ClassVar[modal.Dict] = modal.Dict.from_name("data-cache", create_if_missing=True)
+    SHARE_DICT: ClassVar[modal.Dict] = modal.Dict.from_name("share-records", create_if_missing=True)
 
     db: Database
     verifier: Verifier
     data_cache: ModalDictCache
+    share_cache: ModalDictCache
 
     @modal.enter()
     async def startup(self) -> None:
@@ -285,6 +368,7 @@ class API:
         await self.db.open()
         self.verifier = Verifier(key_cache=ModalKeyCache(self.KEYS_DICT))
         self.data_cache = ModalDictCache(self.DATA_DICT)
+        self.share_cache = ModalDictCache(self.SHARE_DICT)
         await refresh_stats.spawn.aio(StatsCache.DEFAULT_DAYS)
 
     @modal.exit()
@@ -301,11 +385,21 @@ class API:
             await revalidate_dashboard.spawn.aio(tag)
         async def warm_og(u: str, t: str) -> None:
             await warm_og_image.spawn.aio(u, t)
+        async def warm_share(share_id: str) -> None:
+            await warm_share_card.spawn.aio(share_id)
         return create_app(
-            self.db, self.verifier, self.data_cache, spawn, spawn_my_stat, revalidate,
-            warm_og,
-            os.environ["ALLOWED_ORIGINS"].split(","),
-            os.environ["DATA_API_TOKEN"],
+            db=self.db,
+            verifier=self.verifier,
+            data_cache=self.data_cache,
+            share_cache=self.share_cache,
+            spawn=spawn,
+            spawn_my_stat=spawn_my_stat,
+            revalidate=revalidate,
+            warm_og=warm_og,
+            warm_share=warm_share,
+            dashboard_url=os.environ["DASHBOARD_URL"],
+            allowed_origins=os.environ["ALLOWED_ORIGINS"].split(","),
+            data_api_token=os.environ["DATA_API_TOKEN"],
         )
 
 
@@ -354,6 +448,18 @@ async def warm_og_image(u: str, t: str) -> None:
             params={"u": u, "t": t},
         )
     print(f"warm_og u={u!r} t={t!r} status={response.status_code}")
+
+
+@app.function(image=image, enable_memory_snapshot=True)
+async def warm_share_card(share_id: str) -> None:
+    headers = {"User-Agent": "Twitterbot/1.0", "Accept": "*/*"}
+    async with httpx.AsyncClient(headers=headers, timeout=15.0) as client:
+        page, og = await asyncio.gather(
+            client.get(f"https://sentiments.cc/share/{share_id}"),
+            client.get(f"https://sentiments.cc/share/{share_id}/og"),
+            return_exceptions=True,
+        )
+    print(f"warm_share id={share_id!r} page={getattr(page, 'status_code', page)!r} og={getattr(og, 'status_code', og)!r}")
 
 
 @app.function(image=image, secrets=[modal.Secret.from_name("cc-sentiment-vercel")], enable_memory_snapshot=True)

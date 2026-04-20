@@ -20,6 +20,10 @@ from cc_sentiment.upload import Uploader
 from cc_sentiment.tui.screens.dialog import Dialog
 from cc_sentiment.tui.view import ShareState
 
+PREPARING_LABEL = "Preparing share…"
+TWEET_LABEL = "Tweet it"
+MINT_FAILED_LABEL = "Share unavailable"
+
 
 @dataclass
 class CardPoller:
@@ -101,19 +105,35 @@ class StatShareScreen(Dialog[None]):
             yield Static(ShareState.stat_line(self.stat), classes="stat")
             yield Static(ShareState.DETAIL, classes="detail")
             with Horizontal():
-                yield Button("Tweet it", id="stat-tweet", variant="primary")
+                yield Button(PREPARING_LABEL, id="stat-tweet", variant="primary", disabled=True)
                 yield Button("Not now", id="stat-skip", variant="default")
 
     def on_mount(self) -> None:
+        self.share_id: str | None = None
         self.app.run_worker(
-            Uploader().prewarm_share_card(self.config, self.stat),
-            name="card-prewarm-screen", exit_on_error=False,
+            self._mint_and_prewarm(),
+            name="card-mint-screen", exit_on_error=False,
         )
+
+    async def _mint_and_prewarm(self) -> None:
+        uploader = Uploader()
+        try:
+            response = await uploader.mint_share(self.config)
+        except (httpx.HTTPError, httpx.InvalidURL):
+            self.query_one("#stat-tweet", Button).label = MINT_FAILED_LABEL
+            return
+        self.share_id = response.id
+        tweet_button = self.query_one("#stat-tweet", Button)
+        tweet_button.label = TWEET_LABEL
+        tweet_button.disabled = False
+        await uploader.prewarm_share_card(response.id)
 
     @on(Button.Pressed, "#stat-tweet")
     async def on_tweet_button(self) -> None:
+        if self.share_id is None:
+            return
         await anyio.to_thread.run_sync(
-            webbrowser.open, Uploader.tweet_url(self.config, self.stat)
+            webbrowser.open, Uploader.tweet_url(self.share_id, self.stat.tweet_text)
         )
         self.dismiss(None)
 

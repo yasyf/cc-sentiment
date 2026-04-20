@@ -21,6 +21,7 @@ from .config import (
 )
 from .daemon import DaemonEvent, DaemonEventPayload, DaemonEventType
 from .record import CLIENT_VERSION, SentimentRecord, UploadPayload
+from .share import ShareMintPayload, ShareMintRequest, ShareMintResponse
 from .stats import MyStat
 from .transcript import (
     AssistantMessage,
@@ -54,6 +55,9 @@ __all__ = [
     "SentimentRecord",
     "SentimentScore",
     "SessionId",
+    "ShareMintPayload",
+    "ShareMintRequest",
+    "ShareMintResponse",
     "ToolCall",
     "TranscriptMessage",
     "UploadPayload",

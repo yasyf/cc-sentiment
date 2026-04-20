@@ -609,33 +609,16 @@ class CCSentimentApp(App[None]):
     def _on_card_ready(self, stat: MyStat) -> None:
         if self.state.config is None:
             return
-        self.run_worker(
-            self._prewarm_share_card(self.state.config, stat),
-            name="card-prewarm", exit_on_error=False,
-        )
         self.view.show_share(self.state.config, stat)
         self.push_screen(StatShareScreen(self.state.config, stat))
         if isinstance(self.stage, IdleAfterUpload):
             self._update_status(self._uploaded_status_text())
 
     @on(Button.Pressed, "#share-tweet")
-    async def on_share_tweet(self) -> None:
+    def on_share_tweet(self) -> None:
         share = self.view.share
         assert share.config is not None and share.stat is not None
-        await anyio.to_thread.run_sync(
-            webbrowser.open, Uploader.tweet_url(share.config, share.stat)
-        )
-
-    async def _prewarm_share_card(
-        self, config: SSHConfig | GPGConfig | GistConfig, stat: MyStat
-    ) -> None:
-        self._set_debug(share_prewarm="firing")
-        try:
-            await Uploader().prewarm_share_card(config, stat)
-        except (httpx.HTTPError, OSError) as exc:
-            self._set_debug(share_prewarm=f"err: {exc.__class__.__name__}")
-            return
-        self._set_debug(share_prewarm="ok")
+        self.push_screen(StatShareScreen(share.config, share.stat))
 
     def _on_card_state(self, attempts: int, status: str, elapsed: float, stopped: str | None) -> None:
         self._set_debug(

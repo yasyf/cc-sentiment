@@ -57,3 +57,20 @@ export interface DataResponse {
 	avg_write_edit_ratio: number | null;
 	avg_subagent_count: number | null;
 }
+
+export type ContributorType = 'github' | 'gpg' | 'gist';
+
+export interface ShareRecord {
+	id: string;
+	contributor_type: ContributorType;
+	contributor_id: string;
+	created_at: string;
+}
+
+export interface MyStatResponse {
+	kind: string;
+	percentile: number;
+	text: string;
+	tweet_text: string;
+	total_contributors: number;
+}

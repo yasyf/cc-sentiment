@@ -1,8 +1,23 @@
 import { env } from '$env/dynamic/private';
 import { z } from 'zod';
-import type { DataResponse } from './types.js';
+import type { DataResponse, MyStatResponse, ShareRecord } from './types.js';
 
 const API_BASE_URL = 'https://anetaco--cc-sentiment-api-serve.modal.run';
+
+const ShareRecordSchema = z.object({
+	id: z.string(),
+	contributor_type: z.enum(['github', 'gpg', 'gist']),
+	contributor_id: z.string(),
+	created_at: z.string(),
+});
+
+const MyStatResponseSchema = z.object({
+	kind: z.string(),
+	percentile: z.number(),
+	text: z.string(),
+	tweet_text: z.string(),
+	total_contributors: z.number(),
+});
 
 const DataResponseSchema = z.object({
 	timeline: z.array(z.object({
@@ -52,4 +67,36 @@ export async function fetchData(fetch: typeof globalThis.fetch): Promise<DataRes
 
 	const json: unknown = await response.json();
 	return DataResponseSchema.parse(json);
+}
+
+export async function fetchShare(
+	fetch: typeof globalThis.fetch,
+	id: string,
+): Promise<ShareRecord | null> {
+	const response = await fetch(`${API_BASE_URL}/share/${encodeURIComponent(id)}`);
+
+	if (response.status === 404) return null;
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status} ${response.statusText}`);
+	}
+
+	const json: unknown = await response.json();
+	return ShareRecordSchema.parse(json);
+}
+
+export async function fetchMyStat(
+	fetch: typeof globalThis.fetch,
+	contributorId: string,
+): Promise<MyStatResponse | null> {
+	const response = await fetch(
+		`${API_BASE_URL}/my-stats?contributor_id=${encodeURIComponent(contributorId)}`,
+	);
+
+	if (response.status === 404) return null;
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status} ${response.statusText}`);
+	}
+
+	const json: unknown = await response.json();
+	return MyStatResponseSchema.parse(json);
 }

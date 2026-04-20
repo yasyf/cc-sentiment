@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 __all__ = [
     "SentimentRecord",
@@ -19,6 +19,10 @@ __all__ = [
     "MyStatResponse",
     "DaemonEvent",
     "DaemonEventPayload",
+    "ShareMintPayload",
+    "ShareMintRequest",
+    "ShareMintResponse",
+    "ShareRecord",
 ]
 
 
@@ -157,3 +161,34 @@ class DaemonEventPayload(BaseModel):
     contributor_id: str = Field(min_length=1)
     signature: str = Field(min_length=1)
     event: DaemonEvent
+
+
+class ShareMintPayload(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    issued_at: AwareDatetime
+
+
+class ShareMintRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    contributor_type: Literal["github", "gpg", "gist"]
+    contributor_id: str = Field(min_length=1)
+    signature: str = Field(min_length=1)
+    payload: ShareMintPayload
+
+
+class ShareRecord(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str = Field(min_length=1)
+    contributor_type: Literal["github", "gpg", "gist"]
+    contributor_id: str = Field(min_length=1)
+    created_at: datetime
+
+
+class ShareMintResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str = Field(min_length=1)
+    url: str = Field(min_length=1)

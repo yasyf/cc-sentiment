@@ -1133,19 +1133,31 @@ class StatShareHarness(App[None]):
         self.push_screen(StatShareScreen(self.config, self.stat))
 
 
+def stub_mint_share(share_id: str = "sh-abc123") -> AsyncMock:
+    from cc_sentiment.models import ShareMintResponse
+    return AsyncMock(return_value=ShareMintResponse(
+        id=share_id,
+        url=f"https://sentiments.cc/share/{share_id}",
+    ))
+
+
 async def test_stat_share_renders_stat_text():
     harness = StatShareHarness(GITHUB_CONFIG, STAT)
-    async with harness.run_test() as pilot:
-        await pilot.pause(delay=0.3)
-        text = " ".join(
-            str(w.render()) for w in pilot.app.screen.query("Label, Static")
-        )
-        assert "nicer to Claude than 72% of developers" in text
+    with patch("cc_sentiment.tui.screens.stat_share.Uploader.mint_share", new=stub_mint_share()), \
+         patch("cc_sentiment.tui.screens.stat_share.Uploader.prewarm_share_card", new=AsyncMock()):
+        async with harness.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            text = " ".join(
+                str(w.render()) for w in pilot.app.screen.query("Label, Static")
+            )
+            assert "nicer to Claude than 72% of developers" in text
 
 
-async def test_stat_share_tweet_button_opens_twitter_with_username():
+async def test_stat_share_tweet_button_opens_share_url():
     harness = StatShareHarness(GITHUB_CONFIG, STAT)
-    with patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
+    with patch("cc_sentiment.tui.screens.stat_share.Uploader.mint_share", new=stub_mint_share("sh-xyz789")), \
+         patch("cc_sentiment.tui.screens.stat_share.Uploader.prewarm_share_card", new=AsyncMock()), \
+         patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await pilot.click("#stat-tweet")
@@ -1154,28 +1166,40 @@ async def test_stat_share_tweet_button_opens_twitter_with_username():
     mock_open.assert_called_once()
     url = mock_open.call_args[0][0]
     assert "twitter.com/intent/tweet" in url
-    assert "testuser" in url
+    assert "share%2Fsh-xyz789" in url or "share/sh-xyz789" in url
     assert "nicer+to+Claude" in url or "nicer%20to%20Claude" in url
 
 
-async def test_stat_share_gpg_user_omits_username_from_share_url():
-    harness = StatShareHarness(GPG_CONFIG, STAT)
-    with patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
+async def test_stat_share_tweet_button_disabled_until_mint_resolves():
+    harness = StatShareHarness(GITHUB_CONFIG, STAT)
+    mint_event = __import__("anyio").Event()
+
+    async def slow_mint(self, config):
+        await mint_event.wait()
+        from cc_sentiment.models import ShareMintResponse
+        return ShareMintResponse(id="sh-late", url="https://sentiments.cc/share/sh-late")
+
+    with patch("cc_sentiment.tui.screens.stat_share.Uploader.mint_share", new=slow_mint), \
+         patch("cc_sentiment.tui.screens.stat_share.Uploader.prewarm_share_card", new=AsyncMock()), \
+         patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
         async with harness.run_test() as pilot:
-            await pilot.pause(delay=0.3)
+            await pilot.pause(delay=0.1)
+            tweet = pilot.app.screen.query_one("#stat-tweet", Button)
+            assert tweet.disabled is True
             await pilot.click("#stat-tweet")
             await pilot.pause()
+            assert not mock_open.called
 
-    mock_open.assert_called_once()
-    url = mock_open.call_args[0][0]
-    assert "twitter.com/intent/tweet" in url
-    assert "u%3Dgpg-user-id" not in url
-    assert "u=gpg-user-id" not in url
+            mint_event.set()
+            await pilot.pause(delay=0.3)
+            assert tweet.disabled is False
 
 
 async def test_stat_share_skip_dismisses_without_opening_browser():
     harness = StatShareHarness(GITHUB_CONFIG, STAT)
-    with patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
+    with patch("cc_sentiment.tui.screens.stat_share.Uploader.mint_share", new=stub_mint_share()), \
+         patch("cc_sentiment.tui.screens.stat_share.Uploader.prewarm_share_card", new=AsyncMock()), \
+         patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await pilot.click("#stat-skip")
@@ -1186,7 +1210,9 @@ async def test_stat_share_skip_dismisses_without_opening_browser():
 
 async def test_stat_share_escape_dismisses():
     harness = StatShareHarness(GITHUB_CONFIG, STAT)
-    with patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
+    with patch("cc_sentiment.tui.screens.stat_share.Uploader.mint_share", new=stub_mint_share()), \
+         patch("cc_sentiment.tui.screens.stat_share.Uploader.prewarm_share_card", new=AsyncMock()), \
+         patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await pilot.press("escape")

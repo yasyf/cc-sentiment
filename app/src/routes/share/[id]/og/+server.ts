@@ -1,6 +1,7 @@
 import { ImageResponse } from '@vercel/og';
 import { addCacheTag } from '@vercel/functions';
-import { fetchData } from '$lib/api.js';
+import { error } from '@sveltejs/kit';
+import { fetchData, fetchMyStat, fetchShare } from '$lib/api.js';
 import { verdictFor, type VerdictSeverity } from '$lib/verdict.js';
 import { describeTrend } from '$lib/trend.js';
 import type { RequestHandler } from './$types.js';
@@ -13,13 +14,116 @@ const VERDICT_HEX: Record<VerdictSeverity, string> = {
 	5: '#059669',
 };
 
-export const config = { isr: { expiration: 604800 } };
+export const config = { isr: { expiration: 2_592_000 } };
 
 const WIDTH = 1200;
 const HEIGHT = 630;
 
-export const GET: RequestHandler = async ({ fetch }) => {
-	addCacheTag('dashboard');
+export const GET: RequestHandler = async ({ fetch, params }) => {
+	const record = await fetchShare(fetch, params.id);
+	if (!record) throw error(404, 'Share not found');
+
+	addCacheTag(`share:${record.id}`);
+
+	const stat = await fetchMyStat(fetch, record.contributor_id);
+	const canShowAvatar =
+		(record.contributor_type === 'github' || record.contributor_type === 'gist') && stat;
+
+	if (canShowAvatar) return personalCard(record.contributor_id, stat.text);
+	return aggregateCard(fetch);
+};
+
+function personalCard(contributorId: string, text: string): ImageResponse {
+	const avatarUrl = `https://github.com/${encodeURIComponent(contributorId)}.png?size=400`;
+
+	const html = {
+		type: 'div',
+		props: {
+			style: {
+				display: 'flex',
+				width: '100%',
+				height: '100%',
+				padding: '60px 80px',
+				backgroundColor: '#fafafa',
+				fontFamily: 'Inter, system-ui, sans-serif',
+				alignItems: 'center',
+				gap: '64px',
+			},
+			children: [
+				{
+					type: 'img',
+					props: {
+						src: avatarUrl,
+						width: 320,
+						height: 320,
+						style: {
+							borderRadius: '50%',
+							border: '6px solid #e4e4e7',
+						},
+					},
+				},
+				{
+					type: 'div',
+					props: {
+						style: { display: 'flex', flexDirection: 'column', flex: 1 },
+						children: [
+							{
+								type: 'span',
+								props: {
+									style: {
+										fontSize: '24px',
+										color: '#71717a',
+										letterSpacing: '0.02em',
+									},
+									children: `@${contributorId}`,
+								},
+							},
+							{
+								type: 'div',
+								props: {
+									style: {
+										marginTop: '24px',
+										fontSize: '52px',
+										fontWeight: 700,
+										color: '#18181b',
+										lineHeight: 1.15,
+										display: 'flex',
+										flexWrap: 'wrap',
+									},
+									children: [
+										{
+											type: 'span',
+											props: { style: { color: '#18181b' }, children: 'is ' },
+										},
+										{
+											type: 'span',
+											props: { style: { color: '#6366f1' }, children: `${text}.` },
+										},
+									],
+								},
+							},
+							{
+								type: 'div',
+								props: {
+									style: {
+										marginTop: '40px',
+										fontSize: '22px',
+										color: '#71717a',
+									},
+									children: 'cc-sentiment · sentiments.cc',
+								},
+							},
+						],
+					},
+				},
+			],
+		},
+	};
+
+	return new ImageResponse(html, { width: WIDTH, height: HEIGHT });
+}
+
+async function aggregateCard(fetch: typeof globalThis.fetch): Promise<ImageResponse> {
 	const data = await fetchData(fetch);
 
 	const total = data.distribution.reduce((s, d) => s + d.count, 0);
@@ -128,4 +232,4 @@ export const GET: RequestHandler = async ({ fetch }) => {
 	};
 
 	return new ImageResponse(html, { width: WIDTH, height: HEIGHT });
-};
+}
