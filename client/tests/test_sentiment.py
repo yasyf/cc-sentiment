@@ -121,7 +121,7 @@ class TestClassifierIntegration:
 
         mock_model = MagicMock()
         mock_tokenizer = MagicMock()
-        mock_tokenizer.apply_chat_template.return_value = [1, 2, 3]
+        mock_tokenizer.apply_chat_template.return_value = [1, 2, 3, 4, 5]
 
         mock_batch_result = MagicMock()
         mock_batch_result.texts = ["4"]
@@ -135,14 +135,15 @@ class TestClassifierIntegration:
         with patch.dict(sys.modules, {
             "mlx_lm": mock_mlx_lm,
         }), patch("cc_sentiment.patches.apply_kv_cache_patch"), \
+             patch("cc_sentiment.sentiment.AdapterFuser.ensure_fused"), \
              patch("cc_sentiment.sentiment.SentimentClassifier.make_score_logit_processor", return_value=mock_logit_proc):
             classifier = SentimentClassifier.__new__(SentimentClassifier)
             classifier.model = mock_model
             classifier.tokenizer = mock_tokenizer
             classifier.logit_processor = mock_logit_proc
             classifier.system_prompt = SYSTEM_PROMPT
-            classifier.system_tokens = [1, 2, 3]
-            classifier._load_prompt_caches = MagicMock(return_value=[None])
+            classifier.system_tokens = [1, 2]
+            classifier.base_cache = [MagicMock()]
 
             bucket = make_bucket([("user", "this works perfectly!")])
             scores = classifier._score_chunk([bucket])

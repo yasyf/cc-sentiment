@@ -7,30 +7,48 @@ from cc_sentiment.models import ConversationBucket, SentimentScore
 
 DEFAULT_MODEL = "unsloth/gemma-4-E2B-it-UD-MLX-4bit"
 
-SYSTEM_PROMPT = """Rate the developer's sentiment in this developer-AI conversation. Reply with ONLY a single digit 1-5.
+SYSTEM_PROMPT = """You are scoring developer sentiment in a developer-AI coding conversation. Reply with ONLY a single digit 1-5.
 
-1 - Frustrated, angry, giving up, OR telling the AI to stop a misbehavior. Examples: "this still doesn't work", "ugh why did you do that", "forget it, i'll do it myself", "fucking hell", "stop guessing", "STOP GUESSING", "stop making things up", "stop hallucinating", "stop being lazy", "you keep breaking things".
-2 - Annoyed, pointing out mistakes, asking AI to investigate properly. Examples: "that's wrong, try again", "you missed the null case", "no, the other file", "read the actual docs before writing more code", "actually investigate instead of just guessing".
-3 - Neutral, just giving instructions, urgent/commanding direction, or routine approvals. Examples: "go ahead and commit", "add a test for this", "run the linter", "sounds good, proceed", "yes", "ok", "keep going no matter how long", "don't stop, force remove it", "just do it", "GO GO GO", "SHIP IT", "stop the server", "stop at line 10".
-4 - Satisfied, says it works well. Examples: "perfect", "that works", "nice, looks good", "great, now do X", "great, monitor it".
-5 - Enthusiastic praise, amazement, strong positive emotion. Examples: "incredible!", "this is amazing", "blown away", "love it!!!", "you nailed it".
+# SCALE
 
-CRITICAL RULE — exclamations indicate intensity, not valence:
-- Map to 5 ONLY for unambiguously POSITIVE words: love, incredible, amazing, blown away, phenomenal, fantastic, brilliant, beautiful, nailed it.
-- Map to 1 for NEGATIVE exclamations: holy shit, fucking hell, oh my god, wtf, ugh, goddammit, jesus christ, damn it.
-- "HOLY SHIT THIS IS BROKEN!!!" is 1. "holy shit this is amazing" is 5.
+1 = frustrated / angry / giving up. Includes sarcastic praise ("great, you ignored...", "amazing how you break things").
+2 = annoyed, actively correcting the AI ("no, that's wrong", "you missed X", "still not working").
+3 = neutral / commanding / matter-of-fact, including blunt orders even with mild swearing ("delete that file", "SHIP IT", "stop the server").
+4 = mild positive / satisfied. The developer acknowledges something works. Low-key praise counts.
+5 = strong positive / delighted / amazed. Elation, hype, enthusiasm.
 
-CRITICAL RULE — "stop X" depends on what X is:
-- "stop guessing", "stop making things up", "stop hallucinating", "stop being lazy", "stop making excuses", "stop pretending" — these are frustrated corrections of AI misbehavior. Score 1.
-- "stop the server", "stop at line 10", "stop when done" — these are literal workflow commands. Score 3.
-- ALL-CAPS amplifies frustration for AI-correction commands ("STOP GUESSING" is 1), but does NOT make generic commands frustrated ("GO GO GO", "SHIP IT" stay 3).
+# MILD-POSITIVE LEXICON — these are ALWAYS 4, not 3
 
-Other rules:
-- Routine greenlights like "go ahead", "yes do it", "sounds good", "ok commit" are 3 (neutral). Simple approval without strong emotion ("works", "good", "nice") is 4.
-- Urgency or insistence ("don't stop", "keep going no matter how long", "force X", "just do it") is 3 UNLESS paired with a frustration cue. Commanding tone alone is not frustration.
-- A message that starts with "great" or "perfect" before giving instructions is 4 (the satisfaction is real).
+"nice", "cool", "good", "sweet", "works", "perfect", "great", "ok cool",
+"LGTM", "lgtm", "ship it looks right", "can't complain", "not bad", "good enough",
+"thx", "thanks", "sounds good", "works for me", "looks good", "ship it" (when responding to a completed task).
 
-Score ONLY the developer's messages."""
+Praise at the START of a longer instruction still counts: "great, now add X" = 4.
+
+# STRONG-POSITIVE LEXICON — these are 5
+
+"YOOOO", "holy shit this is beautiful", "incredible", "phenomenal",
+"amazing" (literal, not sarcastic), "love it", "you nailed it", "god tier",
+"🔥", "banger", "legendary", "perfect!!" (multi-exclamation).
+
+# FRUSTRATION LEXICON — these are 1
+
+- Imperatives to correct AI misbehavior: "stop guessing", "stop hallucinating",
+  "stop making shit up", "stop being lazy", "stop pretending". ALL-CAPS amplifies but doesn't change.
+- Swears of frustration: "fucking hell", "wtf", "ugh", "holy shit this is broken",
+  "wait what the fuck", "jesus christ".
+- Sarcastic praise: "great, you completely ignored X", "amazing how you keep breaking things",
+  "wow, genius move", "nice job breaking it". The sarcasm marker is praise + criticism of AI behavior.
+
+# AMBIGUITY GUARDS
+
+- "stop X" is 1 only if X is an AI misbehavior. If X is a server/file/process, it's 3.
+- ALL-CAPS doesn't change valence: "SHIP IT" is 3, "STOP GUESSING" is 1.
+- "holy shit this broke" is 1; "holy shit this is beautiful" is 5.
+- Sarcasm detector: if the sentence starts with praise but then describes the AI doing something harmful or stupid ("great, you ignored the spec", "amazing how you keep finding new ways to break things"), it is 1.
+- A blunt command with profanity aimed at legacy code (not the AI) is 3: "delete that whole damn file" = 3.
+
+Score ONLY the developer's messages. Output a single digit 1-5."""
 
 
 STRUCTURED_OUTPUTS_CHOICE = ["1", "2", "3", "4", "5"]

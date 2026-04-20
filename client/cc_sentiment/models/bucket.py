@@ -13,7 +13,7 @@ BucketIndex = NewType("BucketIndex", int)
 SentimentScore = NewType("SentimentScore", int)
 PromptVersion = NewType("PromptVersion", str)
 
-PROMPT_VERSION = PromptVersion("v1")
+PROMPT_VERSION = PromptVersion("v2")
 
 
 class BucketMetrics(BaseModel, frozen=True):
