@@ -21,3 +21,23 @@
 	--color-sentiment-4: #16a34a;
 	--color-sentiment-5: #0891b2;
 }
+
+html.dark {
+	--color-bg: #09090b;
+	--color-bg-card: #18181b;
+	--color-bg-hover: #27272a;
+	--color-bg-code: #27272a;
+	--color-text: #fafafa;
+	--color-text-secondary: #d4d4d8;
+	--color-text-muted: #a1a1aa;
+	--color-text-dim: #71717a;
+	--color-accent: #818cf8;
+	--color-accent-hover: #a5b4fc;
+	--color-border: #27272a;
+	--color-border-light: #1f1f22;
+	--color-sentiment-1: #f87171;
+	--color-sentiment-2: #fb923c;
+	--color-sentiment-3: #fbbf24;
+	--color-sentiment-4: #4ade80;
+	--color-sentiment-5: #22d3ee;
+}

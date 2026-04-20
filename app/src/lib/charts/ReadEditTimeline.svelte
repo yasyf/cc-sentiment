@@ -5,7 +5,7 @@
 	import 'chartjs-adapter-luxon';
 	import { DateTime } from 'luxon';
 	import type { TimelinePoint } from '$lib/types.js';
-	import { TICK, TOOLTIP } from '$lib/chart-theme.js';
+	import { chartTheme } from '$lib/chart-theme.js';
 	import {
 		bucketByDayPart,
 		bucketByDay,
@@ -36,10 +36,10 @@
 	});
 
 	function colorFor(v: number | null): string {
-		if (v == null) return 'rgba(161, 161, 170, 0.3)';
-		if (v >= 4) return '#16a34a';
-		if (v >= 2) return '#ca8a04';
-		return '#dc2626';
+		if (v == null) return chartTheme.DISABLED_BAR;
+		if (v >= 4) return chartTheme.SENTIMENT[4];
+		if (v >= 2) return chartTheme.SENTIMENT[3];
+		return chartTheme.SENTIMENT[1];
 	}
 
 	const yMax = $derived.by(() => {
@@ -78,7 +78,7 @@
 					source: 'data' as const,
 					autoSkip: true,
 					maxRotation: 0,
-					color: TICK,
+					color: chartTheme.TICK,
 					font: { size: range === 'week' ? 12 : 11 },
 					callback: (value: number | string) => {
 						const dt = DateTime.fromMillis(Number(value), { zone: DISPLAY_TZ });
@@ -94,15 +94,15 @@
 				min: 0,
 				max: yMax,
 				grid: { display: false },
-				ticks: { color: TICK, font: { size: 11 } },
+				ticks: { color: chartTheme.TICK, font: { size: 11 } },
 				border: { display: false },
-				title: { display: true, text: 'read:edit ratio', color: TICK, font: { size: 10 } }
+				title: { display: true, text: 'read:edit ratio', color: chartTheme.TICK, font: { size: 10 } }
 			}
 		},
 		plugins: {
 			legend: { display: false },
 			tooltip: {
-				...TOOLTIP,
+				...chartTheme.TOOLTIP,
 				callbacks: {
 					title: (items: { dataIndex: number }[]) => {
 						const b = buckets[items[0]?.dataIndex];
@@ -126,7 +126,7 @@
 						type: 'box' as const,
 						yMin: 4,
 						yMax: yMax,
-						backgroundColor: 'rgba(22, 163, 74, 0.04)',
+						backgroundColor: chartTheme.ZONE_GOOD,
 						borderWidth: 0,
 						drawTime: 'beforeDatasetsDraw' as const
 					},
@@ -134,7 +134,7 @@
 						type: 'box' as const,
 						yMin: 2,
 						yMax: 4,
-						backgroundColor: 'rgba(202, 138, 4, 0.04)',
+						backgroundColor: chartTheme.ZONE_WARN,
 						borderWidth: 0,
 						drawTime: 'beforeDatasetsDraw' as const
 					},
@@ -142,7 +142,7 @@
 						type: 'box' as const,
 						yMin: 0,
 						yMax: 2,
-						backgroundColor: 'rgba(220, 38, 38, 0.04)',
+						backgroundColor: chartTheme.ZONE_BAD,
 						borderWidth: 0,
 						drawTime: 'beforeDatasetsDraw' as const
 					}

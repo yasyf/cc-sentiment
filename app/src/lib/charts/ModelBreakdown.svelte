@@ -2,7 +2,7 @@
 	import { Bar } from 'svelte5-chartjs';
 	import { Chart, BarElement, CategoryScale, LinearScale, Tooltip } from 'chart.js';
 	import type { ModelBreakdown as ModelBreakdownData } from '$lib/types.js';
-	import { GRID, TICK, TOOLTIP, sentimentColor, SENTIMENT_EMOJI, paddedRange } from '$lib/chart-theme.js';
+	import { chartTheme, sentimentColor, SENTIMENT_EMOJI, paddedRange } from '$lib/chart-theme.js';
 
 	Chart.register(BarElement, CategoryScale, LinearScale, Tooltip);
 
@@ -39,9 +39,9 @@
 			x: {
 				min: xRange.min,
 				max: xRange.max,
-				grid: { color: GRID },
+				grid: { color: chartTheme.GRID },
 				ticks: {
-					color: TICK,
+					color: chartTheme.TICK,
 					font: { size: 14 },
 					stepSize: 1,
 					callback: (v: number | string) => {
@@ -53,14 +53,14 @@
 			},
 			y: {
 				grid: { display: false },
-				ticks: { color: TICK, font: { size: 11 } },
+				ticks: { color: chartTheme.TICK, font: { size: 11 } },
 				border: { display: false }
 			}
 		},
 		plugins: {
 			legend: { display: false },
 			tooltip: {
-				...TOOLTIP,
+				...chartTheme.TOOLTIP,
 				callbacks: {
 					label: (ctx: { parsed: { x: number | null }; dataIndex: number }) => {
 						const d = sorted[ctx.dataIndex];

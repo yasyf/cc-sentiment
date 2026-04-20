@@ -5,7 +5,7 @@
 	import 'chartjs-adapter-luxon';
 	import { DateTime } from 'luxon';
 	import type { TimelinePoint } from '$lib/types.js';
-	import { TICK, TOOLTIP } from '$lib/chart-theme.js';
+	import { chartTheme } from '$lib/chart-theme.js';
 	import {
 		bucketByDayPart,
 		bucketByDay,
@@ -36,11 +36,11 @@
 	});
 
 	function colorFor(v: number | null): string {
-		if (v == null) return 'rgba(161, 161, 170, 0.3)';
+		if (v == null) return chartTheme.DISABLED_BAR;
 		const pct = v * 100;
-		if (pct <= 20) return '#16a34a';
-		if (pct <= 50) return '#ca8a04';
-		return '#dc2626';
+		if (pct <= 20) return chartTheme.SENTIMENT[4];
+		if (pct <= 50) return chartTheme.SENTIMENT[3];
+		return chartTheme.SENTIMENT[1];
 	}
 
 	const chartData = $derived({
@@ -73,7 +73,7 @@
 					source: 'data' as const,
 					autoSkip: true,
 					maxRotation: 0,
-					color: TICK,
+					color: chartTheme.TICK,
 					font: { size: range === 'week' ? 12 : 11 },
 					callback: (value: number | string) => {
 						const dt = DateTime.fromMillis(Number(value), { zone: DISPLAY_TZ });
@@ -89,15 +89,15 @@
 				min: 0,
 				max: 100,
 				grid: { display: false },
-				ticks: { color: TICK, font: { size: 11 }, callback: (v: number | string) => `${v}%` },
+				ticks: { color: chartTheme.TICK, font: { size: 11 }, callback: (v: number | string) => `${v}%` },
 				border: { display: false },
-				title: { display: true, text: 'edits without prior read', color: TICK, font: { size: 10 } }
+				title: { display: true, text: 'edits without prior read', color: chartTheme.TICK, font: { size: 10 } }
 			}
 		},
 		plugins: {
 			legend: { display: false },
 			tooltip: {
-				...TOOLTIP,
+				...chartTheme.TOOLTIP,
 				callbacks: {
 					title: (items: { dataIndex: number }[]) => {
 						const b = buckets[items[0]?.dataIndex];
@@ -121,7 +121,7 @@
 						type: 'box' as const,
 						yMin: 0,
 						yMax: 20,
-						backgroundColor: 'rgba(22, 163, 74, 0.04)',
+						backgroundColor: chartTheme.ZONE_GOOD,
 						borderWidth: 0,
 						drawTime: 'beforeDatasetsDraw' as const
 					},
@@ -129,7 +129,7 @@
 						type: 'box' as const,
 						yMin: 20,
 						yMax: 50,
-						backgroundColor: 'rgba(202, 138, 4, 0.04)',
+						backgroundColor: chartTheme.ZONE_WARN,
 						borderWidth: 0,
 						drawTime: 'beforeDatasetsDraw' as const
 					},
@@ -137,7 +137,7 @@
 						type: 'box' as const,
 						yMin: 50,
 						yMax: 100,
-						backgroundColor: 'rgba(220, 38, 38, 0.04)',
+						backgroundColor: chartTheme.ZONE_BAD,
 						borderWidth: 0,
 						drawTime: 'beforeDatasetsDraw' as const
 					}

@@ -2,7 +2,7 @@
 	import { Bar } from 'svelte5-chartjs';
 	import { Chart, BarElement, CategoryScale, LinearScale, Tooltip } from 'chart.js';
 	import type { DistributionPoint } from '$lib/types.js';
-	import { GRID, TICK, TOOLTIP, SENTIMENT, SENTIMENT_EMOJI } from '$lib/chart-theme.js';
+	import { chartTheme, SENTIMENT_EMOJI } from '$lib/chart-theme.js';
 
 	Chart.register(BarElement, CategoryScale, LinearScale, Tooltip);
 
@@ -22,35 +22,35 @@
 		}),
 		datasets: [{
 			data: sorted.map((d) => d.count),
-			backgroundColor: sorted.map((d) => (SENTIMENT[d.score] ?? '#6366f1') + '30'),
-			hoverBackgroundColor: sorted.map((d) => (SENTIMENT[d.score] ?? '#6366f1') + '60'),
-			borderColor: sorted.map((d) => SENTIMENT[d.score] ?? '#6366f1'),
+			backgroundColor: sorted.map((d) => (chartTheme.SENTIMENT[d.score] ?? chartTheme.ACCENT) + '30'),
+			hoverBackgroundColor: sorted.map((d) => (chartTheme.SENTIMENT[d.score] ?? chartTheme.ACCENT) + '60'),
+			borderColor: sorted.map((d) => chartTheme.SENTIMENT[d.score] ?? chartTheme.ACCENT),
 			borderWidth: 1,
 			borderRadius: 4,
 			maxBarThickness: 56
 		}]
 	});
 
-	const chartOptions = {
+	const chartOptions = $derived({
 		responsive: true,
 		maintainAspectRatio: false,
 		scales: {
 			x: {
 				grid: { display: false },
-				ticks: { color: TICK, font: { size: 11 } },
+				ticks: { color: chartTheme.TICK, font: { size: 11 } },
 				border: { display: false }
 			},
 			y: {
 				beginAtZero: true,
-				grid: { color: GRID },
-				ticks: { color: TICK, font: { size: 10 } },
+				grid: { color: chartTheme.GRID },
+				ticks: { color: chartTheme.TICK, font: { size: 10 } },
 				border: { display: false }
 			}
 		},
 		plugins: {
 			legend: { display: false },
 			tooltip: {
-				...TOOLTIP,
+				...chartTheme.TOOLTIP,
 				callbacks: {
 					label: (ctx: { parsed: { y: number | null } }) => {
 						const val = ctx.parsed.y ?? 0;
@@ -61,7 +61,7 @@
 				}
 			}
 		}
-	};
+	});
 </script>
 
 <div class="h-48 w-full">

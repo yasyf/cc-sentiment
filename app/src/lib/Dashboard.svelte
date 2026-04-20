@@ -10,6 +10,7 @@
 	import ModelBreakdown from '$lib/charts/ModelBreakdown.svelte';
 	import ContributeCTA from '$lib/ContributeCTA.svelte';
 	import ContributeCommandInline from '$lib/ContributeCommandInline.svelte';
+	import ThemeToggle from '$lib/ThemeToggle.svelte';
 	import { sentimentEmoji } from '$lib/chart-theme.js';
 	import { verdictFor } from '$lib/verdict.js';
 	import { describeTrend } from '$lib/trend.js';
@@ -126,6 +127,7 @@
 				<h1 class="text-lg font-semibold tracking-tight text-text">cc-sentiment</h1>
 			</div>
 			<nav class="flex items-center gap-5 text-sm text-text-muted">
+				<ThemeToggle />
 				<a href="/docs" class="hover:text-text transition-colors">Contribute</a>
 				<a href="https://github.com/yasyf/cc-sentiment" class="hover:text-text transition-colors" target="_blank" rel="noopener">GitHub</a>
 			</nav>

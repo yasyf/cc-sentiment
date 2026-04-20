@@ -6,7 +6,7 @@
 	import { DateTime } from 'luxon';
 	import type { TimelinePoint } from '$lib/types.js';
 	import { EVENTS } from '$lib/events.js';
-	import { ACCENT, TICK, TOOLTIP, SENTIMENT_EMOJI, paddedRange } from '$lib/chart-theme.js';
+	import { chartTheme, SENTIMENT_EMOJI, paddedRange } from '$lib/chart-theme.js';
 	import {
 		bucketByDayPart,
 		bucketByDay,
@@ -61,7 +61,7 @@
 					type: 'line',
 					xMin: evt.date,
 					xMax: evt.date,
-					borderColor: evt.type === 'regression' ? 'rgba(220, 38, 38, 0.3)' : 'rgba(99, 102, 241, 0.3)',
+					borderColor: evt.type === 'regression' ? chartTheme.EVENT_REGRESSION : chartTheme.EVENT_DEPLOY,
 					borderWidth: 1,
 					borderDash: [4, 4],
 					adjustScaleRange: false,
@@ -70,8 +70,8 @@
 						content: evt.label,
 						position: 'start',
 						font: { size: 9 },
-						color: '#a1a1aa',
-						backgroundColor: 'rgba(255,255,255,0.8)',
+						color: chartTheme.TICK,
+						backgroundColor: chartTheme.ANNOTATION_LABEL_BG,
 						padding: 2
 					}
 				};
@@ -91,8 +91,8 @@
 				type: 'bar' as const,
 				label: 'Sessions',
 				data: buckets.map((d) => d.count),
-				backgroundColor: 'rgba(99, 102, 241, 0.08)',
-				hoverBackgroundColor: 'rgba(99, 102, 241, 0.18)',
+				backgroundColor: chartTheme.ACCENT_LIGHT,
+				hoverBackgroundColor: chartTheme.ACCENT_BAR,
 				borderRadius: 2,
 				yAxisID: 'volume',
 				order: 2
@@ -101,12 +101,12 @@
 				type: 'line' as const,
 				label: 'Sentiment',
 				data: buckets.map((d) => d.smoothed_score ?? d.avg_score),
-				borderColor: ACCENT,
+				borderColor: chartTheme.ACCENT,
 				fill: false,
 				tension: 0,
 				pointRadius: 2,
 				pointHoverRadius: 5,
-				pointBackgroundColor: ACCENT,
+				pointBackgroundColor: chartTheme.ACCENT,
 				pointBorderColor: 'transparent',
 				borderWidth: 1.75,
 				spanGaps: true,
@@ -136,7 +136,7 @@
 					autoSkipPadding: 8,
 					maxTicksLimit: range === 'week' ? 32 : 31,
 					maxRotation: 0,
-					color: TICK,
+					color: chartTheme.TICK,
 					font: { size: 12 },
 					callback: (value: number | string) => {
 						const dt = DateTime.fromMillis(Number(value), { zone: DISPLAY_TZ });
@@ -154,7 +154,7 @@
 				max: scoreRange.max,
 				grid: { display: false },
 				ticks: {
-					color: TICK,
+					color: chartTheme.TICK,
 					font: { size: 14 },
 					stepSize: 1,
 					padding: 2,
@@ -167,7 +167,7 @@
 				title: {
 					display: true,
 					text: 'sentiment',
-					color: TICK,
+					color: chartTheme.TICK,
 					font: { size: 9 },
 					padding: 0
 				}
@@ -176,19 +176,19 @@
 				position: 'right' as const,
 				beginAtZero: true,
 				grid: { drawOnChartArea: false },
-				ticks: { color: TICK, font: { size: 10 } },
+				ticks: { color: chartTheme.TICK, font: { size: 10 } },
 				border: { display: false },
-				title: { display: true, text: 'sessions', color: TICK, font: { size: 10 } }
+				title: { display: true, text: 'sessions', color: chartTheme.TICK, font: { size: 10 } }
 			}
 		},
 		plugins: {
 			legend: {
 				display: true,
 				position: 'bottom' as const,
-				labels: { color: '#71717a', font: { size: 10 }, boxWidth: 10, padding: 20, usePointStyle: true }
+				labels: { color: chartTheme.LEGEND_LABEL, font: { size: 10 }, boxWidth: 10, padding: 20, usePointStyle: true }
 			},
 			tooltip: {
-				...TOOLTIP,
+				...chartTheme.TOOLTIP,
 				callbacks: {
 					title: (items: { dataIndex: number }[]) => {
 						const b = buckets[items[0]?.dataIndex];

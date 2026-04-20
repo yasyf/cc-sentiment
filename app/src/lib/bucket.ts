@@ -1,5 +1,6 @@
 import { DateTime } from 'luxon';
 import type { TimelinePoint } from './types.js';
+import { chartTheme } from './chart-theme.js';
 
 export type DayPartKey = 'late' | 'morning' | 'afternoon' | 'evening';
 
@@ -25,12 +26,6 @@ export const DAY_PART_EMOJI: Record<DayPartKey, string> = {
 	late: '🌙'
 };
 
-export const DAY_PART_TINT: Record<DayPartKey, string> = {
-	morning: 'rgba(251, 191, 36, 0.06)',
-	afternoon: 'rgba(251, 146, 60, 0.05)',
-	evening: 'rgba(167, 139, 250, 0.06)',
-	late: 'rgba(99, 102, 241, 0.07)'
-};
 
 export function dayPartFor(hour: number): DayPart {
 	for (const part of DAY_PARTS) {
@@ -298,7 +293,7 @@ export function dayBoundaryAnnotations(points: { time: string }[], zone: string)
 				type: 'line',
 				xMin: iso,
 				xMax: iso,
-				borderColor: 'rgba(0, 0, 0, 0.18)',
+				borderColor: chartTheme.DAY_BOUNDARY,
 				borderWidth: 1.5,
 				adjustScaleRange: false,
 				label: { display: false }
@@ -338,7 +333,7 @@ export function dayPartBandAnnotations(points: { time: string }[], zone: string)
 				type: 'box',
 				xMin: xMinIso,
 				xMax: xMaxIso,
-				backgroundColor: DAY_PART_TINT[part.key],
+				backgroundColor: chartTheme.DAY_PART_TINT[part.key],
 				borderWidth: 0,
 				adjustScaleRange: false,
 				drawTime: 'beforeDatasetsDraw'

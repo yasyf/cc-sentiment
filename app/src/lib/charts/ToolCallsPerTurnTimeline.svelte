@@ -4,7 +4,7 @@
 	import 'chartjs-adapter-luxon';
 	import { DateTime } from 'luxon';
 	import type { TimelinePoint } from '$lib/types.js';
-	import { TICK, TOOLTIP, ACCENT } from '$lib/chart-theme.js';
+	import { chartTheme } from '$lib/chart-theme.js';
 	import {
 		bucketByDayPart,
 		bucketByDay,
@@ -44,7 +44,7 @@
 		labels: buckets.map((d) => d.time),
 		datasets: [{
 			data: buckets.map((d) => d.smoothed),
-			backgroundColor: buckets.map((d) => (d.smoothed != null ? ACCENT : 'rgba(161, 161, 170, 0.3)')),
+			backgroundColor: buckets.map((d) => (d.smoothed != null ? chartTheme.ACCENT : chartTheme.DISABLED_BAR)),
 			borderRadius: 2,
 			borderSkipped: false as const,
 			categoryPercentage: 0.9,
@@ -70,7 +70,7 @@
 					source: 'data' as const,
 					autoSkip: true,
 					maxRotation: 0,
-					color: TICK,
+					color: chartTheme.TICK,
 					font: { size: range === 'week' ? 12 : 11 },
 					callback: (value: number | string) => {
 						const dt = DateTime.fromMillis(Number(value), { zone: DISPLAY_TZ });
@@ -86,15 +86,15 @@
 				min: 0,
 				max: yMax,
 				grid: { display: false },
-				ticks: { color: TICK, font: { size: 11 } },
+				ticks: { color: chartTheme.TICK, font: { size: 11 } },
 				border: { display: false },
-				title: { display: true, text: 'tool calls per turn', color: TICK, font: { size: 10 } }
+				title: { display: true, text: 'tool calls per turn', color: chartTheme.TICK, font: { size: 10 } }
 			}
 		},
 		plugins: {
 			legend: { display: false },
 			tooltip: {
-				...TOOLTIP,
+				...chartTheme.TOOLTIP,
 				callbacks: {
 					title: (items: { dataIndex: number }[]) => {
 						const b = buckets[items[0]?.dataIndex];

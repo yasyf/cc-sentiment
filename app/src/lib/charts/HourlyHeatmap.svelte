@@ -4,7 +4,7 @@
 	import annotationPlugin from 'chartjs-plugin-annotation';
 	import type { ChartOptions } from 'chart.js';
 	import type { HourlyPoint } from '$lib/types.js';
-	import { ACCENT_BAR, ACCENT_BAR_HOVER, GRID, TICK, TOOLTIP, SENTIMENT_EMOJI, sentimentColor, paddedRange } from '$lib/chart-theme.js';
+	import { chartTheme, SENTIMENT_EMOJI, sentimentColor, paddedRange } from '$lib/chart-theme.js';
 
 	Chart.register(BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend, BarController, LineController, annotationPlugin);
 
@@ -32,13 +32,13 @@
 		});
 	});
 
-	const peakAnnotations = {
+	const peakAnnotations = $derived({
 		peakUsage: {
 			type: 'box' as const,
 			xMin: '5p',
 			xMax: '7p',
-			backgroundColor: 'rgba(220, 38, 38, 0.08)',
-			borderColor: 'rgba(220, 38, 38, 0.25)',
+			backgroundColor: chartTheme.SENTIMENT[1] + '14',
+			borderColor: chartTheme.SENTIMENT[1] + '40',
 			borderWidth: 1,
 			label: {
 				display: true,
@@ -46,8 +46,8 @@
 				position: { x: 'center' as const, y: 'end' as const },
 				yAdjust: -4,
 				font: { size: 9 },
-				color: '#dc2626',
-				backgroundColor: 'rgba(255,255,255,0.9)',
+				color: chartTheme.SENTIMENT[1],
+				backgroundColor: chartTheme.ANNOTATION_LABEL_BG,
 				padding: 2
 			}
 		},
@@ -55,7 +55,7 @@
 			type: 'line' as const,
 			xMin: fmtHour(currentPTHour),
 			xMax: fmtHour(currentPTHour),
-			borderColor: 'rgba(99, 102, 241, 0.5)',
+			borderColor: chartTheme.ACCENT + '80',
 			borderWidth: 2,
 			borderDash: [3, 3],
 			label: {
@@ -64,12 +64,12 @@
 				position: 'start' as const,
 				yAdjust: -6,
 				font: { size: 9, weight: 'bold' as const },
-				color: '#6366f1',
-				backgroundColor: 'rgba(255,255,255,0.9)',
+				color: chartTheme.ACCENT,
+				backgroundColor: chartTheme.ANNOTATION_LABEL_BG,
 				padding: 2
 			}
 		}
-	};
+	});
 
 	const chartData = $derived({
 		labels: allHours.map((d) => fmtHour(d.hour)),
@@ -78,8 +78,8 @@
 				type: 'bar' as const,
 				label: 'Sessions',
 				data: allHours.map((d) => d.count),
-				backgroundColor: ACCENT_BAR,
-				hoverBackgroundColor: ACCENT_BAR_HOVER,
+				backgroundColor: chartTheme.ACCENT_BAR,
+				hoverBackgroundColor: chartTheme.ACCENT_BAR_HOVER,
 				borderRadius: 3,
 				yAxisID: 'volume',
 				order: 2
@@ -88,9 +88,9 @@
 				type: 'line' as const,
 				label: 'Avg sentiment',
 				data: allHours.map((d) => (d.count > 0 ? d.avg_score : null)),
-				borderColor: '#6366f1',
+				borderColor: chartTheme.ACCENT,
 				pointBackgroundColor: allHours.map((d) => d.count > 0 ? sentimentColor(d.avg_score) : 'transparent'),
-				pointBorderColor: '#ffffff',
+				pointBorderColor: chartTheme.POINT_BORDER,
 				pointBorderWidth: 1.5,
 				pointRadius: allHours.map((d) => (d.count > 0 ? 4 : 0)),
 				pointHoverRadius: 6,
@@ -115,17 +115,17 @@
 		scales: {
 			x: {
 				grid: { display: false },
-				ticks: { color: TICK, font: { size: 10 }, maxRotation: 0 },
+				ticks: { color: chartTheme.TICK, font: { size: 10 }, maxRotation: 0 },
 				border: { display: false }
 			},
 			volume: {
 				position: 'left' as const,
 				beginAtZero: true,
 				grace: '10%' as const,
-				grid: { color: GRID },
-				ticks: { color: TICK, font: { size: 10 } },
+				grid: { color: chartTheme.GRID },
+				ticks: { color: chartTheme.TICK, font: { size: 10 } },
 				border: { display: false },
-				title: { display: true, text: 'sessions', color: TICK, font: { size: 10 } }
+				title: { display: true, text: 'sessions', color: chartTheme.TICK, font: { size: 10 } }
 			},
 			score: {
 				position: 'right' as const,
@@ -133,7 +133,7 @@
 				max: scoreRange.max,
 				grid: { drawOnChartArea: false },
 				ticks: {
-					color: TICK,
+					color: chartTheme.TICK,
 					font: { size: 14 },
 					stepSize: 1,
 					callback: (v: number | string) => {
@@ -142,16 +142,16 @@
 					}
 				},
 				border: { display: false },
-				title: { display: true, text: 'sentiment', color: TICK, font: { size: 10 } }
+				title: { display: true, text: 'sentiment', color: chartTheme.TICK, font: { size: 10 } }
 			}
 		},
 		plugins: {
 			legend: {
 				display: true,
 				position: 'bottom' as const,
-				labels: { color: '#71717a', font: { size: 10 }, boxWidth: 10, padding: 20, usePointStyle: true }
+				labels: { color: chartTheme.LEGEND_LABEL, font: { size: 10 }, boxWidth: 10, padding: 20, usePointStyle: true }
 			},
-			tooltip: TOOLTIP,
+			tooltip: chartTheme.TOOLTIP,
 			annotation: { annotations: peakAnnotations }
 		}
 	});

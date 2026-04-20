@@ -2,7 +2,7 @@
 	import { Chart as ChartComponent } from 'svelte5-chartjs';
 	import { Chart, BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend, BarController, LineController } from 'chart.js';
 	import type { WeekdayPoint } from '$lib/types.js';
-	import { ACCENT_BAR, ACCENT_BAR_HOVER, GRID, TICK, TOOLTIP, SENTIMENT_EMOJI, sentimentColor } from '$lib/chart-theme.js';
+	import { chartTheme, SENTIMENT_EMOJI, sentimentColor } from '$lib/chart-theme.js';
 
 	Chart.register(BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend, BarController, LineController);
 
@@ -18,8 +18,8 @@
 				type: 'bar' as const,
 				label: 'Sessions',
 				data: sorted.map((d) => d.count),
-				backgroundColor: ACCENT_BAR,
-				hoverBackgroundColor: ACCENT_BAR_HOVER,
+				backgroundColor: chartTheme.ACCENT_BAR,
+				hoverBackgroundColor: chartTheme.ACCENT_BAR_HOVER,
 				borderRadius: 4,
 				maxBarThickness: 40,
 				yAxisID: 'volume',
@@ -29,9 +29,9 @@
 				type: 'line' as const,
 				label: 'Avg Score',
 				data: sorted.map((d) => d.avg_score),
-				borderColor: '#6366f1',
+				borderColor: chartTheme.ACCENT,
 				pointBackgroundColor: sorted.map((d) => sentimentColor(d.avg_score)),
-				pointBorderColor: '#ffffff',
+				pointBorderColor: chartTheme.POINT_BORDER,
 				pointBorderWidth: 1.5,
 				pointRadius: 5,
 				pointHoverRadius: 7,
@@ -43,21 +43,21 @@
 		]
 	});
 
-	const chartOptions = {
+	const chartOptions = $derived({
 		responsive: true,
 		maintainAspectRatio: false,
 		interaction: { mode: 'index' as const, intersect: false },
 		scales: {
 			x: {
 				grid: { display: false },
-				ticks: { color: TICK, font: { size: 11 } },
+				ticks: { color: chartTheme.TICK, font: { size: 11 } },
 				border: { display: false }
 			},
 			volume: {
 				position: 'left' as const,
 				beginAtZero: true,
-				grid: { color: GRID },
-				ticks: { color: TICK, font: { size: 10 } },
+				grid: { color: chartTheme.GRID },
+				ticks: { color: chartTheme.TICK, font: { size: 10 } },
 				border: { display: false }
 			},
 			score: {
@@ -65,7 +65,7 @@
 				min: 1, max: 5,
 				grid: { drawOnChartArea: false },
 				ticks: {
-					color: TICK,
+					color: chartTheme.TICK,
 					font: { size: 14 },
 					stepSize: 1,
 					callback: (v: number | string) => SENTIMENT_EMOJI[Number(v)] ?? String(v)
@@ -77,11 +77,11 @@
 			legend: {
 				display: true,
 				position: 'bottom' as const,
-				labels: { color: '#71717a', font: { size: 10 }, boxWidth: 10, padding: 20, usePointStyle: true }
+				labels: { color: chartTheme.LEGEND_LABEL, font: { size: 10 }, boxWidth: 10, padding: 20, usePointStyle: true }
 			},
-			tooltip: TOOLTIP
+			tooltip: chartTheme.TOOLTIP
 		}
-	};
+	});
 </script>
 
 <div class="h-48 w-full">
