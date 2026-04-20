@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import subprocess
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
 import anyio.to_thread
@@ -12,6 +14,8 @@ if TYPE_CHECKING:
 
 MODEL_NAME = "en_core_web_sm"
 DISABLED_PIPES = ["parser"]
+SPACY_CACHE_DIR = Path.home() / ".cache" / "spacy"
+SPACY_MODEL_VERSION = "3.8.0"
 
 
 class NLP:
@@ -55,11 +59,23 @@ class NLP:
     def load_or_download() -> spacy.language.Language:
         import spacy
 
-        try:
+        cache_str = str(SPACY_CACHE_DIR)
+        if (SPACY_CACHE_DIR / MODEL_NAME).is_dir() and cache_str not in sys.path:
+            sys.path.insert(0, cache_str)
+
+        with contextlib.suppress(OSError):
             return spacy.load(MODEL_NAME, disable=DISABLED_PIPES)
-        except OSError:
-            subprocess.run(
-                [sys.executable, "-m", "spacy", "download", MODEL_NAME],
-                check=True, capture_output=True, text=True,
-            )
-            return spacy.load(MODEL_NAME, disable=DISABLED_PIPES)
+
+        SPACY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            [
+                sys.executable, "-m", "pip", "install",
+                "--target", cache_str,
+                "--quiet", "--upgrade",
+                f"{MODEL_NAME}=={SPACY_MODEL_VERSION}",
+            ],
+            check=True, capture_output=True, text=True,
+        )
+        if cache_str not in sys.path:
+            sys.path.insert(0, cache_str)
+        return spacy.load(MODEL_NAME, disable=DISABLED_PIPES)
