@@ -127,7 +127,6 @@
 				<h1 class="text-lg font-semibold tracking-tight text-text">cc-sentiment</h1>
 			</div>
 			<nav class="flex items-center gap-5 text-sm text-text-muted">
-				<ThemeToggle />
 				<a href="/docs" class="hover:text-text transition-colors">Contribute</a>
 				<a href="https://github.com/yasyf/cc-sentiment" class="hover:text-text transition-colors" target="_blank" rel="noopener">GitHub</a>
 			</nav>
@@ -378,11 +377,21 @@
 	</div>
 
 	<footer class="border-t border-border">
-		<div class="mx-auto flex max-w-5xl items-center justify-between px-6 py-6 text-xs text-text-dim">
-			<span>Updated {lastUpdated}</span>
-			<a href="/docs" class="text-accent hover:text-accent-hover transition-colors">
-				Add yours in 30 seconds →
-			</a>
+		<div class="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-y-2 px-6 py-6 text-xs text-text-dim">
+			<div class="flex items-center gap-3">
+				<span>Updated {lastUpdated}</span>
+				<span aria-hidden="true">·</span>
+				<span>
+					made by
+					<a href="https://x.com/yasyf" class="text-text-muted hover:text-text transition-colors" target="_blank" rel="noopener">@yasyf</a>
+				</span>
+			</div>
+			<div class="flex items-center gap-4">
+				<a href="/docs" class="text-accent hover:text-accent-hover transition-colors">
+					Add yours in 30 seconds →
+				</a>
+				<ThemeToggle />
+			</div>
 		</div>
 	</footer>
 </div>
