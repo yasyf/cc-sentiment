@@ -18,6 +18,7 @@ from cc_sentiment.models import GistConfig, GPGConfig, MyStat, SSHConfig
 from cc_sentiment.upload import Uploader
 
 from cc_sentiment.tui.screens.dialog import Dialog
+from cc_sentiment.tui.view import ShareState
 
 
 @dataclass
@@ -96,12 +97,9 @@ class StatShareScreen(Dialog[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog-box"):
-            yield Label("Your cc-sentiment snapshot", classes="title")
-            yield Static(f"You are {self.stat.text}.", classes="stat")
-            yield Static(
-                "Share it? The card on Twitter will show your GitHub avatar and this stat.",
-                classes="detail",
-            )
+            yield Label(ShareState.TITLE, classes="title")
+            yield Static(ShareState.stat_line(self.stat), classes="stat")
+            yield Static(ShareState.DETAIL, classes="detail")
             with Horizontal():
                 yield Button("Tweet it", id="stat-tweet", variant="primary")
                 yield Button("Not now", id="stat-skip", variant="default")

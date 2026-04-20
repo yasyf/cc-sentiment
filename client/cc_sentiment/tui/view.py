@@ -30,8 +30,17 @@ class StatsState:
 
 @dataclass
 class ShareState:
+    TITLE: ClassVar[str] = "Your cc-sentiment snapshot"
+    DETAIL: ClassVar[str] = (
+        "Share it? The card on Twitter will show your GitHub avatar and this stat."
+    )
+
     config: SSHConfig | GPGConfig | GistConfig | None = None
     stat: MyStat | None = None
+
+    @staticmethod
+    def stat_line(stat: MyStat) -> str:
+        return f"You are {stat.text}."
 
     def reset(self) -> None:
         self.config = None
@@ -98,10 +107,8 @@ class ProcessingView:
     ) -> None:
         self.share.config = config
         self.share.stat = stat
-        self.app.query_one("#share-stat", Static).update(f"You are {stat.text}.")
-        self.app.query_one("#share-detail", Static).update(
-            "Share it? The card on Twitter will show your GitHub avatar and this stat."
-        )
+        self.app.query_one("#share-stat", Static).update(ShareState.stat_line(stat))
+        self.app.query_one("#share-detail", Static).update(ShareState.DETAIL)
         self.app.query_one("#share-section").remove_class("inactive")
 
     def hide_share(self) -> None:
