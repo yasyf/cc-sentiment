@@ -69,10 +69,10 @@ class NLP:
         SPACY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         subprocess.run(
             [
-                sys.executable, "-m", "pip", "install",
+                "uvx", "spacy", "download",
+                f"{MODEL_NAME}-{SPACY_MODEL_VERSION}",
+                "--direct",
                 "--target", cache_str,
-                "--quiet", "--upgrade",
-                f"{MODEL_NAME}=={SPACY_MODEL_VERSION}",
             ],
             check=True, capture_output=True, text=True,
         )
