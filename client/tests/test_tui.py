@@ -466,10 +466,11 @@ async def test_setup_cancel_dismisses_false(no_auto_setup):
         assert harness.dismissed is False
 
 
-async def test_setup_upload_options_with_gh(no_auto_setup):
+async def test_setup_link_my_key_collapses_to_one_radioset_and_no_manual_button(no_auto_setup):
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
 
     with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True), \
          patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"):
         async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
@@ -481,8 +482,113 @@ async def test_setup_upload_options_with_gh(no_auto_setup):
             await screen._populate_upload_options()
             await pilot.pause()
 
-            assert "github-ssh" in screen._upload_actions
+            assert len(list(screen.query("#step-upload RadioSet"))) == 1
+            assert list(screen.query("#upload-skip Button")) == []
+            assert screen._upload_actions == ["github-ssh", "manual"]
+            assert radio_labels(screen.query_one("#upload-options", RadioSet)) == [
+                "Link via GitHub (gh)",
+                "Show me the key; I'll add it myself",
+            ]
             assert screen.query_one("#upload-go", Button).disabled is False
+            assert screen.query_one("#upload-go", Button).label.plain == "Link my key"
+
+
+async def test_setup_hide_gh_link_option_when_cli_missing(no_auto_setup):
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+
+    with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value=None), \
+         patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"):
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen.query_one(ContentSwitcher).current = "step-upload"
+            await screen._populate_upload_options()
+            await pilot.pause()
+
+            radio = screen.query_one("#upload-options", RadioSet)
+
+            assert screen._upload_actions == ["manual"]
+            assert radio.display is False
+            assert radio_labels(radio) == ["Show me the key; I'll add it myself"]
+            assert all("GitHub" not in label for label in radio_labels(radio))
+            assert not any(button.disabled for button in radio.query(RadioButton))
+            assert screen.query_one("#upload-go", Button).label.plain == "Show me the key"
+
+
+async def test_setup_hide_gh_link_option_when_unauthed(no_auto_setup):
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+
+    with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=False), \
+         patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"):
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen.query_one(ContentSwitcher).current = "step-upload"
+            await screen._populate_upload_options()
+            await pilot.pause()
+
+            radio = screen.query_one("#upload-options", RadioSet)
+
+            assert screen._upload_actions == ["manual"]
+            assert radio.display is False
+            assert radio_labels(radio) == ["Show me the key; I'll add it myself"]
+            assert all("GitHub" not in label for label in radio_labels(radio))
+            assert not any(button.disabled for button in radio.query(RadioButton))
+
+
+async def test_setup_pre_selected_best_link_option(no_auto_setup):
+    gpg_key = GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096")
+
+    with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True), \
+         patch("cc_sentiment.tui.screens.setup.GPGBackend.public_key_text", return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----"):
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = gpg_key
+            screen.query_one(ContentSwitcher).current = "step-upload"
+            await screen._populate_upload_options()
+            await pilot.pause()
+
+            radio = screen.query_one("#upload-options", RadioSet)
+
+            assert screen._upload_actions == ["github-gpg", "openpgp", "manual"]
+            assert radio.pressed_index == 0
+            assert radio_labels(radio) == [
+                "Link via GitHub (gh)",
+                "Publish to keys.openpgp.org",
+                "Show me the key; I'll add it myself",
+            ]
+
+
+async def test_setup_pre_selected_best_link_option_without_gh_uses_openpgp(no_auto_setup):
+    gpg_key = GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096")
+
+    with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value=None), \
+         patch("cc_sentiment.tui.screens.setup.GPGBackend.public_key_text", return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----"):
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = ""
+            screen.selected_key = gpg_key
+            screen.query_one(ContentSwitcher).current = "step-upload"
+            await screen._populate_upload_options()
+            await pilot.pause()
+
+            radio = screen.query_one("#upload-options", RadioSet)
+
+            assert screen._upload_actions == ["openpgp", "manual"]
+            assert radio.pressed_index == 0
+            assert radio_labels(radio) == [
+                "Publish to keys.openpgp.org",
+                "Show me the key; I'll add it myself",
+            ]
 
 
 async def test_step_header_renders_title_and_muted_explainer():
@@ -799,6 +905,7 @@ async def test_setup_upload_options_gpg_shows_openpgp(no_auto_setup):
     gpg_key = GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096")
 
     with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True), \
          patch("cc_sentiment.tui.screens.setup.GPGBackend.public_key_text", return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----"):
         async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
@@ -812,6 +919,151 @@ async def test_setup_upload_options_gpg_shows_openpgp(no_auto_setup):
 
             assert "github-gpg" in screen._upload_actions
             assert "openpgp" in screen._upload_actions
+            assert radio_labels(screen.query_one("#upload-options", RadioSet)) == [
+                "Link via GitHub (gh)",
+                "Publish to keys.openpgp.org",
+                "Show me the key; I'll add it myself",
+            ]
+
+
+async def test_setup_upload_action_github_ssh_failure_stays_on_upload(no_auto_setup):
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+
+    with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True), \
+         patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"), \
+         patch("cc_sentiment.tui.screens.setup.subprocess.run", return_value=subprocess.CompletedProcess(["gh"], 1, "", "boom")):
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen.query_one(ContentSwitcher).current = "step-upload"
+            await screen._populate_upload_options()
+            await pilot.pause()
+
+            await pilot.press("enter")
+            await pilot.pause(delay=0.3)
+
+            assert screen.query_one(ContentSwitcher).current == "step-upload"
+            assert "Something went wrong: boom" in str(screen.query_one("#upload-result", Static).render())
+            assert "error" in screen.query_one("#upload-result", Static).classes
+
+
+async def test_setup_upload_action_manual_uses_non_error_tone(no_auto_setup):
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+
+    def finish_upload_only(screen: SetupScreen) -> None:
+        screen._finish_upload_action()
+
+    with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value=None), \
+         patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"), \
+         patch.object(SetupScreen, "_save_and_finish", autospec=True, side_effect=finish_upload_only):
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen.query_one(ContentSwitcher).current = "step-upload"
+            await screen._populate_upload_options()
+            await pilot.pause()
+
+            await pilot.click("#upload-go")
+            await pilot.pause(delay=0.3)
+
+            result = screen.query_one("#upload-result", Static)
+
+            assert "https://github.com/settings/ssh/new" in str(result.render())
+            assert "error" not in result.classes
+
+
+async def test_setup_upload_action_openpgp_warns_and_saves(no_auto_setup):
+    gpg_key = GPGKeyInfo(fpr="ABCDEF1234567890", email="alice@example.com", algo="rsa4096")
+
+    def finish_upload_only(screen: SetupScreen) -> None:
+        screen._finish_upload_action()
+
+    with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value=None), \
+         patch("cc_sentiment.tui.screens.setup.GPGBackend.public_key_text", return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----"), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.upload_openpgp_key", return_value=("token", {"alice@example.com": "unpublished"})), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.request_openpgp_verify", return_value={"alice@example.com": "pending"}), \
+         patch.object(SetupScreen, "_save_and_finish", autospec=True, side_effect=finish_upload_only):
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = ""
+            screen.selected_key = gpg_key
+            screen.query_one(ContentSwitcher).current = "step-upload"
+            await screen._populate_upload_options()
+            await pilot.pause()
+
+            await pilot.click(list(screen.query("#upload-options RadioButton").results(RadioButton))[0])
+            await pilot.pause()
+            await pilot.click("#upload-go")
+            await pilot.pause(delay=0.3)
+
+            result = screen.query_one("#upload-result", Static)
+
+            assert "Check your email (alice@example.com) for a verification link." in str(result.render())
+            assert "warning" in result.classes
+
+
+async def test_setup_upload_action_github_gpg_cleans_temp_file_on_exception(no_auto_setup, tmp_path: Path):
+    gpg_key = GPGKeyInfo(fpr="ABCDEF1234567890", email="alice@example.com", algo="rsa4096")
+    temp_path = tmp_path / "upload.asc"
+
+    class FixedTempFile:
+        def __enter__(self):
+            self.handle = temp_path.open("w")
+            return self.handle
+
+        def __exit__(self, exc_type, exc, tb):
+            self.handle.close()
+            return False
+
+    with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True), \
+         patch("cc_sentiment.tui.screens.setup.GPGBackend.public_key_text", return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----"), \
+         patch("cc_sentiment.tui.screens.setup.tempfile.NamedTemporaryFile", return_value=FixedTempFile()), \
+         patch("cc_sentiment.tui.screens.setup.subprocess.run", side_effect=subprocess.TimeoutExpired(["gh", "gpg-key", "add"], 30)):
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = gpg_key
+            screen.query_one(ContentSwitcher).current = "step-upload"
+            await screen._populate_upload_options()
+            await pilot.pause()
+
+            await pilot.press("enter")
+            await pilot.pause(delay=0.3)
+
+            assert screen.query_one(ContentSwitcher).current == "step-upload"
+            assert "Something went wrong" in str(screen.query_one("#upload-result", Static).render())
+            assert temp_path.exists() is False
+
+
+async def test_setup_gh_version_drift_keeps_github_option_available(no_auto_setup):
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+
+    with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.has_tool", return_value=True), \
+         patch(
+             "cc_sentiment.signing.discovery.subprocess.run",
+             return_value=subprocess.CompletedProcess(["gh", "auth", "status"], 0, "logged in", "warning: update available"),
+         ), \
+         patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"):
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen.query_one(ContentSwitcher).current = "step-upload"
+            await screen._populate_upload_options()
+            await pilot.pause()
+
+            assert screen._upload_actions == ["github-ssh", "manual"]
+            assert "Link via GitHub (gh)" in radio_labels(screen.query_one("#upload-options", RadioSet))
 
 
 async def test_setup_button_contract_uses_step_actions_and_single_primary_per_step(no_auto_setup):
@@ -1077,9 +1329,6 @@ async def test_setup_tab_order_body_secondary_primary(no_auto_setup):
             await pilot.press("tab")
             await pilot.pause()
             assert pilot.app.focused == screen.query_one("#upload-back", Button)
-            await pilot.press("tab")
-            await pilot.pause()
-            assert pilot.app.focused == screen.query_one("#upload-skip", Button)
             await pilot.press("tab")
             await pilot.pause()
             assert pilot.app.focused == screen.query_one("#upload-go", Button)
@@ -1349,9 +1598,9 @@ async def test_setup_back_nav_key_change_resets_downstream_upload_state(no_auto_
             assert screen.current_stage.value == "step-upload"
             assert screen._upload_actions == ["github-gpg", "openpgp", "manual"]
             assert radio_labels(screen.query_one("#upload-options", RadioSet)) == [
-                "Link to GitHub",
+                "Link via GitHub (gh)",
                 "Publish to keys.openpgp.org",
-                "Show key so I can add it myself",
+                "Show me the key; I'll add it myself",
             ]
             assert "github-ssh" not in screen._upload_actions
             assert "PGP PUBLIC KEY BLOCK" in screen.query_one("#upload-key-text", KeyPreview).text

@@ -61,6 +61,12 @@ class SetupActionState:
     upload_running: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class UploadOption:
+    action: str
+    label: str
+
+
 class SetupStage(StrEnum):
     LOADING = "step-loading"
     USERNAME = "step-username"
@@ -264,7 +270,9 @@ class SetupScreen(Dialog[bool]):
         self._clear_radio_set(radio)
         self.query_one("#upload-key-text", KeyPreview).text = ""
         self._set_tone(self.query_one("#upload-result", Static), "")
-        self.query_one("#upload-go", Button).disabled = True
+        go_button = self.query_one("#upload-go", Button)
+        go_button.label = "Link my key"
+        go_button.disabled = True
 
     def _reset_done_stage(self) -> None:
         self._set_tone(self.query_one("#done-summary", Static), "", "success")
@@ -386,7 +394,6 @@ class SetupScreen(Dialog[bool]):
                 Static("", id="upload-result", classes="status-line muted"),
                 StepActions(
                     Button("Back", id="upload-back", variant="default"),
-                    Button("I'll do it myself", id="upload-skip", variant="default"),
                     primary=Button("Link my key", id="upload-go", variant="primary", disabled=True),
                 ),
             )
@@ -896,44 +903,18 @@ Expire-Date: 0
     async def _populate_upload_options(self) -> None:
         radio = self.query_one("#upload-options", RadioSet)
         self._clear_radio_set(radio)
-        has_gh = shutil.which("gh") is not None
-        gh_authed = has_gh and await anyio.to_thread.run_sync(KeyDiscovery.gh_authenticated)
-        gh_suffix = "" if gh_authed else (" (needs `gh auth login`)" if has_gh else " (needs gh CLI)")
         key = self.selected_key
-
-        options: list[RadioButton] = []
-        self._upload_actions: list[str] = []
-
-        match key:
-            case SSHKeyInfo():
-                rb = RadioButton(f"Link to GitHub{gh_suffix}")
-                rb.disabled = not gh_authed
-                options.append(rb)
-                self._upload_actions.append("github-ssh")
-
-            case GPGKeyInfo():
-                if self.username:
-                    rb = RadioButton(f"Link to GitHub{gh_suffix}")
-                    rb.disabled = not gh_authed
-                    options.append(rb)
-                    self._upload_actions.append("github-gpg")
-
-                options.append(RadioButton("Publish to keys.openpgp.org"))
-                self._upload_actions.append("openpgp")
-
-        options.append(RadioButton("Show key so I can add it myself"))
-        self._upload_actions.append("manual")
-
-        enabled_actions = [
-            (opt, act)
-            for opt, act in zip(options, self._upload_actions)
-            if not opt.disabled and act != "manual"
-        ]
-        if len(enabled_actions) == 1:
-            radio.display = False
-        else:
-            radio.mount_all(options)
-            radio.display = True
+        gh_authed = shutil.which("gh") is not None and await anyio.to_thread.run_sync(KeyDiscovery.gh_authenticated)
+        upload_options = self._build_upload_options(gh_authed, key)
+        self._upload_actions = [option.action for option in upload_options]
+        radio_buttons = [RadioButton(option.label) for option in upload_options]
+        radio.mount_all(radio_buttons)
+        if radio_buttons:
+            radio_buttons[0].toggle()
+        radio.display = len(radio_buttons) > 1
+        self.query_one("#upload-go", Button).label = (
+            "Show me the key" if self._upload_actions == ["manual"] else "Link my key"
+        )
 
         pub_text = ""
         match key:
@@ -947,19 +928,37 @@ Expire-Date: 0
         if self.current_stage is SetupStage.UPLOAD:
             self._focus_step_target(SetupStage.UPLOAD)
 
+    def _build_upload_options(
+        self,
+        gh_authed: bool,
+        key: SSHKeyInfo | GPGKeyInfo | None,
+    ) -> list[UploadOption]:
+        match key:
+            case SSHKeyInfo():
+                return [
+                    *([UploadOption("github-ssh", "Link via GitHub (gh)")] if gh_authed else []),
+                    UploadOption("manual", "Show me the key; I'll add it myself"),
+                ]
+            case GPGKeyInfo():
+                return [
+                    *([UploadOption("github-gpg", "Link via GitHub (gh)")] if gh_authed and self.username else []),
+                    UploadOption("openpgp", "Publish to keys.openpgp.org"),
+                    UploadOption("manual", "Show me the key; I'll add it myself"),
+                ]
+            case _:
+                return []
+
+    def _selected_upload_action(self) -> str:
+        radio = self.query_one("#upload-options", RadioSet)
+        idx = radio.pressed_index if radio.display and radio.pressed_index >= 0 else 0
+        return self._upload_actions[idx]
+
     @on(Button.Pressed, "#upload-go")
     def on_upload_go(self) -> None:
         if self.actions.upload_running:
             return
-        radio = self.query_one("#upload-options", RadioSet)
-        idx = radio.pressed_index if radio.pressed_index >= 0 else 0
-        action = self._upload_actions[idx]
         self.actions.upload_running = True
-        self.run_upload(action)
-
-    @on(Button.Pressed, "#upload-skip")
-    def on_upload_skip(self) -> None:
-        self._save_and_finish()
+        self.run_upload(self._selected_upload_action())
 
     @on(Button.Pressed, "#upload-back")
     def on_upload_back(self) -> None:
@@ -974,10 +973,20 @@ Expire-Date: 0
             case "github-ssh":
                 assert isinstance(key, SSHKeyInfo)
                 pub_path = key.path.with_suffix(key.path.suffix + ".pub")
-                result = subprocess.run(
-                    ["gh", "ssh-key", "add", str(pub_path), "-t", "cc-sentiment"],
-                    capture_output=True, text=True, timeout=30,
-                )
+                try:
+                    result = subprocess.run(
+                        ["gh", "ssh-key", "add", str(pub_path), "-t", "cc-sentiment"],
+                        capture_output=True, text=True, timeout=30,
+                    )
+                except subprocess.SubprocessError as e:
+                    self.app.call_from_thread(
+                        self._set_tone,
+                        result_label,
+                        f"Something went wrong: {e}",
+                        "error",
+                    )
+                    self.app.call_from_thread(self._finish_upload_action)
+                    return
                 if result.returncode == 0:
                     self.app.call_from_thread(self._set_tone, result_label, "Key linked to GitHub. You're all set.", "success")
                     self.app.call_from_thread(self._save_and_finish)
@@ -997,10 +1006,20 @@ Expire-Date: 0
                     f.write(pub_text)
                     tmp_path = Path(f.name)
                 try:
-                    result = subprocess.run(
-                        ["gh", "gpg-key", "add", str(tmp_path)],
-                        capture_output=True, text=True, timeout=30,
-                    )
+                    try:
+                        result = subprocess.run(
+                            ["gh", "gpg-key", "add", str(tmp_path)],
+                            capture_output=True, text=True, timeout=30,
+                        )
+                    except subprocess.SubprocessError as e:
+                        self.app.call_from_thread(
+                            self._set_tone,
+                            result_label,
+                            f"Something went wrong: {e}",
+                            "error",
+                        )
+                        self.app.call_from_thread(self._finish_upload_action)
+                        return
                     if result.returncode == 0:
                         self.app.call_from_thread(self._set_tone, result_label, "Key linked to GitHub. You're all set.", "success")
                         self.app.call_from_thread(self._save_and_finish)
@@ -1049,7 +1068,11 @@ Expire-Date: 0
                     if isinstance(key, SSHKeyInfo)
                     else "https://github.com/settings/gpg/new"
                 )
-                self.app.call_from_thread(self._set_tone, result_label, f"Paste your public key at:\n{url}")
+                self.app.call_from_thread(
+                    self._set_tone,
+                    result_label,
+                    f"Show the full key above, then paste it at:\n{url}",
+                )
                 self.app.call_from_thread(self._save_and_finish)
 
     def _save_and_finish(self) -> None:
