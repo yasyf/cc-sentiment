@@ -48,6 +48,14 @@ from cc_sentiment.signing import (
     SSHKeyInfo,
 )
 from cc_sentiment.transcripts import TranscriptDiscovery
+from cc_sentiment.upload import (
+    AuthOk,
+    AuthResult,
+    AuthServerError,
+    AuthUnauthorized,
+    AuthUnreachable,
+    Uploader,
+)
 
 from cc_sentiment.tui.format import TimeFormat
 from cc_sentiment.tui.screens.dialog import Dialog
@@ -573,6 +581,26 @@ class SetupScreen(Dialog[bool]):
         self.verification_state = state
         self.verification_ok = state is VerificationState.VERIFIED
         self._render_done_branch()
+
+    def _on_verify_result(self, result: AuthResult) -> None:
+        match result:
+            case AuthOk():
+                self._verification_detail = ""
+                self.verification_poll.clear()
+                self._set_verification_branch(VerificationState.VERIFIED)
+            case AuthUnauthorized():
+                self._verification_detail = ""
+                if monotonic() - self.verification_poll.started_at < PENDING_PROPAGATION_WINDOW_SECONDS:
+                    self.verification_poll.schedule_next(monotonic())
+                    self._set_verification_branch(VerificationState.PENDING)
+                else:
+                    self.verification_poll.clear()
+                    self._set_verification_branch(VerificationState.FAILED)
+            case AuthUnreachable() | AuthServerError():
+                # VAL-FLOW-038: 5xx probes share the same pending-unreachable branch as network drops.
+                self._verification_detail = "temporarily unreachable"
+                self.verification_poll.schedule_next(monotonic())
+                self._set_verification_branch(VerificationState.PENDING)
 
     def _refresh_pending_status(self) -> None:
         if self._visible_verification_state() is not VerificationState.PENDING:
@@ -1541,8 +1569,6 @@ Expire-Date: 0
         )
 
     async def _verify_server_config(self) -> None:
-        from cc_sentiment.upload import AuthOk, AuthServerError, AuthUnauthorized, AuthUnreachable, Uploader
-
         try:
             await anyio.to_thread.run_sync(self.state.save)
             assert self.state.config is not None
@@ -1550,24 +1576,7 @@ Expire-Date: 0
                 result = await Uploader().probe_credentials(self.state.config)
             except httpx.HTTPError as error:
                 result = AuthUnreachable(detail=str(error))
-
-            match result:
-                case AuthOk():
-                    self._verification_detail = ""
-                    self.verification_poll.clear()
-                    self._set_verification_branch(VerificationState.VERIFIED)
-                case AuthUnauthorized():
-                    self._verification_detail = ""
-                    if monotonic() - self.verification_poll.started_at < PENDING_PROPAGATION_WINDOW_SECONDS:
-                        self.verification_poll.schedule_next(monotonic())
-                        self._set_verification_branch(VerificationState.PENDING)
-                    else:
-                        self.verification_poll.clear()
-                        self._set_verification_branch(VerificationState.FAILED)
-                case AuthUnreachable() | AuthServerError():
-                    self._verification_detail = "temporarily unreachable"
-                    self.verification_poll.schedule_next(monotonic())
-                    self._set_verification_branch(VerificationState.PENDING)
+            self._on_verify_result(result)
         finally:
             self._verify_worker = None
 

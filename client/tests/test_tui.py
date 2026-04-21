@@ -152,6 +152,22 @@ def screenshot_text(app: App[None]) -> str:
     return unescape(app.export_screenshot())
 
 
+def pending_branch_signature(screen: SetupScreen) -> tuple[object, ...]:
+    return (
+        screen.current_stage.value,
+        screen.verification_state.value,
+        screen.verification_ok,
+        str(screen.query_one("#done-summary", Static).render()),
+        str(screen.query_one("#done-verify", Static).render()),
+        str(screen.query_one("#done-instructions", Static).render()),
+        screen.query_one("#pending-status", PendingStatus).label,
+        tuple(
+            (button.id, button.variant, button.label.plain)
+            for button in current_step_actions(screen).query(Button)
+        ),
+    )
+
+
 class FakeMonotonic:
     def __init__(self, value: float = 0.0) -> None:
         self.value = value
@@ -1274,6 +1290,66 @@ async def test_setup_pending_monotonic_clock_ignores_wall_time_skew_monotonic_cl
 
             assert label.endswith("0:30")
             assert screen.query_one("#pending-status", PendingStatus).label == label
+
+
+async def test_setup_verify_result_maps_five_xx_and_network_drop_to_identical_pending_unreachable(
+    tmp_path: Path,
+):
+    fake_clock = FakeMonotonic(100.0)
+    state = AppState()
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch("cc_sentiment.tui.screens.setup.monotonic", new=fake_clock), \
+         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"):
+        async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.transition_to(SetupStage.DONE)
+            screen._done_summary_text = "Signed in as testuser using SSH key id_ed25519."
+            screen._verification_action = "github-ssh"
+            screen.verification_poll.restart(fake_clock())
+
+            screen._on_verify_result(AuthServerError(status=502))
+            await pilot.pause()
+            five_xx_signature = pending_branch_signature(screen)
+            five_xx_retry_at = screen.verification_poll.next_retry_at
+
+            screen.verification_poll.restart(fake_clock())
+            screen._verification_detail = ""
+            screen._on_verify_result(AuthUnreachable(detail="no net"))
+            await pilot.pause()
+
+            assert pending_branch_signature(screen) == five_xx_signature
+            assert five_xx_retry_at == fake_clock() + 10.0
+            assert screen.verification_poll.next_retry_at == fake_clock() + 10.0
+            assert "temporarily unreachable" in str(screen.query_one("#done-instructions", Static).render()).lower()
+
+
+async def test_setup_pending_five_xx_retry_can_recover_to_verified(tmp_path: Path):
+    state = AppState()
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+    probe = AsyncMock(side_effect=[AuthServerError(status=502), AuthOk()])
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
+         patch("cc_sentiment.upload.Uploader.probe_credentials", new=probe):
+        async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen._save_and_finish()
+            await pilot.pause(delay=0.3)
+
+            assert screen.verification_state is VerificationState.PENDING
+
+            await pilot.click("#pending-retry")
+            await pilot.pause(delay=0.3)
+
+            assert probe.await_count == 2
+            assert screen.verification_state is VerificationState.VERIFIED
+            assert screen.verification_ok is True
+            assert screen.query_one("#done-btn", Button).label.plain == "Contribute my stats"
 
 
 async def test_setup_pending_sentiments_five_xx_unreachable_uses_pending_copy_five_xx_unreachable(
