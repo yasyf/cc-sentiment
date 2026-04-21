@@ -1,0 +1,11 @@
+commands:
+  install: cd client && uv sync
+  test: cd client && uv run pytest -xvs
+  test-fast: cd client && uv run pytest -x --timeout=30
+  test-tui: cd client && uv run pytest tests/test_tui.py -xvs
+  test-tuistory: cd client && uv run pytest tests/tuistory -xvs -m "not live"
+  test-tuistory-live: cd client && CC_SENTIMENT_E2E_LIVE=1 uv run pytest tests/tuistory -xvs -m live
+  setup-dry: cd client && uv run cc-sentiment setup
+  install-mitmproxy: uv tool install mitmproxy
+
+services: {}
