@@ -154,7 +154,6 @@ def test_ssh_via_gh_link_happy_path(tmp_path: Path, harness: HarnessRunner) -> N
             "require_app_exit": True,
             "steps": (
                 {"action": "wait", "pattern": "Looking for your GitHub username", "timeout_ms": 5000},
-                {"action": "snapshot", "name": "loading"},
                 {"action": "wait", "pattern": f"Auto-detected: {USERNAME}", "timeout_ms": 10000},
                 {"action": "snapshot", "name": "username"},
                 {"action": "click", "pattern": "Next", "timeout_ms": 5000},
@@ -206,8 +205,8 @@ def test_ssh_via_gh_link_happy_path(tmp_path: Path, harness: HarnessRunner) -> N
     )
 
     assert_success(result)
-    assert_steps(result, ("loading", "username", "discovery", "remote", "link", "done"))
-    for step in ("loading", "username", "discovery", "remote", "link", "done"):
+    assert_steps(result, ("username", "discovery", "remote", "link", "done"))
+    for step in ("username", "discovery", "remote", "link", "done"):
         assert_snapshot(result, scenario_name, step)
     assert "Your key isn't linked yet" in result.snapshot("remote")
     assert "Contribute my stats" in result.snapshot("done")
@@ -247,7 +246,6 @@ def test_generate_gist_happy_path(tmp_path: Path, harness: HarnessRunner) -> Non
             "require_app_exit": True,
             "steps": (
                 {"action": "wait", "pattern": "Looking for your GitHub username", "timeout_ms": 5000},
-                {"action": "snapshot", "name": "loading"},
                 {"action": "wait", "pattern": f"Auto-detected: {USERNAME}", "timeout_ms": 10000},
                 {"action": "snapshot", "name": "username"},
                 {"action": "click", "pattern": "Next", "timeout_ms": 5000},
@@ -294,8 +292,8 @@ def test_generate_gist_happy_path(tmp_path: Path, harness: HarnessRunner) -> Non
     )
 
     assert_success(result)
-    assert_steps(result, ("loading", "username", "discovery", "done"))
-    for step in ("loading", "username", "discovery", "done"):
+    assert_steps(result, ("username", "discovery", "done"))
+    for step in ("username", "discovery", "done"):
         assert_snapshot(result, scenario_name, step)
     assert "Contribute my stats" in result.snapshot("done")
     assert gist_id[:7] in result.snapshot("done")
