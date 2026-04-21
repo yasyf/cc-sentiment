@@ -31,6 +31,9 @@ from cc_sentiment.tui.screens import (
     StatShareScreen,
 )
 from cc_sentiment.tui.screens.dialog import Dialog
+from cc_sentiment.tui.screens.setup import (
+    VerificationState,
+)
 from cc_sentiment.tui.stages import (
     Discovering,
     IdleAfterUpload,
@@ -42,6 +45,7 @@ from cc_sentiment.tui.stages import (
     Uploading,
 )
 from cc_sentiment.tui.widgets import (
+    Card,
     CommandBox,
     HourlyChart,
     KeyPreview,
@@ -601,6 +605,209 @@ async def test_setup_done_button_dismisses_true(tmp_path: Path, no_auto_setup):
             await pilot.pause()
 
             assert harness.dismissed is True
+
+
+async def test_setup_honest_end_state_verified_branch_uses_payload_card_and_contribute_visibility(
+    tmp_path: Path,
+):
+    state = AppState()
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
+         patch("cc_sentiment.tui.screens.setup.TranscriptDiscovery.find_transcripts", return_value=()):
+        async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen.state.config = SSHConfig(
+                contributor_id=ContributorId("testuser"),
+                key_path=ssh_key.path,
+            )
+            screen._done_summary_text = "Signed in as testuser using SSH key id_ed25519."
+            screen.transition_to(screen.current_stage.__class__.DONE)
+            screen._set_verification_branch(VerificationState.VERIFIED)
+            await pilot.pause(delay=0.2)
+
+            assert screen.verification_state is VerificationState.VERIFIED
+            assert screen.verification_ok is True
+            assert "success" in screen.query_one("#done-summary-card", Card).classes
+            assert screen.query_one("#done-btn", Button).variant == "primary"
+            assert screen.query_one("#done-payload-card", Card).border_title == "What actually gets sent"
+            assert "one row per conversation" in str(screen.query_one("#done-payload-lead", Static).render())
+            assert "sentiment_score" in str(screen.query_one("#done-payload", Static).render())
+            assert list(screen.query("#retry-btn")) == []
+
+
+async def test_setup_honest_end_state_pending_branch_on_unreachable_hides_contribute_visibility(
+    tmp_path: Path,
+):
+    state = AppState()
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
+         patch(
+             "cc_sentiment.upload.Uploader.probe_credentials",
+             new_callable=AsyncMock,
+            return_value=AuthUnreachable(detail="boom"),
+         ):
+        async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen._save_and_finish()
+            await pilot.pause(delay=0.4)
+
+            assert screen.verification_state is VerificationState.PENDING
+            assert screen.verification_ok is False
+            assert "warning" in screen.query_one("#done-summary-card", Card).classes
+            assert list(screen.query("#done-btn")) == []
+            assert screen.query_one("#pending-status", PendingStatus) is not None
+            assert screen.query_one("#exit-btn", Button).label.plain == "Exit, continue later"
+            assert screen.query_one("#retry-btn", Button).label.plain == "Retry now"
+
+
+async def test_setup_manual_to_pending_routes_without_contribute_cta(tmp_path: Path):
+    state = AppState()
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
+         patch("cc_sentiment.tui.screens.setup.shutil.which", return_value=None), \
+         patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"), \
+         patch(
+             "cc_sentiment.upload.Uploader.probe_credentials",
+             new_callable=AsyncMock,
+            return_value=AuthUnauthorized(status=401),
+         ):
+        async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen.query_one(ContentSwitcher).current = "step-upload"
+            await screen._populate_upload_options()
+            await pilot.pause()
+
+            await pilot.click("#upload-go")
+            await pilot.pause(delay=0.4)
+
+            assert screen.current_stage.value == "step-done"
+            assert screen.verification_state is VerificationState.PENDING
+            assert list(screen.query("#done-btn")) == []
+            assert screen.query_one("#pending-status", PendingStatus) is not None
+            assert "Paste your public key at" in str(screen.query_one("#done-instructions", Static).render())
+
+
+async def test_setup_honest_end_state_failed_branch_retry_button_contract(tmp_path: Path):
+    state = AppState()
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
+         patch("cc_sentiment.tui.screens.setup.TranscriptDiscovery.find_transcripts", return_value=()):
+        async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen.state.config = SSHConfig(
+                contributor_id=ContributorId("testuser"),
+                key_path=ssh_key.path,
+            )
+            screen._done_summary_text = "Signed in as testuser using SSH key id_ed25519."
+            screen.transition_to(screen.current_stage.__class__.DONE)
+            screen._set_verification_branch(VerificationState.FAILED)
+            await pilot.pause(delay=0.2)
+
+            buttons = list(current_step_actions(screen).query(Button))
+
+            assert screen.verification_state is VerificationState.FAILED
+            assert screen.verification_ok is False
+            assert "error" in screen.query_one("#done-summary-card", Card).classes
+            assert list(screen.query("#done-btn")) == []
+            assert screen.query_one("#exit-btn", Button).variant == "default"
+            assert screen.query_one("#retry-btn", Button).variant == "primary"
+            assert buttons[-1].id == "retry-btn"
+
+
+async def test_setup_verification_ok_reactive_contribute_visibility(
+    tmp_path: Path,
+):
+    state = AppState()
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
+         patch("cc_sentiment.tui.screens.setup.TranscriptDiscovery.find_transcripts", return_value=()):
+        async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen.state.config = SSHConfig(
+                contributor_id=ContributorId("testuser"),
+                key_path=ssh_key.path,
+            )
+            screen._done_summary_text = "Signed in as testuser using SSH key id_ed25519."
+            screen.transition_to(screen.current_stage.__class__.DONE)
+            screen._set_verification_branch(VerificationState.VERIFIED)
+            await pilot.pause(delay=0.2)
+
+            assert screen.query_one("#done-btn", Button) is not None
+
+            screen.verification_state = VerificationState.PENDING
+            screen.verification_ok = False
+            await pilot.pause()
+
+            assert list(screen.query("#done-btn")) == []
+            assert screen.query_one("#retry-btn", Button).label.plain == "Retry now"
+
+            screen.verification_state = VerificationState.VERIFIED
+            screen.verification_ok = True
+            await pilot.pause()
+
+            assert screen.query_one("#done-btn", Button).variant == "primary"
+
+
+async def test_setup_rapid_toggle_cta_never_visible_on_non_verified_branch(
+    tmp_path: Path,
+):
+    state = AppState()
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
+         patch("cc_sentiment.tui.screens.setup.TranscriptDiscovery.find_transcripts", return_value=()):
+        async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen.state.config = SSHConfig(
+                contributor_id=ContributorId("testuser"),
+                key_path=ssh_key.path,
+            )
+            screen._done_summary_text = "Signed in as testuser using SSH key id_ed25519."
+            screen.transition_to(screen.current_stage.__class__.DONE)
+            screen._set_verification_branch(VerificationState.VERIFIED)
+            await pilot.pause(delay=0.2)
+
+            for state_value in (
+                VerificationState.FAILED,
+                VerificationState.VERIFIED,
+                VerificationState.PENDING,
+                VerificationState.VERIFIED,
+                VerificationState.FAILED,
+            ):
+                screen.verification_state = state_value
+                screen.verification_ok = state_value is VerificationState.VERIFIED
+                await pilot.pause()
+
+                assert bool(list(screen.query("#done-btn"))) is (state_value is VerificationState.VERIFIED)
 
 
 async def test_setup_cancel_dismisses_false(no_auto_setup):

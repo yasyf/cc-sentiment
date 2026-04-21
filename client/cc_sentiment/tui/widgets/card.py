@@ -10,6 +10,6 @@ class Card(Section):
     Card { border: round $surface; padding: 0 1; height: auto; }
     """
 
-    def __init__(self, *, title: str, **kwargs) -> None:
-        super().__init__(**kwargs)
+    def __init__(self, *children, title: str, **kwargs) -> None:
+        super().__init__(*children, **kwargs)
         self.border_title = title

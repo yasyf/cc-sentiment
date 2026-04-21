@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from time import monotonic
 from typing import ClassVar
 
 import anyio
@@ -51,7 +52,10 @@ from cc_sentiment.transcripts import TranscriptDiscovery
 from cc_sentiment.tui.format import TimeFormat
 from cc_sentiment.tui.screens.dialog import Dialog
 from cc_sentiment.tui.status import AutoSetup, StatusEmitter
-from cc_sentiment.tui.widgets import KeyPreview, PendingStatus, StepActions, StepBody, StepHeader
+from cc_sentiment.tui.widgets import Card, KeyPreview, PendingStatus, StepActions, StepBody, StepHeader
+
+PENDING_PROPAGATION_WINDOW_SECONDS = 300.0
+PENDING_RETRY_SECONDS = 10.0
 
 
 @dataclass(slots=True)
@@ -85,6 +89,111 @@ class SetupStage(StrEnum):
     DONE = "step-done"
 
 
+class VerificationState(StrEnum):
+    VERIFIED = "verified"
+    PENDING = "pending"
+    FAILED = "failed"
+
+
+class DoneBranch(Vertical):
+    verification_state: reactive[VerificationState] = reactive(VerificationState.VERIFIED, recompose=True)
+    verification_ok: reactive[bool] = reactive(True, recompose=True)
+    summary_text: reactive[str] = reactive("", recompose=True)
+    identify_text: reactive[str] = reactive("", recompose=True)
+    process_text: reactive[str] = reactive("", recompose=True)
+    eta_text: reactive[str] = reactive("", recompose=True)
+    instructions_text: reactive[str] = reactive("", recompose=True)
+    pending_label: reactive[str] = reactive("")
+
+    def _visible_verification_state(self) -> VerificationState:
+        return (
+            self.verification_state
+            if self.verification_ok or self.verification_state is not VerificationState.VERIFIED
+            else VerificationState.PENDING
+        )
+
+    def _verification_message(self) -> tuple[str, str]:
+        match self._visible_verification_state():
+            case VerificationState.VERIFIED:
+                return "You're set up. Ready to upload.", "success"
+            case VerificationState.PENDING:
+                return "The dashboard still can't verify this public key.", "warning"
+            case VerificationState.FAILED:
+                return "We still couldn't verify this public key.", "error"
+
+    def compose(self) -> ComposeResult:
+        verification_text, verification_tone = self._verification_message()
+        summary_text = self.summary_text or "Signed in with your selected key."
+
+        match self._visible_verification_state():
+            case VerificationState.VERIFIED:
+                yield Card(
+                    Static(summary_text, id="done-summary", classes="success"),
+                    Static(verification_text, id="done-verify", classes="success"),
+                    title="verified",
+                    id="done-summary-card",
+                    classes="done-card success",
+                )
+                yield Static(
+                    "Only signed stats leave your Mac, one row per conversation.",
+                    id="done-payload-lead",
+                    classes="muted",
+                )
+                yield Card(
+                    Static(SetupScreen.render_sample_payload(), id="done-payload", classes="code"),
+                    title="What actually gets sent",
+                    id="done-payload-card",
+                    classes="done-card",
+                )
+                yield StepActions(
+                    primary=Button("Contribute my stats", id="done-btn", variant="primary"),
+                )
+                yield Static(self.identify_text, id="done-identify", classes="muted")
+                yield Static(self.process_text, id="done-process", classes="muted")
+                yield Static(self.eta_text, id="done-eta", classes="muted")
+            case VerificationState.PENDING:
+                yield Card(
+                    Static(summary_text, id="done-summary", classes="warning"),
+                    Static(verification_text, id="done-verify", classes=verification_tone),
+                    title="pending",
+                    id="done-summary-card",
+                    classes="done-card warning",
+                )
+                yield PendingStatus(self.pending_label, id="pending-status")
+                yield Card(
+                    Static(self.instructions_text, id="done-instructions", classes="muted"),
+                    title="Next steps",
+                    id="done-instructions-card",
+                    classes="done-card",
+                )
+                yield StepActions(
+                    Button("Exit, continue later", id="exit-btn", variant="default"),
+                    primary=Button("Retry now", id="retry-btn", variant="primary"),
+                )
+            case VerificationState.FAILED:
+                yield Card(
+                    Static(summary_text, id="done-summary", classes="error"),
+                    Static(verification_text, id="done-verify", classes=verification_tone),
+                    title="failed",
+                    id="done-summary-card",
+                    classes="done-card error",
+                )
+                yield Card(
+                    Static(self.instructions_text, id="done-instructions", classes="muted"),
+                    title="Next steps",
+                    id="done-instructions-card",
+                    classes="done-card",
+                )
+                yield StepActions(
+                    Button("Exit", id="exit-btn", variant="default"),
+                    primary=Button("Retry", id="retry-btn", variant="primary"),
+                )
+
+    def watch_pending_label(self, label: str) -> None:
+        with suppress(NoMatches):
+            self.query_one("#pending-status", PendingStatus).label = label
+
+
 class SetupScreen(Dialog[bool]):
     ROUGH_BUCKETS_PER_FILE: ClassVar[int] = 6
     PALETTE_CLASSES: ClassVar[tuple[str, ...]] = ("muted", "success", "warning", "error")
@@ -105,6 +214,27 @@ class SetupScreen(Dialog[bool]):
     SetupScreen > #dialog-box #loading-activity {
         margin: 0 0 1 0;
     }
+    SetupScreen > #dialog-box #done-branch,
+    SetupScreen > #dialog-box #done-payload-lead,
+    SetupScreen > #dialog-box #done-instructions,
+    SetupScreen > #dialog-box #pending-status,
+    SetupScreen > #dialog-box #done-identify,
+    SetupScreen > #dialog-box #done-process {
+        width: 100%;
+    }
+    SetupScreen > #dialog-box .done-card {
+        width: 100%;
+        margin: 0 0 1 0;
+    }
+    SetupScreen > #dialog-box .done-card.success {
+        border: round $success;
+    }
+    SetupScreen > #dialog-box .done-card.warning {
+        border: round $warning;
+    }
+    SetupScreen > #dialog-box .done-card.error {
+        border: round $error;
+    }
     """
 
     BINDINGS = [
@@ -115,6 +245,8 @@ class SetupScreen(Dialog[bool]):
 
     username: reactive[str] = reactive("")
     selected_key: reactive[SSHKeyInfo | GPGKeyInfo | None] = reactive(None)
+    verification_state: reactive[VerificationState] = reactive(VerificationState.VERIFIED)
+    verification_ok: reactive[bool] = reactive(True)
 
     def __init__(self, state: AppState) -> None:
         super().__init__()
@@ -130,6 +262,13 @@ class SetupScreen(Dialog[bool]):
         self._key_on_openpgp = False
         self._remote_check_generation = 0
         self._remote_check_worker: Worker[None] | None = None
+        self.pending_started_at = monotonic()
+        self._done_summary_text = ""
+        self._done_identify_text = ""
+        self._done_process_text = ""
+        self._done_eta_text = ""
+        self._verification_detail = ""
+        self._verification_action = ""
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog-box"):
@@ -190,7 +329,14 @@ class SetupScreen(Dialog[bool]):
             case SetupStage.UPLOAD:
                 self._focus_widget(self.query_one("#upload-go", Button))
             case SetupStage.DONE:
-                self._focus_widget(self.query_one("#done-btn", Button))
+                with suppress(NoMatches):
+                    self._focus_widget(self.query_one("#done-btn", Button))
+                    return
+                with suppress(NoMatches):
+                    self._focus_widget(self.query_one("#retry-btn", Button))
+                    return
+                with suppress(NoMatches):
+                    self._focus_widget(self.query_one("#exit-btn", Button))
 
     def _finish_username_validation(self) -> None:
         self.actions.username_validation_running = False
@@ -210,6 +356,12 @@ class SetupScreen(Dialog[bool]):
                 if button.variant == "primary"
             )
         return None
+
+    def watch_verification_state(self, _: VerificationState) -> None:
+        self._render_done_branch()
+
+    def watch_verification_ok(self, _: bool) -> None:
+        self._render_done_branch()
 
     def _set_tone(
         self,
@@ -292,12 +444,106 @@ class SetupScreen(Dialog[bool]):
         go_button.disabled = True
 
     def _reset_done_stage(self) -> None:
-        self._set_tone(self.query_one("#done-summary", Static), "", "success")
-        self._set_tone(self.query_one("#done-verify", Static), "")
-        self.query_one("#done-payload", Static).update("")
-        self.query_one("#done-identify", Static).update("")
-        self.query_one("#done-process", Static).update("")
-        self.query_one("#done-eta", Static).update("")
+        self._done_summary_text = ""
+        self._done_identify_text = ""
+        self._done_process_text = ""
+        self._done_eta_text = ""
+        self._verification_detail = ""
+        self._verification_action = ""
+        self.pending_started_at = monotonic()
+        self._render_done_branch()
+
+    def _set_done_header(self, title: str, explainer: str, tone: str | None = None) -> None:
+        header = self.query_one("#step-done", Vertical).query_one(StepHeader)
+        title_widget = header.query_one(".step-title", Static)
+        explainer_widget = header.query_one(".step-explainer", Static)
+        self._set_palette_classes(title_widget, tone)
+        title_widget.update(title)
+        self._set_tone(explainer_widget, explainer)
+
+    @staticmethod
+    def _format_pending_elapsed(seconds: float) -> str:
+        elapsed = max(0, int(seconds))
+        return f"{elapsed // 60}:{elapsed % 60:02d}"
+
+    def _pending_label(self) -> str:
+        return f"Waiting for your key to propagate… {self._format_pending_elapsed(monotonic() - self.pending_started_at)}"
+
+    def _manual_destination_url(self) -> str:
+        return (
+            "https://github.com/settings/ssh/new"
+            if isinstance(self.selected_key, SSHKeyInfo)
+            else "https://github.com/settings/gpg/new"
+        )
+
+    def _instructions_text(self) -> str:
+        match self._verification_action:
+            case "manual":
+                return f"Paste your public key at {self._manual_destination_url()}, then retry once GitHub shows it."
+            case "openpgp":
+                return "Check your email for the keys.openpgp.org verification link, finish publishing the key, then retry."
+            case "github-ssh" | "github-gpg":
+                return "Give GitHub a moment to propagate your public key, then retry."
+            case "gist":
+                return "Keep your cc-sentiment gist public so the dashboard can read the key, then retry."
+            case _:
+                return "Wait a moment for your public key to propagate, then retry."
+
+    def _visible_verification_state(self) -> VerificationState:
+        return (
+            self.verification_state
+            if self.verification_ok or self.verification_state is not VerificationState.VERIFIED
+            else VerificationState.PENDING
+        )
+
+    def _render_done_branch(self) -> None:
+        match self._visible_verification_state():
+            case VerificationState.VERIFIED:
+                self._set_done_header(
+                    "You're all set",
+                    "Review how uploads are signed and what the dashboard receives.",
+                    "success",
+                )
+            case VerificationState.PENDING:
+                self._set_done_header(
+                    "Waiting for your key",
+                    "The dashboard can see your setup, but it can't verify this key yet.",
+                    "warning",
+                )
+            case VerificationState.FAILED:
+                self._set_done_header(
+                    "We couldn't verify your key",
+                    "The dashboard still can't read this public key. Check the instructions, then retry.",
+                    "error",
+                )
+        with suppress(NoMatches):
+            branch = self.query_one("#done-branch", DoneBranch)
+            branch.summary_text = self._done_summary_text
+            branch.identify_text = self._done_identify_text
+            branch.process_text = self._done_process_text
+            branch.eta_text = self._done_eta_text
+            branch.instructions_text = self._instructions_text()
+            branch.pending_label = self._pending_label()
+            branch.verification_state = self.verification_state
+            branch.verification_ok = self.verification_ok
+            if self.current_stage is SetupStage.DONE:
+                self.set_timer(0.01, lambda: self._focus_step_target(SetupStage.DONE))
+
+    def _set_verification_branch(
+        self,
+        state: VerificationState,
+        detail: str = "",
+    ) -> None:
+        self._verification_detail = detail
+        self.verification_state = state
+        self.verification_ok = state is VerificationState.VERIFIED
+        self._render_done_branch()
+
+    def _refresh_pending_status(self) -> None:
+        if self._visible_verification_state() is not VerificationState.PENDING:
+            return
+        with suppress(NoMatches):
+            self.query_one("#done-branch", DoneBranch).pending_label = self._pending_label()
 
     def _mount_discovery_options(self, radio_children: list[RadioButton]) -> None:
         radio = self.query_one("#key-select", RadioSet)
@@ -501,40 +747,29 @@ class SetupScreen(Dialog[bool]):
                 "Review how uploads are signed and what the dashboard receives.",
             )
             yield StepBody(
-                Static("", id="done-summary", classes="copy-block success"),
-                Static("", id="done-verify", classes="status-line muted"),
-                Static("", id="done-payload", classes="copy-block"),
-                StepActions(
-                    primary=Button("Contribute my stats", id="done-btn", variant="primary"),
-                ),
-                Static("", classes="after-actions-rule"),
-                Static("", id="done-identify", classes="after-actions-copy muted"),
-                Static("", id="done-process", classes="after-actions-copy muted"),
-                Static("", id="done-eta", classes="after-actions-copy muted"),
+                DoneBranch(id="done-branch"),
             )
 
     def _populate_done_info(self) -> None:
-        identify = self.query_one("#done-identify", Static)
         match self.state.config:
             case GistConfig(gist_id=g):
-                identify.update(
+                self._done_identify_text = (
                     f"How we know it's you: uploads are signed on this Mac, and gist {g[:7]} holds the public key."
                 )
             case _:
-                identify.update(
+                self._done_identify_text = (
                     "How we know it's you: uploads are signed on this Mac, and the dashboard checks your public key."
                 )
-        process = self.query_one("#done-process", Static)
         match EngineFactory.default():
             case "omlx":
-                process.update(
+                self._done_process_text = (
                     "Where scoring happens: entirely on your Mac with a local Gemma model."
                 )
             case "claude":
-                process.update(
+                self._done_process_text = (
                     "Where scoring happens: through the claude CLI on this Mac, never through the dashboard."
                 )
-        self.query_one("#done-payload", Static).update(self.render_sample_payload())
+        self._render_done_branch()
         self._finalize_done_screen()
 
     @work()
@@ -542,16 +777,16 @@ class SetupScreen(Dialog[bool]):
         transcripts = await anyio.to_thread.run_sync(TranscriptDiscovery.find_transcripts)
         files = len(transcripts)
         rate = Hardware.estimate_buckets_per_sec(EngineFactory.default())
-        self.query_one("#done-eta", Static).update(
+        self._done_eta_text = (
             f"Found {files:,} transcripts. About {TimeFormat.format_duration(files * self.ROUGH_BUCKETS_PER_FILE / rate)} to score here."
             if rate and files else ""
         )
+        self._render_done_branch()
 
     @staticmethod
     def render_sample_payload() -> str:
         return "\n".join(
             (
-                "What gets sent:",
                 "{",
                 '  "time": "2026-04-15T14:23:05Z",',
                 '  "conversation_id": "7f3a9b2c-0e4d-4a91-b6f8",',
@@ -566,6 +801,8 @@ class SetupScreen(Dialog[bool]):
     def on_mount(self) -> None:
         self.query_one("#key-select", RadioSet).display = False
         self._configure_remote_checks_table()
+        self.set_interval(1, self._refresh_pending_status)
+        self._render_done_branch()
         self.try_auto_setup()
 
     def action_activate_primary(self) -> None:
@@ -584,22 +821,20 @@ class SetupScreen(Dialog[bool]):
     def _on_auto_setup_success(self) -> None:
         config = self.state.config
         assert config is not None
-        summary = self.query_one("#done-summary", Static)
         match config:
             case SSHConfig(contributor_id=cid, key_path=p):
-                summary.update(f"Signed in as {cid} using SSH key {p.name}.")
+                self._done_summary_text = f"Signed in as {cid} using SSH key {p.name}."
             case GPGConfig(contributor_type=contributor_type, contributor_id=cid, fpr=f):
                 label = cid if contributor_type == "github" else f"GPG {f[-8:]}"
-                summary.update(f"Signed in as {label} using GPG {self._display_fingerprint(f)}.")
+                self._done_summary_text = (
+                    f"Signed in as {label} using GPG {self._display_fingerprint(f)}."
+                )
             case GistConfig(contributor_id=cid, gist_id=g):
-                summary.update(f"Signed in as {cid} using cc-sentiment gist {g[:7]}.")
-        self._set_tone(
-            self.query_one("#done-verify", Static),
-            "You're set up. Ready to upload.",
-            "success",
-        )
+                self._done_summary_text = f"Signed in as {cid} using cc-sentiment gist {g[:7]}."
+        self._set_verification_branch(VerificationState.VERIFIED)
         self._populate_done_info()
         self.transition_to(SetupStage.DONE)
+        self._render_done_branch()
 
     def _on_auto_setup_fail(self, username: str | None) -> None:
         if username:
@@ -903,12 +1138,16 @@ Expire-Date: 0
         self.app.call_from_thread(self._finish_gist, gist_id)
 
     def _finish_gist(self, gist_id: str) -> None:
-        self.query_one("#done-summary", Static).update(
+        self._done_summary_text = (
             f"Signed in as {self.username} using cc-sentiment gist {gist_id[:7]}."
         )
+        self.pending_started_at = monotonic()
+        self._verification_action = "gist"
+        self._set_verification_branch(VerificationState.PENDING)
         self._populate_done_info()
         self._finish_discovery_action()
         self.transition_to(SetupStage.DONE)
+        self._render_done_branch()
         self.verify_server_config()
 
     def _go_to_remote(self) -> None:
@@ -1083,6 +1322,7 @@ Expire-Date: 0
                     self.app.call_from_thread(self._finish_upload_action)
                     return
                 if result.returncode == 0:
+                    self._verification_action = "github-ssh"
                     self.app.call_from_thread(self._set_tone, result_label, "Key linked to GitHub. You're all set.", "success")
                     self.app.call_from_thread(self._save_and_finish)
                 else:
@@ -1116,6 +1356,7 @@ Expire-Date: 0
                         self.app.call_from_thread(self._finish_upload_action)
                         return
                     if result.returncode == 0:
+                        self._verification_action = "github-gpg"
                         self.app.call_from_thread(self._set_tone, result_label, "Key linked to GitHub. You're all set.", "success")
                         self.app.call_from_thread(self._save_and_finish)
                     else:
@@ -1146,6 +1387,7 @@ Expire-Date: 0
                         )
                     else:
                         self.app.call_from_thread(self._set_tone, result_label, "Key already published. You're all set.", "success")
+                    self._verification_action = "openpgp"
                     self.app.call_from_thread(self._save_and_finish)
                 except httpx.HTTPError as e:
                     self.app.call_from_thread(
@@ -1158,21 +1400,19 @@ Expire-Date: 0
 
             case "manual":
                 assert key is not None
-                url = (
-                    "https://github.com/settings/ssh/new"
-                    if isinstance(key, SSHKeyInfo)
-                    else "https://github.com/settings/gpg/new"
-                )
+                url = self._manual_destination_url()
+                self._verification_action = "manual"
                 self.app.call_from_thread(
                     self._set_tone,
                     result_label,
-                    f"Show the full key above, then paste it at:\n{url}",
+                    f"Paste your public key at:\n{url}",
                 )
                 self.app.call_from_thread(self._save_and_finish)
 
     def _save_and_finish(self) -> None:
         key = self.selected_key
         identity = self.username
+        self.pending_started_at = monotonic()
 
         match key:
             case SSHKeyInfo(path=p):
@@ -1183,35 +1423,55 @@ Expire-Date: 0
                 else:
                     self.state.config = GPGConfig(contributor_type="gpg", contributor_id=ContributorId(f), fpr=f)
 
-        summary = self.query_one("#done-summary", Static)
         match key:
             case SSHKeyInfo(path=p):
-                summary.update(f"Signed in as {identity} using SSH key {p.name}.")
+                self._done_summary_text = f"Signed in as {identity} using SSH key {p.name}."
             case GPGKeyInfo(fpr=f):
                 label = identity or f"GPG {f[-8:]}"
-                summary.update(f"Signed in as {label}.")
+                self._done_summary_text = f"Signed in as {label}."
 
+        if not self._verification_action:
+            self._verification_action = "manual"
+        self._set_verification_branch(VerificationState.PENDING)
         self._populate_done_info()
         self._finish_upload_action()
         self.transition_to(SetupStage.DONE)
+        self._render_done_branch()
         self.verify_server_config()
 
-    @work()
-    async def verify_server_config(self) -> None:
+    def verify_server_config(self) -> None:
+        self.run_worker(
+            self._verify_server_config(),
+            name=f"setup-verify-{monotonic()}",
+            exit_on_error=False,
+        )
+
+    async def _verify_server_config(self) -> None:
         from cc_sentiment.upload import AuthOk, Uploader
         await anyio.to_thread.run_sync(self.state.save)
-        verify_label = self.query_one("#done-verify", Static)
-        self._set_tone(verify_label, "Verifying with the dashboard...")
-
         assert self.state.config is not None
-        if isinstance(await Uploader().probe_credentials(self.state.config), AuthOk):
-            self._set_tone(verify_label, "You're set up. Ready to upload.", "success")
-        else:
-            self._set_tone(verify_label, "We couldn't verify your setup just yet.", "warning")
+        result = await Uploader().probe_credentials(self.state.config)
+        if isinstance(result, AuthOk):
+            self._set_verification_branch(VerificationState.VERIFIED)
+            return
+        self._set_verification_branch(
+            VerificationState.PENDING
+            if monotonic() - self.pending_started_at < PENDING_PROPAGATION_WINDOW_SECONDS
+            else VerificationState.FAILED,
+        )
 
     @on(Button.Pressed, "#done-btn")
     def on_done(self) -> None:
         self.dismiss(True)
+
+    @on(Button.Pressed, "#retry-btn")
+    def on_retry(self) -> None:
+        self._set_verification_branch(VerificationState.PENDING)
+        self.verify_server_config()
+
+    @on(Button.Pressed, "#exit-btn")
+    def on_exit(self) -> None:
+        self.dismiss(False)
 
     def action_cancel(self) -> None:
         self.dismiss(False)
