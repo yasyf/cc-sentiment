@@ -1,0 +1,26 @@
+{
+  "featureId": "fix-asyncmock-warnings-in-existing-tui-tests",
+  "reviewedAt": "2026-04-21T15:10:44Z",
+  "commitId": "aad8c97ad762828fadfcd671d3e7b134133a77a5",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The commit is narrowly scoped to `client/tests/test_tui.py` and replaces an `AsyncMock` patch on `CCSentimentApp._poll_card` with a synchronous `Mock` callback, matching the feature goal of removing unawaited coroutine warnings without changing TUI source behavior.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "Worker deviated from the baseline-validation stop procedure when the baseline failure was the exact in-scope bug this feature was assigned to fix; skill guidance may need an explicit exception for this case.",
+      "evidence": "Handoff `skillFeedback.followedProcedure=false` with deviation at `1.3 Baseline Validation` and suggested change to allow continuation for explicitly assigned in-scope failures; transcript skeleton shows baseline `uv run pytest -xvs` followed by direct diagnosis and fix."
+    },
+    {
+      "area": "conventions",
+      "observation": "Mission shared guidance still describes the AsyncMock warning issue as a pre-existing baseline problem even though this feature now resolves it.",
+      "evidence": "/Users/yasyf/.factory/missions/c3c5e3fe-2fb5-4733-9f3a-5ae91c0f3321/AGENTS.md:108 lists the AsyncMock RuntimeWarnings as pre-existing and tracked by this feature; commit `aad8c97ad762828fadfcd671d3e7b134133a77a5` fixes the relevant fixture."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Pass. The reviewed diff directly addresses the AsyncMock misuse in existing TUI tests and remains within feature scope. Evidence in the handoff indicates full-suite verification passed with RuntimeWarnings promoted to errors and no production-source changes."
+}

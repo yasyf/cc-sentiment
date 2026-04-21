@@ -1,0 +1,46 @@
+{
+  "milestone": "misc-test-hygiene",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "cd client && uv run pytest -xvs",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "echo \"cc-sentiment has no typecheck baseline (no pyright/mypy config in project); skipping per services.yaml policy\"",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "cd client && uv run --with ruff ruff check cc_sentiment/tui tests/test_tui.py",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 2,
+    "passed": 2,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": ".factory/skills/tui-worker/SKILL.md",
+      "suggestion": "Add an explicit exception to strict TDD-first and baseline-stop steps for features explicitly assigned to fix an existing failing/flaky baseline test. Require proof that the failure matches in-scope assignment, then allow direct fix-and-verify flow.",
+      "evidence": "Both reviewed features reported process deviations tied to this pattern: deflake-generation-gpg-routes-to-remote and fix-asyncmock-warnings-in-existing-tui-tests each had handoff skillFeedback deviations despite correct, scoped fixes.",
+      "isSystemic": true
+    },
+    {
+      "target": "/Users/yasyf/.factory/missions/c3c5e3fe-2fb5-4733-9f3a-5ae91c0f3321/AGENTS.md",
+      "suggestion": "Remove or update the stale \"Known Pre-Existing Issues\" note about AsyncMock RuntimeWarnings once the misc-test-hygiene warning-fix feature is accepted.",
+      "evidence": "Mission AGENTS.md still lists AsyncMock warnings as pre-existing while feature fix-asyncmock-warnings-in-existing-tui-tests commit aad8c97 resolves that warning source.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": null
+}
