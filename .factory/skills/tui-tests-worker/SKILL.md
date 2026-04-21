@@ -82,7 +82,7 @@ NEVER: invoke the `tuistory` Skill, run `uv run cc-sentiment setup` directly fro
 
 7. **Run the suite** — `cd client && uv run pytest tests/tuistory -xvs -m "not live"`. All green.
 
-8. **Ensure no orphan processes** — After the suite finishes, `ps aux | grep -E 'mitmdump|tuistory|cc-sentiment' | grep -v grep` must return empty. If not, fix the fixture teardown (send SIGTERM, then SIGKILL after 2s).
+8. **Ensure no orphan processes** — After the suite finishes, the harness-owned process check must be empty: `ps aux | grep -E 'mitmdump|tuistory|cc-sentiment setup|uv run cc-sentiment setup|tests.tuistory.fake_bin' | grep -v grep`. Note: the broader `cc-sentiment` grep also matches unrelated pre-existing user processes on this machine (other sessions' pytest runs, `vite preview` for app/, etc.) — those are not harness orphans. Use the narrower pattern. If the narrower check finds harness-owned procs still running, fix the fixture teardown (send SIGTERM, then SIGKILL after 2s).
 
 9. **Confirm no regression** — `cd client && uv run pytest -x`. All green.
 
