@@ -18,10 +18,10 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.reactive import reactive
+from textual.worker import Worker
 from textual.widgets import (
     Button,
     ContentSwitcher,
-    DataTable,
     Input,
     Label,
     RadioButton,
@@ -81,8 +81,8 @@ class SetupScreen(Dialog[bool]):
     SetupScreen > #dialog-box .faq { width: 100%; color: $text-muted; margin: 1 0 0 0; }
     SetupScreen > #dialog-box .error { color: $error; }
     SetupScreen > #dialog-box .success { color: $success; }
-    SetupScreen > #dialog-box DataTable { width: 100%; height: auto; max-height: 30%; margin: 0 0 1 0; }
     SetupScreen > #dialog-box RadioSet { width: 100%; margin: 0 0 1 0; }
+    SetupScreen > #dialog-box #key-select { max-height: 12; overflow-y: auto; }
     SetupScreen > #dialog-box .key-text { width: 100%; color: $text-muted; margin: 0 0 1 0; max-height: 5; overflow-y: auto; }
     """
 
@@ -102,13 +102,13 @@ class SetupScreen(Dialog[bool]):
         self.transition_history = [SetupStage.LOADING]
         self._username_status_snapshot = ""
         self._discovered_keys: list[SSHKeyInfo | GPGKeyInfo] = []
-        self._discovery_ready = False
-        self._discovery_identity: str | None = None
         self._generation_mode: str | None = None
         self._generation_radio_index: int | None = None
         self._upload_actions: list[str] = []
         self._key_on_remote = False
         self._key_on_openpgp = False
+        self._remote_check_generation = 0
+        self._remote_check_worker: Worker[None] | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog-box"):
@@ -190,23 +190,24 @@ class SetupScreen(Dialog[bool]):
             )
         return None
 
-    def _reset_discovery_stage(self) -> None:
-        table = self.query_one("#key-table", DataTable)
-        radio = self.query_one("#key-select", RadioSet)
-        self._discovered_keys = []
-        self._discovery_ready = False
-        self._discovery_identity = None
-        self._generation_mode = None
-        self._generation_radio_index = None
-        table.clear()
-        table.display = False
+    def _clear_radio_set(self, radio: RadioSet) -> None:
+        radio._pressed_button = None
         radio.display = False
         radio.remove_children()
+
+    def _reset_discovery_stage(self) -> None:
+        radio = self.query_one("#key-select", RadioSet)
+        self._discovered_keys = []
+        self._generation_mode = None
+        self._generation_radio_index = None
+        self.selected_key = None
+        self._clear_radio_set(radio)
         self.query_one("#discovery-status", Label).update("Looking for signing keys on your machine...")
         self.query_one("#no-keys-msg", Label).update("")
         self.query_one("#discovery-next", Button).disabled = True
 
     def _reset_remote_stage(self) -> None:
+        self._cancel_remote_check()
         self._key_on_remote = False
         self._key_on_openpgp = False
         self.query_one("#remote-status", Label).update("Checking that the dashboard can verify your uploads...")
@@ -216,8 +217,7 @@ class SetupScreen(Dialog[bool]):
     def _reset_upload_stage(self) -> None:
         radio = self.query_one("#upload-options", RadioSet)
         self._upload_actions = []
-        radio.display = False
-        radio.remove_children()
+        self._clear_radio_set(radio)
         self.query_one("#upload-key-text", Label).update("")
         self.query_one("#upload-result", Label).update("")
         self.query_one("#upload-go", Button).disabled = True
@@ -234,6 +234,44 @@ class SetupScreen(Dialog[bool]):
         radio = self.query_one("#key-select", RadioSet)
         radio.mount_all(radio_children)
         radio.display = True
+
+    def _cancel_remote_check(self) -> None:
+        self._remote_check_generation += 1
+        if self._remote_check_worker is not None:
+            self._remote_check_worker.cancel()
+        self._remote_check_worker = None
+
+    def _remote_check_is_current(
+        self,
+        generation: int,
+        key: SSHKeyInfo | GPGKeyInfo | None,
+    ) -> bool:
+        return generation == self._remote_check_generation and key == self.selected_key
+
+    def _set_remote_pending(self, generation: int, checks: str, key: SSHKeyInfo | GPGKeyInfo | None) -> None:
+        if not self._remote_check_is_current(generation, key):
+            return
+        self.query_one("#remote-checks", Static).update(checks)
+
+    def _apply_remote_results(
+        self,
+        generation: int,
+        key: SSHKeyInfo | GPGKeyInfo | None,
+        results: str,
+        found: bool,
+        key_on_openpgp: bool,
+    ) -> None:
+        if not self._remote_check_is_current(generation, key):
+            return
+        self._key_on_openpgp = key_on_openpgp
+        self.query_one("#remote-checks", Static).update(results)
+        self._key_on_remote = found
+        self.query_one("#remote-status", Label).update(
+            "[green]You're set up. Ready to upload.[/]"
+            if found
+            else "Not linked yet. We can set this up next."
+        )
+        self._enable_remote_next()
 
     def compose_loading_step(self) -> ComposeResult:
         with Vertical(id="step-loading"):
@@ -267,7 +305,6 @@ class SetupScreen(Dialog[bool]):
                 "Looking for signing keys on your machine...",
                 id="discovery-status", classes="status",
             )
-            yield DataTable(id="key-table")
             yield RadioSet(id="key-select")
             yield Label("", id="no-keys-msg", classes="status")
             yield Label(
@@ -392,9 +429,6 @@ class SetupScreen(Dialog[bool]):
         )
 
     def on_mount(self) -> None:
-        table = self.query_one("#key-table", DataTable)
-        table.add_columns("Type", "Fingerprint", "Email")
-        table.display = False
         self.query_one("#key-select", RadioSet).display = False
         self.try_auto_setup()
 
@@ -442,9 +476,6 @@ class SetupScreen(Dialog[bool]):
         if not username:
             self.query_one("#username-status", Label).update("[red]Username is required[/]")
             return
-        if username == self.username and self._discovery_ready and self._discovery_identity == username:
-            self.transition_to(SetupStage.DISCOVERY)
-            return
         self._username_status_snapshot = str(self.query_one("#username-status", Label).render())
         self.username = username
         self.actions.username_validation_running = True
@@ -452,9 +483,6 @@ class SetupScreen(Dialog[bool]):
 
     @on(Button.Pressed, "#username-skip")
     def on_username_skip(self) -> None:
-        if self.username == "" and self._discovery_ready and self._discovery_identity == "":
-            self.transition_to(SetupStage.DISCOVERY)
-            return
         self.username = ""
         self._switch_to_discovery()
 
@@ -476,12 +504,8 @@ class SetupScreen(Dialog[bool]):
         self.app.call_from_thread(self._finish_username_validation)
 
     def _switch_to_discovery(self) -> None:
-        should_discover = not self._discovery_ready or self._discovery_identity != self.username
-        if should_discover:
-            self._reset_discovery_stage()
+        self._reset_discovery_stage()
         self.transition_to(SetupStage.DISCOVERY)
-        if not should_discover:
-            return
         self.discover_keys()
 
     @work(thread=True)
@@ -495,26 +519,30 @@ class SetupScreen(Dialog[bool]):
         ssh_keys: tuple[SSHKeyInfo, ...],
         gpg_keys: tuple[GPGKeyInfo, ...],
     ) -> None:
-        table = self.query_one("#key-table", DataTable)
         radio = self.query_one("#key-select", RadioSet)
         status = self.query_one("#discovery-status", Label)
         no_keys = self.query_one("#no-keys-msg", Label)
         next_btn = self.query_one("#discovery-next", Button)
-        table.clear()
-        table.display = False
-        radio.display = False
-        radio.remove_children()
+        self._clear_radio_set(radio)
 
         all_keys: list[SSHKeyInfo | GPGKeyInfo] = (
             [*ssh_keys, *gpg_keys] if self.username else list(gpg_keys)
         )
         self._discovered_keys = all_keys
-        self._discovery_ready = True
-        self._discovery_identity = self.username
         self._generation_mode = self._pick_generation_mode()
-        self._generation_radio_index = None
+        self._generation_radio_index = len(all_keys) if self._generation_mode is not None else None
 
-        if not all_keys and self._generation_mode is None:
+        radio_children = [
+            *[
+                RadioButton(f"SSH · {key.path.name} · {key.algorithm}")
+                if isinstance(key, SSHKeyInfo)
+                else RadioButton(f"GPG · {key.fpr[-8:]} · {key.email}")
+                for key in all_keys
+            ],
+            *([RadioButton("Create a new cc-sentiment key")] if self._generation_mode is not None else []),
+        ]
+
+        if not radio_children:
             status.update("No signing keys found on your machine.")
             if not self.username:
                 no_keys.update(
@@ -532,48 +560,22 @@ class SetupScreen(Dialog[bool]):
         if not all_keys:
             status.update("No signing keys found on your machine.")
             no_keys.update(self._generation_prompt())
-            next_btn.disabled = False
-            if self.current_stage is SetupStage.DISCOVERY:
-                self._focus_step_target(SetupStage.DISCOVERY)
-            return
-
-        no_keys.update("")
-        table.display = True
-        if self._generation_mode:
-            hint = " Pick one, or create a new cc-sentiment key."
-        elif len(all_keys) > 1:
-            hint = " Pick one."
         else:
-            hint = ""
-        plural = "s" if len(all_keys) != 1 else ""
-        status.update(f"Found {len(all_keys)} key{plural} on your machine.{hint}")
+            no_keys.update("")
+            hint = (
+                " Pick one, or create a new cc-sentiment key."
+                if self._generation_mode
+                else " Pick one."
+                if len(all_keys) > 1
+                else ""
+            )
+            plural = "s" if len(all_keys) != 1 else ""
+            status.update(f"Found {len(all_keys)} key{plural} on your machine.{hint}")
 
-        radio_children: list[RadioButton] = []
-        for key in all_keys:
-            match key:
-                case SSHKeyInfo(path=p, algorithm=a):
-                    radio_children.append(RadioButton(f"SSH: {p.name} ({a})"))
-                case GPGKeyInfo(fpr=f, email=e):
-                    radio_children.append(RadioButton(f"GPG: {f[-8:]} ({e})"))
-        if self._generation_mode is not None:
-            radio_children.append(RadioButton("Create a new cc-sentiment key"))
-            self._generation_radio_index = len(all_keys)
-
-        if len(radio_children) > 1:
-            self.call_after_refresh(self._mount_discovery_options, radio_children)
-        else:
-            radio.display = False
-
+        self.call_after_refresh(self._mount_discovery_options, radio_children)
         next_btn.disabled = False
         if self.current_stage is SetupStage.DISCOVERY:
             self._focus_step_target(SetupStage.DISCOVERY)
-
-        for key in all_keys:
-            match key:
-                case SSHKeyInfo(path=p, algorithm=_, comment=c):
-                    table.add_row("SSH", str(p), c)
-                case GPGKeyInfo(fpr=f, email=e):
-                    table.add_row("GPG", f"{f[:4]} {f[4:8]} ... {f[-8:-4]} {f[-4:]}", e)
 
     def _pick_generation_mode(self) -> str | None:
         if self.username and KeyDiscovery.gh_authenticated():
@@ -605,6 +607,10 @@ class SetupScreen(Dialog[bool]):
     def on_discovery_back(self) -> None:
         self.query_one("#username-status", Label).update(self._username_status_snapshot)
         self.transition_to(SetupStage.USERNAME)
+
+    @on(RadioSet.Changed, "#key-select")
+    def on_discovery_selection_changed(self) -> None:
+        self._cancel_remote_check()
 
     @on(Button.Pressed, "#discovery-next")
     def on_discovery_next(self) -> None:
@@ -723,20 +729,24 @@ Expire-Date: 0
     def _go_to_remote(self) -> None:
         self._finish_discovery_action()
         self.transition_to(SetupStage.REMOTE)
-        self.check_remotes()
+        self._remote_check_generation += 1
+        self._remote_check_worker = self.check_remotes(self._remote_check_generation, self.selected_key)
 
     @work(thread=True)
-    def check_remotes(self) -> None:
-        checks_widget = self.query_one("#remote-checks", Static)
-        status = self.query_one("#remote-status", Label)
-        key = self.selected_key
+    def check_remotes(
+        self,
+        generation: int | None = None,
+        key: SSHKeyInfo | GPGKeyInfo | None = None,
+    ) -> None:
+        generation = self._remote_check_generation if generation is None else generation
+        key = self.selected_key if key is None else key
         results: list[str] = []
         found = False
-        self._key_on_openpgp = False
+        key_on_openpgp = False
 
         match key:
             case SSHKeyInfo(path=p):
-                self.app.call_from_thread(checks_widget.update, "  [dim]...[/] Checking GitHub")
+                self.app.call_from_thread(self._set_remote_pending, generation, "  [dim]...[/] Checking GitHub", key)
                 try:
                     github_keys = KeyDiscovery.fetch_github_ssh_keys(self.username)
                     local_fp = SSHBackend(private_key_path=p).fingerprint()
@@ -753,7 +763,7 @@ Expire-Date: 0
                 if self.username:
                     checks.append("  [dim]...[/] Checking GitHub")
                 checks.append("  [dim]...[/] Checking keys.openpgp.org")
-                self.app.call_from_thread(checks_widget.update, "\n".join(checks))
+                self.app.call_from_thread(self._set_remote_pending, generation, "\n".join(checks), key)
 
                 if self.username:
                     try:
@@ -770,22 +780,20 @@ Expire-Date: 0
                     if openpgp_key:
                         results.append("  [green]✓[/] Found on keys.openpgp.org")
                         found = True
-                        self._key_on_openpgp = True
+                        key_on_openpgp = True
                     else:
                         results.append("  [yellow]—[/] Not on keys.openpgp.org yet")
                 except httpx.HTTPError:
                     results.append("  [yellow]?[/] Couldn't reach keys.openpgp.org")
 
-        self.app.call_from_thread(checks_widget.update, "\n".join(results))
-        if found:
-            self.app.call_from_thread(status.update, "[green]You're set up. Ready to upload.[/]")
-            self.app.call_from_thread(self._enable_remote_next)
-            self._key_on_remote = True
-        else:
-            msg = "Not linked yet. We can set this up next."
-            self.app.call_from_thread(status.update, msg)
-            self.app.call_from_thread(self._enable_remote_next)
-            self._key_on_remote = False
+        self.app.call_from_thread(
+            self._apply_remote_results,
+            generation,
+            key,
+            "\n".join(results),
+            found,
+            key_on_openpgp,
+        )
 
     def _enable_remote_next(self) -> None:
         self.query_one("#remote-next", Button).disabled = False
@@ -794,7 +802,7 @@ Expire-Date: 0
 
     @on(Button.Pressed, "#remote-back")
     def on_remote_back(self) -> None:
-        self.transition_to(SetupStage.DISCOVERY)
+        self._switch_to_discovery()
 
     @on(Button.Pressed, "#remote-next")
     async def on_remote_next(self) -> None:
@@ -812,8 +820,7 @@ Expire-Date: 0
 
     async def _populate_upload_options(self) -> None:
         radio = self.query_one("#upload-options", RadioSet)
-        await radio.remove_children()
-        radio.display = False
+        self._clear_radio_set(radio)
         has_gh = shutil.which("gh") is not None
         gh_authed = has_gh and await anyio.to_thread.run_sync(KeyDiscovery.gh_authenticated)
         gh_suffix = "" if gh_authed else (" (needs `gh auth login`)" if has_gh else " (needs gh CLI)")

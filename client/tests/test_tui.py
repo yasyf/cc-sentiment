@@ -119,10 +119,6 @@ def visible_step_ids(screen: SetupScreen) -> list[str]:
     return [widget.id for widget in switcher.displayed_and_visible_children]
 
 
-def table_rows(table: DataTable) -> list[tuple[object, ...]]:
-    return [table.get_row_at(index) for index in range(table.row_count)]
-
-
 def radio_labels(radio: RadioSet) -> list[str]:
     return [str(button.label) for button in radio.query(RadioButton)]
 
@@ -195,11 +191,13 @@ async def test_setup_auto_success_jumps_to_done():
             assert pilot.app.screen.query_one(ContentSwitcher).current == "step-done"
 
 
-async def test_setup_key_discovery_populates_table(no_auto_setup):
+async def test_setup_discovery_single_radioset_no_datatable(no_auto_setup):
     ssh_keys = (SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host"),)
 
     with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=ssh_keys), \
-         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()):
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=False), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.has_tool", return_value=False):
         async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
@@ -207,7 +205,12 @@ async def test_setup_key_discovery_populates_table(no_auto_setup):
             screen._switch_to_discovery()
             await pilot.pause(delay=0.5)
 
-            assert screen.query_one("#key-table", DataTable).row_count == 1
+            radio = screen.query_one("#key-select", RadioSet)
+
+            assert list(screen.query("#step-discovery DataTable")) == []
+            assert radio.display is True
+            assert radio_labels(radio) == ["SSH · id_ed25519 · ssh-ed25519"]
+            assert radio.styles.max_height.value == 12
             assert screen.query_one("#discovery-next", Button).disabled is False
 
 
@@ -223,7 +226,8 @@ async def test_setup_no_keys_without_gpg_disables_next(no_auto_setup):
             screen._switch_to_discovery()
             await pilot.pause(delay=0.5)
 
-            assert screen.query_one("#key-table", DataTable).row_count == 0
+            assert list(screen.query("#step-discovery DataTable")) == []
+            assert radio_labels(screen.query_one("#key-select", RadioSet)) == []
             assert getattr(screen, "_generation_mode", "unset") is None
 
 
@@ -624,7 +628,7 @@ async def test_generate_managed_ssh_key_routes_to_remote(tmp_path: Path, no_auto
             screen._switch_to_discovery()
             await pilot.pause(delay=0.5)
 
-            await pilot.click("#discovery-next")
+            screen.on_discovery_next()
             await pilot.pause(delay=0.5)
 
             assert isinstance(screen.selected_key, SSHKeyInfo)
@@ -650,7 +654,7 @@ async def test_generate_gist_key_saves_gist_config(tmp_path: Path, no_auto_setup
             screen._switch_to_discovery()
             await pilot.pause(delay=0.5)
 
-            await pilot.click("#discovery-next")
+            screen.on_discovery_next()
             await pilot.pause(delay=0.5)
 
             assert isinstance(state.config, GistConfig)
@@ -1046,17 +1050,19 @@ async def test_setup_back_nav_discovery_preserves_username_input_and_status(no_a
             assert len(list(screen.query("#username-next"))) == 1
 
 
-async def test_setup_back_nav_remote_preserves_discovery_rows_and_selection(no_auto_setup):
+async def test_setup_discovery_reset_on_remote_back_no_duplicate(no_auto_setup):
     response = httpx.Response(
         200,
         request=httpx.Request("GET", "https://api.github.com/users/testuser"),
     )
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
     gpg_key = GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096")
+    find_ssh_keys = Mock(side_effect=((ssh_key,), (ssh_key,)))
+    find_gpg_keys = Mock(side_effect=((gpg_key,), (gpg_key,)))
 
     with patch("cc_sentiment.tui.screens.setup.httpx.get", return_value=response), \
-         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=(ssh_key,)), \
-         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=(gpg_key,)), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", new=find_ssh_keys), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", new=find_gpg_keys), \
          patch.object(SetupScreen, "check_remotes", new=Mock()) as mock_check_remotes:
         async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
@@ -1066,22 +1072,28 @@ async def test_setup_back_nav_remote_preserves_discovery_rows_and_selection(no_a
             await pilot.click("#username-next")
             await pilot.pause(delay=0.3)
 
-            table = screen.query_one("#key-table", DataTable)
             radio = screen.query_one("#key-select", RadioSet)
+            expected_keys = screen._discovered_keys
+            expected_labels = radio_labels(radio)
+            expected_generation_mode = screen._generation_mode
+            expected_generation_index = screen._generation_radio_index
+
             await pilot.click(list(screen.query("#key-select RadioButton").results(RadioButton))[1])
             await pilot.pause()
-            expected_rows = table_rows(table)
-            expected_labels = radio_labels(radio)
-
             screen.on_discovery_next()
             await pilot.pause()
             await pilot.click("#remote-back")
-            await pilot.pause()
+            await pilot.pause(delay=0.3)
 
             assert screen.current_stage.value == "step-discovery"
-            assert table_rows(table) == expected_rows
+            assert screen._discovered_keys is not expected_keys
+            assert screen._discovered_keys == expected_keys
+            assert screen._generation_mode == expected_generation_mode
+            assert screen._generation_radio_index == expected_generation_index
             assert radio_labels(radio) == expected_labels
-            assert radio.pressed_index == 1
+            assert list(screen.query("#step-discovery DataTable")) == []
+            assert find_ssh_keys.call_count == 2
+            assert find_gpg_keys.call_count == 2
 
             screen.on_discovery_next()
             await pilot.pause()
@@ -1169,6 +1181,54 @@ async def test_setup_back_nav_key_change_resets_downstream_upload_state(no_auto_
             assert str(screen.query_one("#upload-result", Label).render()) == ""
 
 
+async def test_setup_check_remotes_cancel_on_remote_back(no_auto_setup):
+    response = httpx.Response(
+        200,
+        request=httpx.Request("GET", "https://api.github.com/users/testuser"),
+    )
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
+    remote_worker = Mock()
+
+    with patch("cc_sentiment.tui.screens.setup.httpx.get", return_value=response), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=(ssh_key,)), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch.object(SetupScreen, "check_remotes", new=Mock(return_value=remote_worker)):
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.query_one("#username-input", Input).value = "testuser"
+
+            await pilot.click("#username-next")
+            await pilot.pause(delay=0.3)
+            screen.on_discovery_next()
+            await pilot.pause()
+            await pilot.click("#remote-back")
+            await pilot.pause()
+
+            remote_worker.cancel.assert_called_once()
+
+
+async def test_setup_check_remotes_cancel_on_key_selection_change(no_auto_setup):
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
+    gpg_key = GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096")
+    remote_worker = Mock()
+
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=(ssh_key,)), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=(gpg_key,)):
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.3)
+
+            screen._remote_check_worker = remote_worker
+            await pilot.click(list(screen.query("#key-select RadioButton").results(RadioButton))[1])
+            await pilot.pause()
+
+            remote_worker.cancel.assert_called_once()
+
+
 async def test_setup_rapid_toggle_username_discovery_preserves_widget_state(no_auto_setup):
     response = httpx.Response(
         200,
@@ -1188,9 +1248,7 @@ async def test_setup_rapid_toggle_username_discovery_preserves_widget_state(no_a
             await pilot.click("#username-next")
             await pilot.pause(delay=0.3)
 
-            table = screen.query_one("#key-table", DataTable)
             radio = screen.query_one("#key-select", RadioSet)
-            expected_rows = table_rows(table)
             expected_labels = radio_labels(radio)
             expected_actions_y = current_step_actions(screen).region.y
 
@@ -1198,12 +1256,18 @@ async def test_setup_rapid_toggle_username_discovery_preserves_widget_state(no_a
                 screen.on_discovery_back()
                 await pilot.pause(delay=0.1)
                 screen.on_username_next()
-                await pilot.pause(delay=0.3)
+                await pilot.pause(delay=0.5)
+
+            radio = screen.query_one("#key-select", RadioSet)
+            for _ in range(10):
+                if radio_labels(radio):
+                    break
+                await pilot.pause(delay=0.2)
 
             assert screen.current_stage.value == "step-discovery"
             assert screen.query_one("#username-input", Input).value == "testuser"
-            assert table_rows(table) == expected_rows
             assert radio_labels(radio) == expected_labels
+            assert list(screen.query("#step-discovery DataTable")) == []
             assert current_step_actions(screen).region.y == expected_actions_y
 
 
