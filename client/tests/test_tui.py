@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from html import unescape
 from pathlib import Path
 import subprocess
@@ -10,6 +11,7 @@ import anyio
 import httpx
 import pytest
 from textual.app import App
+from textual.pilot import Pilot
 from textual.containers import Vertical
 from textual.widgets import Button, ContentSwitcher, DataTable, Input, Label, RadioButton, RadioSet, Static
 
@@ -166,6 +168,20 @@ def pending_branch_signature(screen: SetupScreen) -> tuple[object, ...]:
             for button in current_step_actions(screen).query(Button)
         ),
     )
+
+
+async def wait_for_condition(
+    pilot: Pilot[None],
+    predicate: Callable[[], bool],
+    failure_message: Callable[[], str],
+    timeout: float = 2.0,
+) -> None:
+    deadline = wall_monotonic() + timeout
+    while wall_monotonic() < deadline:
+        await pilot.pause()
+        if predicate():
+            return
+    pytest.fail(failure_message())
 
 
 class FakeMonotonic:
@@ -1968,10 +1984,22 @@ async def test_setup_generation_gpg_routes_to_remote(tmp_path: Path, no_auto_set
             screen = pilot.app.screen
             screen.username = "alice"
             screen._switch_to_discovery()
-            await pilot.pause(delay=0.5)
+            await wait_for_condition(
+                pilot,
+                lambda: screen._generation_mode == "gpg" and screen.query_one("#discovery-next", Button).disabled is False,
+                lambda: (
+                    "Timed out waiting for discovery generation mode to become ready "
+                    f"(stage={screen.current_stage.value}, mode={screen._generation_mode!r}, "
+                    f"disabled={screen.query_one('#discovery-next', Button).disabled})"
+                ),
+            )
 
             screen.on_discovery_next()
-            await pilot.pause(delay=0.5)
+            await wait_for_condition(
+                pilot,
+                lambda: screen.current_stage is SetupStage.REMOTE,
+                lambda: f"Timed out waiting for {SetupStage.REMOTE.value}; saw {screen.current_stage.value}",
+            )
 
             assert batch_inputs
             assert "Key-Type: eddsa" in batch_inputs[0]
