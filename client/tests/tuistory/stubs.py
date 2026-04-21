@@ -17,9 +17,19 @@ class ScenarioStubs:
     def __init__(self) -> None:
         self.started = time.monotonic()
         self.counts: dict[str, int] = {}
+        self.signature = ""
+
+    def _reset_if_needed(self, scenario: dict[str, Any]) -> None:
+        signature = json.dumps(scenario, sort_keys=True)
+        if signature == self.signature:
+            return
+        self.signature = signature
+        self.started = time.monotonic()
+        self.counts = {}
 
     def request(self, flow: http.HTTPFlow) -> None:
         scenario = ScenarioFile.load_from_env()
+        self._reset_if_needed(scenario)
         rules = ScenarioFile.http_rules(scenario)
         if not (rule := ScenarioFile.match_http_rule(
             rules,

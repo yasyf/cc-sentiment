@@ -1,0 +1,23 @@
+
+
+        ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+        ┃                                                              ┃
+        ┃   You're all set                                             ┃
+        ┃   Review how uploads are signed and what the dashboard       ┃
+        ┃   receives.                                                  ┃
+        ┃                                                              ┃
+        ┃   ╭─ verified ───────────────────────────────────────────╮   ┃
+        ┃   │ Signed in as alice using SSH key id_ed25519.         │   ┃
+        ┃   │ You're set up. Ready to upload.                      │   ┃
+        ┃   ╰──────────────────────────────────────────────────────╯   ┃
+        ┃                                                              ┃
+        ┃                                                              ┃
+        ┃                                     ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔    ┃
+        ┃                                      Contribute my stats     ┃
+        ┃                                     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁    ┃
+        ┃   Only signed stats leave your Mac, one row per              ┃
+        ┃   conversation.                                              ┃
+        ┃   ╭─ What actually gets sent ────────────────────────────╮   ┃
+        ┃   │ ╭──────────────────────────────────────────────────╮ │   ┃
+        ┃                                                              ┃
+        ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
