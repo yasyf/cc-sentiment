@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -55,6 +56,7 @@ class ScenarioDriver:
         self.app_exit_path = app_exit_path
         self.records: list[CommandRecord] = []
         self.snapshots: dict[str, str] = {}
+        self.captures: dict[str, dict[str, Any]] = {}
 
     def run(self) -> int:
         scenario = ScenarioFile.load(self.scenario_path)
@@ -168,6 +170,16 @@ class ScenarioDriver:
                 )
             case "sleep":
                 time.sleep(float(step["seconds"]))
+            case "capture-file":
+                source_path = Path(step["path"])
+                payload = source_path.read_bytes()
+                capture_path = self.output_dir / f"{step['name']}{source_path.suffix or '.capture'}"
+                capture_path.write_bytes(payload)
+                self.captures[step["name"]] = {
+                    "source_path": str(source_path),
+                    "path": str(capture_path),
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                }
             case other:
                 raise ValueError(f"Unsupported action: {other}")
 
@@ -234,6 +246,7 @@ class ScenarioDriver:
             "size": self.size,
             "scenario_path": str(self.scenario_path),
             "snapshots": self.snapshots,
+            "captures": self.captures,
             "commands": [record.as_dict() for record in self.records],
             "app_exit": app_exit,
             "error": error,

@@ -2034,14 +2034,17 @@ async def test_setup_upload_options_gpg_shows_openpgp(no_auto_setup):
             ]
 
 
-async def test_setup_upload_action_github_ssh_failure_stays_on_upload(no_auto_setup):
+async def test_setup_upload_action_github_ssh_failure_routes_to_failed(no_auto_setup, tmp_path: Path):
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+    state = AppState()
+    state_file = tmp_path / "state.json"
 
     with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
+         patch.object(AppState, "state_path", return_value=state_file), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True), \
          patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"), \
          patch("cc_sentiment.tui.screens.setup.subprocess.run", return_value=subprocess.CompletedProcess(["gh"], 1, "", "boom")):
-        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+        async with SetupHarness(state).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.username = "testuser"
@@ -2053,9 +2056,46 @@ async def test_setup_upload_action_github_ssh_failure_stays_on_upload(no_auto_se
             await pilot.press("enter")
             await pilot.pause(delay=0.3)
 
+            assert screen.query_one(ContentSwitcher).current == "step-done"
+            assert screen.verification_state is VerificationState.FAILED
+            assert "Something went wrong: boom" in str(screen.query_one("#done-instructions", Static).render())
+            assert list(screen.query("#done-btn")) == []
+            assert screen.query_one("#failed-retry", Button).label.plain == "Retry"
+            assert AppState.model_validate_json(state_file.read_text()).config == SSHConfig(
+                contributor_id=ContributorId("testuser"),
+                key_path=ssh_key.path,
+            )
+
+
+async def test_setup_failed_retry_for_upload_returns_to_upload(no_auto_setup):
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+
+    with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True), \
+         patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"), \
+         patch.object(SetupScreen, "verify_server_config") as verify:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen._verification_action = "github-ssh"
+            screen._upload_failure_text = "Something went wrong: boom"
+            screen._failed_retry_target = "upload"
+            screen._done_summary_text = "Signed in as testuser using SSH key id_ed25519."
+            screen.transition_to(SetupStage.DONE)
+            screen._set_verification_branch(VerificationState.FAILED)
+            await pilot.pause(delay=0.2)
+
+            await pilot.click("#failed-retry")
+            await pilot.pause(delay=0.3)
+
             assert screen.query_one(ContentSwitcher).current == "step-upload"
-            assert "Something went wrong: boom" in str(screen.query_one("#upload-result", Static).render())
-            assert "error" in screen.query_one("#upload-result", Static).classes
+            assert radio_labels(screen.query_one("#upload-options", RadioSet)) == [
+                "Link via GitHub (gh)",
+                "Show me the key; I'll add it myself",
+            ]
+            verify.assert_not_called()
 
 
 async def test_setup_upload_action_manual_uses_non_error_tone(no_auto_setup):
@@ -2146,8 +2186,10 @@ async def test_setup_upload_action_github_gpg_cleans_temp_file_on_exception(no_a
             await pilot.press("enter")
             await pilot.pause(delay=0.3)
 
-            assert screen.query_one(ContentSwitcher).current == "step-upload"
-            assert "Something went wrong" in str(screen.query_one("#upload-result", Static).render())
+            assert screen.query_one(ContentSwitcher).current == "step-done"
+            assert screen.verification_state is VerificationState.FAILED
+            assert "Something went wrong" in str(screen.query_one("#done-instructions", Static).render())
+            assert list(screen.query("#done-btn")) == []
             assert temp_path.exists() is False
 
 

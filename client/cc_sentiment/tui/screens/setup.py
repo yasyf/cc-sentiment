@@ -205,15 +205,15 @@ class DoneBranch(Vertical):
                     id="done-summary-card",
                     classes="done-card error",
                 )
+                yield StepActions(
+                    Button("Exit", id="failed-exit", variant="default"),
+                    primary=Button("Retry", id="failed-retry", variant="primary"),
+                )
                 yield Card(
                     Static(self.instructions_text, id="done-instructions", classes="muted"),
                     title="Next steps",
                     id="done-instructions-card",
                     classes="done-card",
-                )
-                yield StepActions(
-                    Button("Exit", id="failed-exit", variant="default"),
-                    primary=Button("Retry", id="failed-retry", variant="primary"),
                 )
 
     def watch_pending_label(self, label: str) -> None:
@@ -297,6 +297,8 @@ class SetupScreen(Dialog[bool]):
         self._done_eta_text = ""
         self._verification_detail = ""
         self._verification_action = ""
+        self._upload_failure_text = ""
+        self._failed_retry_target = ""
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog-box"):
@@ -484,6 +486,8 @@ class SetupScreen(Dialog[bool]):
         self._done_eta_text = ""
         self._verification_detail = ""
         self._verification_action = ""
+        self._upload_failure_text = ""
+        self._failed_retry_target = ""
         self.verification_poll.restart(monotonic())
         self._cancel_verify_worker()
         self._render_done_branch()
@@ -512,6 +516,11 @@ class SetupScreen(Dialog[bool]):
         )
 
     def _instructions_text(self) -> str:
+        failure_prefix = (
+            f"{self._upload_failure_text}\n\n"
+            if self.verification_state is VerificationState.FAILED and self._upload_failure_text
+            else ""
+        )
         prefix = (
             "sentiments.cc is temporarily unreachable right now. "
             if self._verification_detail == "temporarily unreachable"
@@ -519,15 +528,15 @@ class SetupScreen(Dialog[bool]):
         )
         match self._verification_action:
             case "manual":
-                return prefix + f"Paste your public key at {self._manual_destination_url()}, then retry once GitHub shows it."
+                return failure_prefix + prefix + f"Paste your public key at {self._manual_destination_url()}, then retry once GitHub shows it."
             case "openpgp":
-                return prefix + "Check your email for the keys.openpgp.org verification link, finish publishing the key, then retry."
+                return failure_prefix + prefix + "Check your email for the keys.openpgp.org verification link, finish publishing the key, then retry."
             case "github-ssh" | "github-gpg":
-                return prefix + "Give GitHub a moment to propagate your public key, then retry."
+                return failure_prefix + prefix + "Give GitHub a moment to propagate your public key, then retry."
             case "gist":
-                return prefix + "Keep your cc-sentiment gist public so the dashboard can read the key, then retry."
+                return failure_prefix + prefix + "Keep your cc-sentiment gist public so the dashboard can read the key, then retry."
             case _:
-                return prefix + "Wait a moment for your public key to propagate, then retry."
+                return failure_prefix + prefix + "Wait a moment for your public key to propagate, then retry."
 
     def _visible_verification_state(self) -> VerificationState:
         return (
@@ -583,10 +592,14 @@ class SetupScreen(Dialog[bool]):
     def _on_verify_result(self, result: AuthResult) -> None:
         match result:
             case AuthOk():
+                self._upload_failure_text = ""
+                self._failed_retry_target = ""
                 self._verification_detail = ""
                 self.verification_poll.clear()
                 self._set_verification_branch(VerificationState.VERIFIED)
             case AuthUnauthorized():
+                self._upload_failure_text = ""
+                self._failed_retry_target = ""
                 self._verification_detail = ""
                 if monotonic() - self.verification_poll.started_at < PENDING_PROPAGATION_WINDOW_SECONDS:
                     self.verification_poll.schedule_next(monotonic())
@@ -595,6 +608,8 @@ class SetupScreen(Dialog[bool]):
                     self.verification_poll.clear()
                     self._set_verification_branch(VerificationState.FAILED)
             case AuthUnreachable() | AuthServerError():
+                self._upload_failure_text = ""
+                self._failed_retry_target = ""
                 # VAL-FLOW-038: 5xx probes share the same pending-unreachable branch as network drops.
                 self._verification_detail = "temporarily unreachable"
                 self.verification_poll.schedule_next(monotonic())
@@ -1404,6 +1419,37 @@ Expire-Date: 0
         idx = radio.pressed_index if radio.display and radio.pressed_index >= 0 else 0
         return self._upload_actions[idx]
 
+    def _apply_selected_config(self) -> None:
+        identity = self.username
+        match self.selected_key:
+            case SSHKeyInfo(path=path):
+                self.state.config = SSHConfig(contributor_id=ContributorId(identity), key_path=path)
+                self._done_summary_text = f"Signed in as {identity} using SSH key {path.name}."
+            case GPGKeyInfo(fpr=fpr):
+                self.state.config = (
+                    GPGConfig(contributor_type="github", contributor_id=ContributorId(identity), fpr=fpr)
+                    if identity
+                    else GPGConfig(contributor_type="gpg", contributor_id=ContributorId(fpr), fpr=fpr)
+                )
+                label = identity or f"GPG {fpr[-8:]}"
+                self._done_summary_text = f"Signed in as {label}."
+            case _:
+                raise AssertionError("selected key required")
+
+    def _save_and_fail_upload(self, action: str, message: str) -> None:
+        self._apply_selected_config()
+        self.state.save()
+        self.verification_poll.clear()
+        self._verification_detail = ""
+        self._verification_action = action
+        self._upload_failure_text = message
+        self._failed_retry_target = "upload"
+        self._set_verification_branch(VerificationState.FAILED)
+        self._populate_done_info()
+        self._finish_upload_action()
+        self.transition_to(SetupStage.DONE)
+        self._render_done_branch()
+
     @on(Button.Pressed, "#upload-go")
     def on_upload_go(self) -> None:
         if self.actions.upload_running:
@@ -1430,26 +1476,14 @@ Expire-Date: 0
                         capture_output=True, text=True, timeout=30,
                     )
                 except subprocess.SubprocessError as e:
-                    self.app.call_from_thread(
-                        self._set_tone,
-                        result_label,
-                        f"Something went wrong: {e}",
-                        "error",
-                    )
-                    self.app.call_from_thread(self._finish_upload_action)
+                    self.app.call_from_thread(self._save_and_fail_upload, "github-ssh", f"Something went wrong: {e}")
                     return
                 if result.returncode == 0:
                     self._verification_action = "github-ssh"
                     self.app.call_from_thread(self._set_tone, result_label, "Key linked to GitHub. You're all set.", "success")
                     self.app.call_from_thread(self._save_and_finish)
                 else:
-                    self.app.call_from_thread(
-                        self._set_tone,
-                        result_label,
-                        f"Something went wrong: {result.stderr.strip()}",
-                        "error",
-                    )
-                    self.app.call_from_thread(self._finish_upload_action)
+                    self.app.call_from_thread(self._save_and_fail_upload, "github-ssh", f"Something went wrong: {result.stderr.strip()}")
 
             case "github-gpg":
                 assert isinstance(key, GPGKeyInfo)
@@ -1464,26 +1498,14 @@ Expire-Date: 0
                             capture_output=True, text=True, timeout=30,
                         )
                     except subprocess.SubprocessError as e:
-                        self.app.call_from_thread(
-                            self._set_tone,
-                            result_label,
-                            f"Something went wrong: {e}",
-                            "error",
-                        )
-                        self.app.call_from_thread(self._finish_upload_action)
+                        self.app.call_from_thread(self._save_and_fail_upload, "github-gpg", f"Something went wrong: {e}")
                         return
                     if result.returncode == 0:
                         self._verification_action = "github-gpg"
                         self.app.call_from_thread(self._set_tone, result_label, "Key linked to GitHub. You're all set.", "success")
                         self.app.call_from_thread(self._save_and_finish)
                     else:
-                        self.app.call_from_thread(
-                            self._set_tone,
-                            result_label,
-                            f"Something went wrong: {result.stderr.strip()}",
-                            "error",
-                        )
-                        self.app.call_from_thread(self._finish_upload_action)
+                        self.app.call_from_thread(self._save_and_fail_upload, "github-gpg", f"Something went wrong: {result.stderr.strip()}")
                 finally:
                     tmp_path.unlink(missing_ok=True)
 
@@ -1527,26 +1549,11 @@ Expire-Date: 0
                 self.app.call_from_thread(self._save_and_finish)
 
     def _save_and_finish(self) -> None:
-        key = self.selected_key
-        identity = self.username
         self.verification_poll.restart(monotonic())
         self._verification_detail = ""
-
-        match key:
-            case SSHKeyInfo(path=p):
-                self.state.config = SSHConfig(contributor_id=ContributorId(identity), key_path=p)
-            case GPGKeyInfo(fpr=f):
-                if identity:
-                    self.state.config = GPGConfig(contributor_type="github", contributor_id=ContributorId(identity), fpr=f)
-                else:
-                    self.state.config = GPGConfig(contributor_type="gpg", contributor_id=ContributorId(f), fpr=f)
-
-        match key:
-            case SSHKeyInfo(path=p):
-                self._done_summary_text = f"Signed in as {identity} using SSH key {p.name}."
-            case GPGKeyInfo(fpr=f):
-                label = identity or f"GPG {f[-8:]}"
-                self._done_summary_text = f"Signed in as {label}."
+        self._upload_failure_text = ""
+        self._failed_retry_target = ""
+        self._apply_selected_config()
 
         if not self._verification_action:
             self._verification_action = "manual"
@@ -1582,12 +1589,22 @@ Expire-Date: 0
     def on_done(self) -> None:
         self.dismiss(True)
 
-    @on(Button.Pressed, "#pending-retry")
-    @on(Button.Pressed, "#failed-retry")
-    def on_retry(self) -> None:
+    def _retry_verification(self) -> None:
         self._cancel_verify_worker()
         self._set_verification_branch(VerificationState.PENDING)
         self.verify_server_config()
+
+    @on(Button.Pressed, "#pending-retry")
+    def on_pending_retry(self) -> None:
+        self._retry_verification()
+
+    @on(Button.Pressed, "#failed-retry")
+    async def on_failed_retry(self) -> None:
+        if self._failed_retry_target == "upload":
+            self.transition_to(SetupStage.UPLOAD)
+            await self._populate_upload_options()
+            return
+        self._retry_verification()
 
     @on(Button.Pressed, "#pending-exit")
     @on(Button.Pressed, "#failed-exit")

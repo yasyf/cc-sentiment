@@ -64,3 +64,25 @@ def test_wrapper_smoke_launches_snapshots_and_intercepts_https(
         entry["tool"] == "gh" and entry["argv"] == ["api", "user", "--jq", ".login"]
         for entry in result.fake_commands()
     )
+
+
+def test_wrapper_capture_file_records_hash(
+    tmp_path: Path,
+    harness: HarnessRunner,
+) -> None:
+    capture_source = tmp_path / "capture.txt"
+    capture_source.write_text("hello")
+
+    result = harness.run(
+        tmp_path=tmp_path,
+        scenario_name="capture-file",
+        scenario={
+            "steps": (
+                {"action": "capture-file", "name": "greeting", "path": str(capture_source)},
+            ),
+        },
+    )
+
+    assert result.returncode == 0, result.completed.stderr or result.completed.stdout
+    assert result.state["captures"]["greeting"]["sha256"] == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    assert Path(result.state["captures"]["greeting"]["path"]).read_text() == "hello"
