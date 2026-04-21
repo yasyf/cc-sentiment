@@ -54,6 +54,9 @@ mlx_models/
 .serena/
 .context/
 
+# Experiments — training/eval harness lives at ~/Code/cc-sentiments-local/
+experiments
+
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 .vercel
