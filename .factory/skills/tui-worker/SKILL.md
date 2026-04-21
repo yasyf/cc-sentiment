@@ -17,6 +17,24 @@ Any feature that touches:
 - `client/cc_sentiment/tui/status.py` (narrow changes only)
 - `client/tests/test_tui.py` (unit/integration tests via Textual's `Pilot`)
 
+### Mission-Blessed Exceptions
+
+The mission AGENTS.md may permit narrow edits to files that would otherwise be off-limits. Currently blessed:
+- `client/cc_sentiment/tui/app.py` — only the `setup_only` branch of `CCSentimentApp.on_mount`, for the `fix-setup-only-push-screen-noactiveworker` feature.
+- `client/cc_sentiment/signing/discovery.py` — narrow helper-level changes that surface more specific remote states (e.g. 5xx vs 404 vs timeout from keys.openpgp.org) when required by a contract assertion. No API-breaking changes to `KeyDiscovery.*` return types.
+
+If your feature needs an edit outside the explicit in-scope list OR the blessed exceptions list, STOP. Return to orchestrator with the specific file + justification. Never quietly expand scope.
+
+### Pre-existing Dirty-Test Handling
+
+If your worker session starts with uncommitted test files already present in `client/tests/test_tui.py` that look like they belong to your assigned feature, do NOT discard them. Instead:
+1. Read them, confirm they match the feature's `fulfills` assertions.
+2. Run them — they should be red (that's the TDD state).
+3. Repair any obvious mechanical issues (wrong fixture names, stale imports) before implementing.
+4. Treat them as the red baseline; implement until green.
+
+This is not a deviation from TDD — it's continuing from a prior partial red state.
+
 ## Required Skills
 
 None. Do **NOT** invoke the `tuistory` skill. Do **NOT** spawn any Task subagent that invokes the `tuistory` skill, runs `uv run cc-sentiment setup`, `cc-sentiment`, `uv run cc-sentiment …` interactively, `script`, `expect`, or any other process that attaches to a terminal. These grab the parent tty and hijack the orchestrator's keyboard input. All behavioral verification in M1/M2 is done through Textual's in-process `Pilot` (inside `pytest`), which runs headless and NEVER touches any tty.
