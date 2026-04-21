@@ -26,4 +26,4 @@ class ScoreBar(Static):
         icon = self.ICONS[self.score]
         label = self.LABELS[self.score]
         bar = "━" * bar_len + "╺" + "─" * (bar_width - bar_len)
-        return f" {icon} {self.score} [{color}]{label:>11}[/]  [{color}]{bar}[/]  {pct:4.1f}%  ({count})"
+        return f" {icon} {self.score} [{color}]{label:>11}[/]  [{color}]{bar}[/]  {pct:4.1f}%"

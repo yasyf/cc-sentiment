@@ -47,6 +47,7 @@ Praise at the START of a longer instruction still counts: "great, now add X" = 4
 - "holy shit this broke" is 1; "holy shit this is beautiful" is 5.
 - Sarcasm detector: if the sentence starts with praise but then describes the AI doing something harmful or stupid ("great, you ignored the spec", "amazing how you keep finding new ways to break things"), it is 1.
 - A blunt command with profanity aimed at legacy code (not the AI) is 3: "delete that whole damn file" = 3.
+- Session-resume phrases are neutral: "continue", "continue from where you left off", "pick up where you left off", "resume", "keep going" = 3, unless the same message carries explicit praise or complaint.
 
 Score ONLY the developer's messages. Output a single digit 1-5."""
 

@@ -218,3 +218,83 @@ def test_windowed_highlight_colors_continue_green_even_in_negative_bucket(real_n
     text = Highlighter.windowed_highlight("Continue from where you left off.", score=2)
     assert any(str(s.style) == "green" for s in text.spans)
     assert not any(str(s.style) == "red" for s in text.spans)
+
+
+def test_slice_window_snaps_leading_to_word_boundary():
+    full = "alpha bravo charlie delta BUG echo foxtrot golf hotel india"
+    anchor = HighlightSpan(start=full.index("BUG"), end=full.index("BUG") + 3, color="red", priority=2)
+    slice_ = Highlighter.slice_window(full, anchor, width=30)
+    assert slice_.leading
+    assert slice_.body.startswith("…")
+    assert slice_.full_offset == 0 or full[slice_.full_offset - 1].isspace()
+    assert "BUG" in slice_.body
+
+
+def test_slice_window_snaps_trailing_to_word_boundary():
+    full = "alpha bravo charlie delta BUG echo foxtrot golf hotel india"
+    anchor = HighlightSpan(start=full.index("BUG"), end=full.index("BUG") + 3, color="red", priority=2)
+    slice_ = Highlighter.slice_window(full, anchor, width=30)
+    assert slice_.body.endswith("…")
+    tail = slice_.full_offset + slice_.kept_len
+    assert tail == len(full) or full[tail].isspace() or full[tail - 1].isspace()
+    assert "BUG" in slice_.body
+
+
+def test_slice_window_keeps_char_cut_when_no_whitespace_nearby():
+    full = "a" * 40 + "BUG" + "a" * 40
+    anchor = HighlightSpan(start=40, end=43, color="red", priority=2)
+    slice_ = Highlighter.slice_window(full, anchor, width=20)
+    assert slice_.leading
+    assert slice_.body.startswith("…")
+    assert slice_.body.endswith("…")
+    assert "BUG" in slice_.body
+    assert len(slice_.body) == 20
+
+
+def test_collect_candidates_skips_generic_afinn_noun(real_lexicon):
+    full = "the progress is tracked at the top"
+    tokens = [
+        FakeToken(idx=0, text="the", pos_="DET", lemma_="the"),
+        FakeToken(idx=4, text="progress", pos_="NOUN", lemma_="progress"),
+        FakeToken(idx=13, text="is", pos_="AUX", lemma_="be"),
+        FakeToken(idx=16, text="tracked", pos_="VERB", lemma_="track"),
+        FakeToken(idx=24, text="at", pos_="ADP", lemma_="at"),
+        FakeToken(idx=27, text="the", pos_="DET", lemma_="the"),
+        FakeToken(idx=31, text="top", pos_="NOUN", lemma_="top"),
+    ]
+    candidates = Highlighter.collect_candidates(full, tokens, score=4)
+    assert not any(c.start == 4 for c in candidates)
+    assert not any(c.start == 31 for c in candidates)
+
+
+def test_collect_candidates_keeps_curated_noun(real_lexicon):
+    full = "this bug is a nightmare"
+    tokens = [
+        FakeToken(idx=0, text="this", pos_="PRON", lemma_="this"),
+        FakeToken(idx=5, text="bug", pos_="NOUN", lemma_="bug"),
+        FakeToken(idx=9, text="is", pos_="AUX", lemma_="be"),
+        FakeToken(idx=12, text="a", pos_="DET", lemma_="a"),
+        FakeToken(idx=14, text="nightmare", pos_="NOUN", lemma_="nightmare"),
+    ]
+    candidates = Highlighter.collect_candidates(full, tokens, score=2)
+    starts = {c.start for c in candidates if c.color == "red"}
+    assert 5 in starts
+    assert 14 in starts
+
+
+def test_windowed_highlight_colors_incorrect_red(real_nlp, real_lexicon):
+    text = Highlighter.windowed_highlight("this seems incorrect for tqdm", score=4)
+    assert any(str(s.style) == "red" for s in text.spans)
+
+
+def test_collect_candidates_tags_incorrect_red_from_override(real_lexicon):
+    full = "this seems incorrect for tqdm"
+    tokens = [
+        FakeToken(idx=0, text="this", pos_="PRON", lemma_="this"),
+        FakeToken(idx=5, text="seems", pos_="VERB", lemma_="seem"),
+        FakeToken(idx=11, text="incorrect", pos_="ADJ", lemma_="incorrect"),
+        FakeToken(idx=21, text="for", pos_="ADP", lemma_="for"),
+        FakeToken(idx=25, text="tqdm", pos_="NOUN", lemma_="tqdm"),
+    ]
+    candidates = Highlighter.collect_candidates(full, tokens, score=4)
+    assert any(c.start == 11 and c.color == "red" for c in candidates)

@@ -19,7 +19,7 @@ class Lexicon:
         "break": -2, "nope": -2, "broken": -3, "garbage": -3,
         "nightmare": -3, "absurd": -2, "bug": -2, "hang": -2,
         "freeze": -2, "slow": -2, "trash": -3, "regression": -2,
-        "flaky": -2, "impossible": -2,
+        "flaky": -2, "impossible": -2, "incorrect": -2,
         "exactly": 2, "finally": 2, "incredible": 3, "smooth": 2,
         "neat": 2, "magic": 2, "work": 2, "correct": 2, "solve": 2,
         "fix": 2, "done": 2, "ship": 2, "crisp": 2, "tight": 2,

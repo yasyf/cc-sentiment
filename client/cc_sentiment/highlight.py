@@ -31,6 +31,7 @@ class WindowedSlice:
 
 class Highlighter:
     MAX_SNIPPET_CHARS: ClassVar[int] = 60
+    MAX_SNAP_DISTANCE: ClassVar[int] = 15
     FALLBACK_MIN_LEN: ClassVar[int] = 3
     PROFANITY_TOKENS: ClassVar[frozenset[str]] = frozenset(
         {
@@ -109,6 +110,8 @@ class Highlighter:
             polarity = Lexicon.polarity(lemma)
             if polarity == 0:
                 continue
+            if tok.pos_ == "NOUN" and lemma not in Lexicon.DOMAIN_OVERRIDES:
+                continue
             color = "green" if polarity > 0 else "red"
             if cls.is_negated(tokens, i):
                 color = "red" if color == "green" else "green"
@@ -137,6 +140,26 @@ class Highlighter:
         return HighlightSpan(tok.idx, tok.idx + len(tok.text), "", priority=1)
 
     @classmethod
+    def snap_start_forward(cls, full: str, start: int, anchor_start: int) -> int:
+        if start <= 0 or start >= len(full):
+            return start
+        if full[start].isspace() or full[start - 1].isspace():
+            return start
+        limit = min(start + cls.MAX_SNAP_DISTANCE, anchor_start)
+        ws = full.find(" ", start, limit)
+        return ws + 1 if ws != -1 else start
+
+    @classmethod
+    def snap_end_backward(cls, full: str, end: int, anchor_end: int) -> int:
+        if end <= 0 or end >= len(full):
+            return end
+        if full[end].isspace() or full[end - 1].isspace():
+            return end
+        limit = max(end - cls.MAX_SNAP_DISTANCE, anchor_end)
+        ws = full.rfind(" ", limit, end)
+        return ws if ws != -1 else end
+
+    @classmethod
     def slice_window(
         cls,
         full: str,
@@ -151,30 +174,35 @@ class Highlighter:
         if anchor.end - anchor.start <= kept_c and lo <= hi:
             ideal = (anchor.start + anchor.end) // 2 - kept_c // 2
             ks = max(lo, min(ideal, hi))
+            start = cls.snap_start_forward(full, ks, anchor.start)
+            end = cls.snap_end_backward(full, ks + kept_c, anchor.end)
             return WindowedSlice(
-                body="…" + full[ks : ks + kept_c] + "…",
-                full_offset=ks,
-                kept_len=kept_c,
+                body="…" + full[start:end] + "…",
+                full_offset=start,
+                kept_len=end - start,
                 leading=True,
             )
         if anchor.end <= width - 1:
+            end = cls.snap_end_backward(full, width - 1, anchor.end)
             return WindowedSlice(
-                body=full[: width - 1] + "…",
+                body=full[:end] + "…",
                 full_offset=0,
-                kept_len=width - 1,
+                kept_len=end,
                 leading=False,
             )
         if anchor.start >= n - width + 1:
+            start = cls.snap_start_forward(full, n - width + 1, anchor.start)
             return WindowedSlice(
-                body="…" + full[n - width + 1 :],
-                full_offset=n - width + 1,
-                kept_len=width - 1,
+                body="…" + full[start:],
+                full_offset=start,
+                kept_len=n - start,
                 leading=True,
             )
+        end = cls.snap_end_backward(full, width - 1, anchor.end)
         return WindowedSlice(
-            body=full[: width - 1] + "…",
+            body=full[:end] + "…",
             full_offset=0,
-            kept_len=width - 1,
+            kept_len=end,
             leading=False,
         )
 

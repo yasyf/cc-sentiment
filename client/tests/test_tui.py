@@ -786,6 +786,22 @@ async def test_authenticate_unauthorized_clears_config_and_pushes_setup(tmp_path
             mock_push.assert_awaited()
 
 
+async def test_auto_open_dashboard_opens_url_after_delay(tmp_path: Path, auth_ok, monkeypatch):
+    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
+    db_path = tmp_path / "records.db"
+
+    monkeypatch.setattr(CCSentimentApp, "AUTO_OPEN_DASHBOARD_DELAY_SECONDS", 0.0)
+
+    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="omlx"), \
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
+         patch("cc_sentiment.tui.app.webbrowser.open") as mock_open:
+        app = CCSentimentApp(state=state, db_path=db_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            await app._auto_open_dashboard()
+            mock_open.assert_called_once_with(DASHBOARD_URL)
+
+
 async def test_run_flow_aborts_when_authenticate_returns_false(tmp_path: Path):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
@@ -853,7 +869,7 @@ async def test_set_total_renders_eta_when_hardware_estimates(tmp_path: Path, aut
             app._begin_scoring(1200, "omlx", 0)
             label_text = str(app.query_one("#progress-label", Label).render())
             assert "00:02:00" in label_text
-            assert "Scoring locally on your Mac" in app.status_text
+            assert app.status_text == ""
 
 
 async def test_set_total_omits_eta_when_hardware_unknown(tmp_path: Path, auth_ok):
@@ -870,7 +886,7 @@ async def test_set_total_omits_eta_when_hardware_unknown(tmp_path: Path, auth_ok
             app._begin_scoring(500, "omlx", 0)
             label_text = str(app.query_one("#progress-label", Label).render())
             assert "00:00:00" in label_text
-            assert "Scoring locally on your Mac" in app.status_text
+            assert app.status_text == ""
 
 
 async def test_add_buckets_updates_progress(tmp_path: Path, auth_ok):

@@ -97,6 +97,7 @@ from cc_sentiment.tui.widgets import (
 class CCSentimentApp(App[None]):
     RESCAN_CONFIRM_SECONDS: ClassVar[float] = 5.0
     CTA_ROTATE_SECONDS: ClassVar[float] = 10.0
+    AUTO_OPEN_DASHBOARD_DELAY_SECONDS: ClassVar[float] = 3.0
 
     CSS = """
     Screen { layout: vertical; background: $surface; }
@@ -137,7 +138,6 @@ class CCSentimentApp(App[None]):
 
     scored: reactive[int] = reactive(0)
     total: reactive[int] = reactive(0)
-    uploaded_count: reactive[int] = reactive(0)
     status_text: reactive[str] = reactive("Initializing...")
     stage: reactive[Stage] = reactive(Booting())
     debug_state: reactive[DebugState | None] = reactive(None)
@@ -339,7 +339,7 @@ class CCSentimentApp(App[None]):
             case Discovering():
                 self._update_status("[dim]Discovering transcripts...[/]")
             case Scoring():
-                self._update_status(self._scoring_status_text())
+                self._update_status("")
             case Uploading():
                 self.view.update_upload(self._upload)
                 self._update_status("[dim]Scoring done. Sending the rest up to sentiments.cc...[/]")
@@ -376,19 +376,6 @@ class CCSentimentApp(App[None]):
             f"[link='{DASHBOARD_URL}'][b]sentiments.cc[/b][/link]. "
             f"{suffix}"
         )
-
-    def _scoring_status_text(self) -> str:
-        if self.uploaded_count == 0:
-            return "[dim]Scoring locally on your Mac. We'll upload each batch as it's ready.[/]"
-        denom = self._upload.preseed_count + len(self.records)
-        return (
-            f"[dim]Scoring locally. Uploaded [b]{self.uploaded_count}[/] "
-            f"of [b]{denom}[/] so far.[/]"
-        )
-
-    def watch_uploaded_count(self, uploaded_count: int) -> None:
-        if isinstance(self.stage, Scoring):
-            self._update_status(self._scoring_status_text())
 
     async def _authenticate(self) -> bool:
         while True:
@@ -582,12 +569,13 @@ class CCSentimentApp(App[None]):
                 )
                 return
 
-            uploaded = self.uploaded_count > 0
+            uploaded = self._upload.uploaded_records > 0
             await self._enter_idle(uploaded=uploaded)
 
             if uploaded:
                 assert self.state.config is not None
                 self.run_worker(self._poll_card(self.state.config), name="card-poll", exclusive=True, exit_on_error=False)
+                self.run_worker(self._auto_open_dashboard(), name="auto-open-dashboard", exclusive=True, exit_on_error=False)
         finally:
             if build_task is not None:
                 if not build_task.done():
@@ -598,7 +586,6 @@ class CCSentimentApp(App[None]):
                 await classifier.close()
 
     def _on_upload_progress_change(self, progress: UploadProgress) -> None:
-        self.uploaded_count = progress.uploaded_records
         self.view.update_upload(progress)
 
     async def _poll_card(self, config: SSHConfig | GPGConfig | GistConfig) -> None:
@@ -677,6 +664,10 @@ class CCSentimentApp(App[None]):
         self._update_status(f"[dim]Opened {DASHBOARD_URL}.[/]")
         self.set_timer(3.0, lambda: self.watch_stage(self.stage))
 
+    async def _auto_open_dashboard(self) -> None:
+        await anyio.sleep(self.AUTO_OPEN_DASHBOARD_DELAY_SECONDS)
+        await anyio.to_thread.run_sync(webbrowser.open, DASHBOARD_URL)
+
     async def action_rescan(self) -> None:
         match self.stage:
             case RescanConfirm():
@@ -697,7 +688,6 @@ class CCSentimentApp(App[None]):
         self.records = []
         self.scored = 0
         self.total = 0
-        self.uploaded_count = 0
         self._scoring.reset()
         self._upload.reset()
         self._debug_state.reset()
