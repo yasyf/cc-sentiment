@@ -65,6 +65,9 @@ debug = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "slow: opt-in MLX-backed smoke-eval (requires mlx-lm extra and the shipped adapter)",
+]
 
 [tool.cibuildwheel]
 build = "cp313-*"

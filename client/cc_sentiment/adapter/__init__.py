@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import struct
-from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
 
@@ -15,7 +14,7 @@ class AdapterCodec:
     DIR: ClassVar[Path] = Path(__file__).parent
     ZST: ClassVar[Path] = DIR / "adapters.safetensors.zst"
     CONFIG: ClassVar[Path] = DIR / "adapter_config.json"
-    F32_TYPESIZE: ClassVar[int] = 4
+    TYPESIZES: ClassVar[dict[str, int]] = {"F32": 4, "BF16": 2, "F16": 2}
     COMPRESSION_LEVEL: ClassVar[int] = 19
 
     @classmethod
@@ -26,9 +25,11 @@ class AdapterCodec:
     def encode(cls, src: Path) -> None:
         import zstandard as zstd
 
+        raw = src.read_bytes()
+        cls._assert_homogeneous_dtype(raw)
         cls.ZST.write_bytes(
             zstd.ZstdCompressor(level=cls.COMPRESSION_LEVEL).compress(
-                cls._walk(src.read_bytes(), cls._shuffle, require_f32=True)
+                cls._walk(raw, shuffle=True)
             )
         )
 
@@ -36,41 +37,69 @@ class AdapterCodec:
     def decode(cls, dst: Path) -> None:
         import zstandard as zstd
 
-        dst.write_bytes(cls._walk(
-            zstd.ZstdDecompressor().decompress(cls.ZST.read_bytes()),
-            cls._unshuffle,
-        ))
+        dst.write_bytes(
+            cls._walk(
+                zstd.ZstdDecompressor().decompress(cls.ZST.read_bytes()),
+                shuffle=False,
+            )
+        )
 
     @classmethod
-    def _walk(
-        cls,
-        raw: bytes,
-        transform: Callable[[bytes], bytes],
-        *,
-        require_f32: bool = False,
-    ) -> bytes:
+    def dtype(cls) -> str:
+        import zstandard as zstd
+
+        raw = zstd.ZstdDecompressor().decompress(cls.ZST.read_bytes())
+        cls._assert_homogeneous_dtype(raw)
+        header_end = 8 + struct.unpack("<Q", raw[:8])[0]
+        return next(
+            v["dtype"]
+            for k, v in orjson.loads(raw[8:header_end]).items()
+            if k != "__metadata__"
+        )
+
+    @classmethod
+    def _walk(cls, raw: bytes, *, shuffle: bool) -> bytes:
         header_end = 8 + struct.unpack("<Q", raw[:8])[0]
         body = raw[header_end:]
         out = bytearray(raw[:header_end])
         cursor = 0
         for name, meta in sorted(
-            ((k, v) for k, v in orjson.loads(raw[8:header_end]).items() if k != "__metadata__"),
+            (
+                (k, v)
+                for k, v in orjson.loads(raw[8:header_end]).items()
+                if k != "__metadata__"
+            ),
             key=lambda kv: kv[1]["data_offsets"][0],
         ):
-            assert not require_f32 or meta["dtype"] == "F32", f"{name}: {meta['dtype']}"
+            assert meta["dtype"] in cls.TYPESIZES, f"{name}: unsupported dtype {meta['dtype']}"
+            typesize = cls.TYPESIZES[meta["dtype"]]
             nbytes = meta["data_offsets"][1] - meta["data_offsets"][0]
-            out.extend(transform(body[cursor : cursor + nbytes]))
+            chunk = body[cursor : cursor + nbytes]
+            out.extend(
+                cls._shuffle(chunk, typesize) if shuffle else cls._unshuffle(chunk, typesize)
+            )
             cursor += nbytes
         return bytes(out)
 
     @classmethod
-    def _shuffle(cls, chunk: bytes) -> bytes:
-        import numpy as np
-
-        return np.frombuffer(chunk, dtype=np.uint8).reshape(-1, cls.F32_TYPESIZE).T.tobytes()
+    def _assert_homogeneous_dtype(cls, raw: bytes) -> None:
+        header_end = 8 + struct.unpack("<Q", raw[:8])[0]
+        dtypes = {
+            v["dtype"]
+            for k, v in orjson.loads(raw[8:header_end]).items()
+            if k != "__metadata__"
+        }
+        assert len(dtypes) == 1, f"adapter must be homogeneous-dtype, got {dtypes}"
+        assert dtypes.issubset(cls.TYPESIZES.keys()), f"unsupported dtype: {dtypes}"
 
     @classmethod
-    def _unshuffle(cls, chunk: bytes) -> bytes:
+    def _shuffle(cls, chunk: bytes, typesize: int) -> bytes:
         import numpy as np
 
-        return np.frombuffer(chunk, dtype=np.uint8).reshape(cls.F32_TYPESIZE, -1).T.tobytes()
+        return np.frombuffer(chunk, dtype=np.uint8).reshape(-1, typesize).T.tobytes()
+
+    @classmethod
+    def _unshuffle(cls, chunk: bytes, typesize: int) -> bytes:
+        import numpy as np
+
+        return np.frombuffer(chunk, dtype=np.uint8).reshape(typesize, -1).T.tobytes()
