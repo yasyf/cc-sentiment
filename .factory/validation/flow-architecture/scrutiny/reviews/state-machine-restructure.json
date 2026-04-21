@@ -1,0 +1,21 @@
+{
+  "featureId": "state-machine-restructure",
+  "reviewedAt": "2026-04-21T11:39:29Z",
+  "commitId": "7070937bb31cf4830e8b7bddcddb6df15ab9cf7c",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The refactor introduces an explicit SetupStage enum and central transition_to(stage) owner, keeps ContentSwitcher updates centralized, resets downstream stage state through transition logic, and preserves the required back-navigation state behaviors. The commit also adds focused Pilot tests covering stage history, single-pane invariants, back-nav preservation, rapid toggling, auto-setup short-circuiting, downstream reset behavior, and reserved status-line geometry.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "Textual child-removal behavior (`remove_children`) required ad-hoc runtime investigation during implementation; this async/removal timing nuance is not captured in shared library docs and caused extra exploratory loops.",
+      "evidence": "worker-transcripts.jsonl entry for session 25a5a05b-1f94-4f99-8c7c-eb9bf1b7adb0 shows multiple API introspection/debug commands, including a temporary harness output: \"after call 2 AwaitRemove\" then \"after pause 0\" while investigating widget removal/mount timing."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed handoff, transcript skeleton, and commit 7070937 diff for state-machine-restructure. Implementation matches the feature’s required state-machine and navigation behaviors with no blocking or non-blocking defects identified in-scope; review status is pass."
+}

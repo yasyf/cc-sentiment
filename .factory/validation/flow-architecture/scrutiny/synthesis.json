@@ -1,0 +1,70 @@
+{
+  "milestone": "flow-architecture",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "cd client && uv run pytest -xvs",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "echo \"cc-sentiment has no typecheck baseline (no pyright/mypy config in project); skipping per services.yaml policy\"",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "cd client && uv run --with ruff ruff check cc_sentiment/tui tests/test_tui.py",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 6,
+    "passed": 4,
+    "failed": 2,
+    "failedFeatures": [
+      "button-contract-and-keyboard",
+      "copy-hierarchy-and-text-wrapping"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "button-contract-and-keyboard",
+      "severity": "blocking",
+      "description": "Setup username-step entrance focus targets #username-input instead of the step primary action (#username-next), diverging from the feature contract expectation that entrance focus lands on the primary control."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Align feature-level verificationSteps templates with mission tty-safety policy by removing tty-attaching smoke commands like `uv run cc-sentiment setup` and requiring Pilot-only verification for M1/M2 features.",
+      "evidence": "Both shared-visual-primitives and button-contract-and-keyboard reviews surfaced conflict between feature verification command text and mission/skill restrictions forbidding foreground tty-attaching setup runs.",
+      "isSystemic": true
+    },
+    {
+      "target": "skills",
+      "suggestion": "Strengthen `tui-worker` skill with an explicit lint/checklist item that rejects any feature plan or verification step containing tty-attaching setup invocations, even if written in features.json.",
+      "evidence": "Repeated shared-state observations showed workers following feature verification text that conflicted with mission safety boundaries.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Update mission validation guidance to keep contract assertions synchronized with milestone architecture decisions (e.g., discovery DataTable assertions after the RadioSet-only redesign).",
+      "evidence": "discovery-single-radioset review flagged stale DataTable-oriented assertions in validation-contract.md while implementation and tests are RadioSet-only.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Textual `remove_children()` async timing nuance should be added to shared library docs.",
+      "reason": "Ambiguous scope and low confidence as durable cross-mission guidance without broader corroboration."
+    },
+    {
+      "observation": "Copy/wrapping work can regress auto-setup username-status back-nav invariants.",
+      "reason": "Already addressed by later milestone feature `auto-setup-and-username-flow-preserved` (commit c470c1e), so not carried forward as unresolved shared guidance."
+    }
+  ],
+  "previousRound": null
+}

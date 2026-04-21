@@ -1,0 +1,34 @@
+{
+  "featureId": "copy-hierarchy-and-text-wrapping",
+  "reviewedAt": "2026-04-21T11:40:20Z",
+  "commitId": "a86a0427dc0a7ca0384611a8f9a366fb7dcf2004",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The commit substantially improves copy/layout structure (StepHeader + StepBody composition, Static-based status/copy, fingerprint and display-name rendering, and new Pilot coverage for wrapping/resize cases), but it leaves a blocking regression in username back-navigation state preservation after auto-setup prefill.",
+    "issues": [
+      {
+        "file": "client/cc_sentiment/tui/screens/setup.py",
+        "line": 499,
+        "severity": "blocking",
+        "description": "_on_auto_setup_fail sets #username-status text but does not update _username_status_snapshot. Later, on_discovery_back restores #username-status from the stale snapshot (line 650), which clears the auto-detected status after a discovery round-trip. This breaks the existing back-nav invariant that username status is preserved."
+      },
+      {
+        "file": "client/tests/test_tui.py",
+        "line": 1461,
+        "severity": "non_blocking",
+        "description": "VAL-VIS-026 calls for asserting no ANSI escapes in captured non-TTY output, but the added coverage only checks SetupScreen.render_sample_payload() for '\\u001b[' and does not exercise captured setup output streams."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "Touching copy/wrapping in setup.py can still regress pre-existing navigation invariants (auto-detected username status preservation) even when fulfills are purely visual; this cross-feature coupling is easy to miss during focused VAL-VIS work.",
+      "evidence": "Feature commit a86a042 updates _on_auto_setup_fail (setup.py:499-506) and retains status restoration via _username_status_snapshot (setup.py:650), but no new test in this feature covers the auto-setup prefill + discovery-back path."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed feature copy-hierarchy-and-text-wrapping via handoff, transcript skeleton, skill file, and commit a86a042 diff. Result is fail due to a blocking regression in preserved username status after auto-setup prefill/back-nav; one additional non-blocking coverage gap was noted for non-TTY ANSI validation."
+}

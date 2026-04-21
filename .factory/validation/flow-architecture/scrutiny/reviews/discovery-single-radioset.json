@@ -1,0 +1,21 @@
+{
+  "featureId": "discovery-single-radioset",
+  "reviewedAt": "2026-04-21T11:39:32Z",
+  "commitId": "ca1a1eb",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The commit collapses discovery to a single RadioSet, removes DataTable usage from the discovery step, resets discovery state on each re-entry, and introduces generation/worker guards so stale remote-check results are cancelled/ignored when navigating back or changing selection.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The mission validation contract still contains stale DataTable-based discovery assertions that no longer match the RadioSet-only architecture used by this feature.",
+      "evidence": "validation-contract.md:311-317 still requires #key-table row counts for VAL-FLOW-009, while setup.py@ca1a1eb:301-319 composes discovery with only #key-select and no DataTable."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed worker session 8b972bf9-04d3-4c63-ae7f-a43d1da5eb67 and commit ca1a1eb; feature passes with no blocking/non-blocking code defects found."
+}
