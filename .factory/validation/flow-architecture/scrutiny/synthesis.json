@@ -1,7 +1,11 @@
 {
   "milestone": "flow-architecture",
   "round": 1,
-  "status": "fail",
+  "status": "overridden-pass",
+  "orchestratorOverride": {
+    "decidedBy": "orchestrator",
+    "rationale": "The single blocking finding is a false positive: the reviewer asserted that username-step entrance focus should land on the primary button `#username-next`, but this contradicts VAL-NAV-018 in the authoritative validation-contract.md, which explicitly carves out: 'or, on step-username, the #username-input Input — which is the primary interactive element — with Tab landing on #username-next next. The user must be able to press Enter immediately upon a step appearing, without first clicking or Tabbing.' The implementation matches the contract (input is focused on entry; priority Enter binding activates the primary). The test that codifies this behavior therefore correctly reflects VAL-NAV-018. The reviewer read the one-line summary in the feature description instead of the authoritative contract assertion. No fix feature is needed. The three suggestedGuidanceUpdates were acted on: (1) features.json verificationSteps scrubbed of `uv run cc-sentiment setup` smoke commands for M1/M2; (2) tui-worker skill already hardened in commit b3daeef with explicit tty-safety rules; (3) validation-contract.md reconciled with RadioSet-only discovery redesign — see reconcile-contract-datatable task output."
+  },
   "validatorsRun": {
     "test": {
       "passed": true,
