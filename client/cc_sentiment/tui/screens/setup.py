@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import suppress
+from dataclasses import dataclass
 import shutil
 import subprocess
 import tempfile
@@ -13,6 +15,7 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widgets import (
     Button,
@@ -46,7 +49,15 @@ from cc_sentiment.transcripts import TranscriptDiscovery
 from cc_sentiment.tui.format import TimeFormat
 from cc_sentiment.tui.screens.dialog import Dialog
 from cc_sentiment.tui.status import AutoSetup, StatusEmitter
-from cc_sentiment.tui.widgets import ButtonRow
+from cc_sentiment.tui.widgets import StepActions
+
+
+@dataclass(slots=True)
+class SetupActionState:
+    username_validation_running: bool = False
+    discovery_action_running: bool = False
+    remote_action_running: bool = False
+    upload_running: bool = False
 
 
 class SetupScreen(Dialog[bool]):
@@ -66,6 +77,7 @@ class SetupScreen(Dialog[bool]):
     """
 
     BINDINGS = [
+        Binding("enter", "activate_primary", "Continue", priority=True),
         Binding("escape", "cancel", "Quit", priority=True),
         Binding("ctrl+c", "cancel", "Quit", priority=True),
     ]
@@ -76,6 +88,13 @@ class SetupScreen(Dialog[bool]):
     def __init__(self, state: AppState) -> None:
         super().__init__()
         self.state = state
+        self.actions = SetupActionState()
+        self._discovered_keys: list[SSHKeyInfo | GPGKeyInfo] = []
+        self._generation_mode: str | None = None
+        self._generation_radio_index: int | None = None
+        self._upload_actions: list[str] = []
+        self._key_on_remote = False
+        self._key_on_openpgp = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog-box"):
@@ -86,6 +105,48 @@ class SetupScreen(Dialog[bool]):
                 yield from self.compose_remote_step()
                 yield from self.compose_upload_step()
                 yield from self.compose_done_step()
+
+    def _show_step(self, step_id: str) -> None:
+        self.query_one(ContentSwitcher).current = step_id
+        self.call_after_refresh(self._focus_step_target, step_id)
+
+    def _focus_widget(self, widget: Input | Button | RadioSet) -> None:
+        if getattr(widget, "disabled", False) or not widget.display:
+            return
+        widget.focus()
+
+    def _focus_step_target(self, step_id: str) -> None:
+        match step_id:
+            case "step-username":
+                self._focus_widget(self.query_one("#username-input", Input))
+            case "step-discovery":
+                self._focus_widget(self.query_one("#discovery-next", Button))
+            case "step-remote":
+                self._focus_widget(self.query_one("#remote-next", Button))
+            case "step-upload":
+                self._focus_widget(self.query_one("#upload-go", Button))
+            case "step-done":
+                self._focus_widget(self.query_one("#done-btn", Button))
+
+    def _finish_username_validation(self) -> None:
+        self.actions.username_validation_running = False
+
+    def _finish_discovery_action(self) -> None:
+        self.actions.discovery_action_running = False
+
+    def _finish_upload_action(self) -> None:
+        self.actions.upload_running = False
+
+    def _current_primary_button(self) -> Button | None:
+        current = self.query_one(ContentSwitcher).current
+        with suppress(NoMatches, StopIteration):
+            step = self.query_one(f"#{current}", Vertical)
+            return next(
+                button
+                for button in step.query(Button).results(Button)
+                if button.variant == "primary"
+            )
+        return None
 
     def compose_loading_step(self) -> ComposeResult:
         with Vertical(id="step-loading"):
@@ -107,9 +168,9 @@ class SetupScreen(Dialog[bool]):
             )
             yield Input(placeholder="GitHub username", id="username-input")
             yield Label("", id="username-status", classes="status")
-            yield ButtonRow(
-                Button("Next", id="username-next", variant="primary"),
+            yield StepActions(
                 Button("I don't use GitHub", id="username-skip", variant="default"),
+                primary=Button("Next", id="username-next", variant="primary"),
             )
 
     def compose_discovery_step(self) -> ComposeResult:
@@ -128,9 +189,9 @@ class SetupScreen(Dialog[bool]):
                 "private. We never read or upload your private key.[/]",
                 classes="faq",
             )
-            yield ButtonRow(
-                Button("Next", id="discovery-next", variant="primary", disabled=True),
+            yield StepActions(
                 Button("Back", id="discovery-back", variant="default"),
+                primary=Button("Next", id="discovery-next", variant="primary", disabled=True),
             )
 
     def compose_remote_step(self) -> ComposeResult:
@@ -141,9 +202,9 @@ class SetupScreen(Dialog[bool]):
                 id="remote-status", classes="status",
             )
             yield Static("", id="remote-checks")
-            yield ButtonRow(
-                Button("Next", id="remote-next", variant="primary", disabled=True),
+            yield StepActions(
                 Button("Back", id="remote-back", variant="default"),
+                primary=Button("Next", id="remote-next", variant="primary", disabled=True),
             )
 
     def compose_upload_step(self) -> ComposeResult:
@@ -157,10 +218,10 @@ class SetupScreen(Dialog[bool]):
             yield RadioSet(id="upload-options")
             yield Label("", id="upload-key-text", classes="key-text")
             yield Label("", id="upload-result", classes="status")
-            yield ButtonRow(
-                Button("Link my key", id="upload-go", variant="primary", disabled=True),
-                Button("I'll do it myself", id="upload-skip", variant="default"),
+            yield StepActions(
                 Button("Back", id="upload-back", variant="default"),
+                Button("I'll do it myself", id="upload-skip", variant="default"),
+                primary=Button("Link my key", id="upload-go", variant="primary", disabled=True),
             )
 
     def compose_done_step(self) -> ComposeResult:
@@ -172,7 +233,9 @@ class SetupScreen(Dialog[bool]):
             yield Static("", id="done-process", classes="faq")
             yield Static("", id="done-payload", classes="faq")
             yield Static("", id="done-eta", classes="faq")
-            yield Button("Contribute my stats", id="done-btn", variant="primary")
+            yield StepActions(
+                primary=Button("Contribute my stats", id="done-btn", variant="primary"),
+            )
 
     def _populate_done_info(self) -> None:
         identify = self.query_one("#done-identify", Static)
@@ -248,6 +311,10 @@ class SetupScreen(Dialog[bool]):
         self.query_one("#key-select", RadioSet).display = False
         self.try_auto_setup()
 
+    def action_activate_primary(self) -> None:
+        if button := self._current_primary_button():
+            button.press()
+
     @work()
     async def try_auto_setup(self) -> None:
         emit = StatusEmitter(self.query_one("#loading-activity", Static))
@@ -272,21 +339,24 @@ class SetupScreen(Dialog[bool]):
             "[green]You're set up. Ready to upload.[/]"
         )
         self._populate_done_info()
-        self.query_one(ContentSwitcher).current = "step-done"
+        self._show_step("step-done")
 
     def _on_auto_setup_fail(self, username: str | None) -> None:
         if username:
             self.query_one("#username-input", Input).value = username
             self.query_one("#username-status", Label).update(f"Auto-detected: {username}")
-        self.query_one(ContentSwitcher).current = "step-username"
+        self._show_step("step-username")
 
     @on(Button.Pressed, "#username-next")
     def on_username_next(self) -> None:
+        if self.actions.username_validation_running:
+            return
         username = self.query_one("#username-input", Input).value.strip()
         if not username:
             self.query_one("#username-status", Label).update("[red]Username is required[/]")
             return
         self.username = username
+        self.actions.username_validation_running = True
         self.validate_and_discover()
 
     @on(Button.Pressed, "#username-skip")
@@ -302,14 +372,17 @@ class SetupScreen(Dialog[bool]):
             response = httpx.get(f"https://api.github.com/users/{self.username}", timeout=10.0)
         except httpx.HTTPError:
             self.app.call_from_thread(status.update, "[red]Could not reach GitHub API[/]")
+            self.app.call_from_thread(self._finish_username_validation)
             return
         if response.status_code != 200:
             self.app.call_from_thread(status.update, f"[red]GitHub user '{self.username}' not found[/]")
+            self.app.call_from_thread(self._finish_username_validation)
             return
         self.app.call_from_thread(self._switch_to_discovery)
+        self.app.call_from_thread(self._finish_username_validation)
 
     def _switch_to_discovery(self) -> None:
-        self.query_one(ContentSwitcher).current = "step-discovery"
+        self._show_step("step-discovery")
         self.discover_keys()
 
     @work(thread=True)
@@ -355,6 +428,8 @@ class SetupScreen(Dialog[bool]):
             status.update("No signing keys found on your machine.")
             no_keys.update(self._generation_prompt())
             next_btn.disabled = False
+            if self.query_one(ContentSwitcher).current == "step-discovery":
+                self._focus_step_target("step-discovery")
             return
 
         no_keys.update("")
@@ -386,6 +461,8 @@ class SetupScreen(Dialog[bool]):
             radio.display = False
 
         next_btn.disabled = False
+        if self.query_one(ContentSwitcher).current == "step-discovery":
+            self._focus_step_target("step-discovery")
 
         for key in all_keys:
             match key:
@@ -422,21 +499,25 @@ class SetupScreen(Dialog[bool]):
 
     @on(Button.Pressed, "#discovery-back")
     def on_discovery_back(self) -> None:
-        self.query_one(ContentSwitcher).current = "step-username"
+        self._show_step("step-username")
 
     @on(Button.Pressed, "#discovery-next")
     def on_discovery_next(self) -> None:
+        if self.actions.discovery_action_running:
+            return
         if not self._discovered_keys:
+            self.actions.discovery_action_running = True
             self._dispatch_generation()
             return
         radio = self.query_one("#key-select", RadioSet)
         idx = radio.pressed_index if radio.pressed_index >= 0 else 0
         if self._generation_radio_index is not None and idx == self._generation_radio_index:
+            self.actions.discovery_action_running = True
             self._dispatch_generation()
             return
+        self.actions.discovery_action_running = True
         self.selected_key = self._discovered_keys[idx]
-        self.query_one(ContentSwitcher).current = "step-remote"
-        self.check_remotes()
+        self._go_to_remote()
 
     def _dispatch_generation(self) -> None:
         match self._generation_mode:
@@ -471,12 +552,14 @@ Expire-Date: 0
 
         if result.returncode != 0:
             self.app.call_from_thread(status.update, f"[red]Key generation failed: {result.stderr.strip()}[/]")
+            self.app.call_from_thread(self._finish_discovery_action)
             return
 
         gpg_keys = KeyDiscovery.find_gpg_keys()
         new_key = next((k for k in gpg_keys if k.email == email), None)
         if not new_key:
             self.app.call_from_thread(status.update, "[red]Key generated but not found in keyring[/]")
+            self.app.call_from_thread(self._finish_discovery_action)
             return
 
         self.selected_key = new_key
@@ -492,6 +575,7 @@ Expire-Date: 0
         except subprocess.CalledProcessError as e:
             err = (e.stderr.decode() if isinstance(e.stderr, bytes) else e.stderr or str(e)).strip()
             self.app.call_from_thread(status.update, f"[red]Couldn't create the key: {err}[/]")
+            self.app.call_from_thread(self._finish_discovery_action)
             return
         parts = key_path.with_suffix(key_path.suffix + ".pub").read_text().strip().split()
         self.selected_key = SSHKeyInfo(
@@ -512,6 +596,7 @@ Expire-Date: 0
         except subprocess.CalledProcessError as e:
             err = (e.stderr.decode() if isinstance(e.stderr, bytes) else e.stderr or str(e)).strip()
             self.app.call_from_thread(status.update, f"[red]Couldn't create the gist: {err}[/]")
+            self.app.call_from_thread(self._finish_discovery_action)
             return
         self.state.config = GistConfig(
             contributor_id=ContributorId(self.username),
@@ -526,11 +611,13 @@ Expire-Date: 0
             f"Signed in as [b]{self.username}[/] using cc-sentiment gist [dim]{gist_id[:7]}[/]"
         )
         self._populate_done_info()
-        self.query_one(ContentSwitcher).current = "step-done"
+        self._finish_discovery_action()
+        self._show_step("step-done")
         self.verify_server_config()
 
     def _go_to_remote(self) -> None:
-        self.query_one(ContentSwitcher).current = "step-remote"
+        self._finish_discovery_action()
+        self._show_step("step-remote")
         self.check_remotes()
 
     @work(thread=True)
@@ -598,18 +685,26 @@ Expire-Date: 0
 
     def _enable_remote_next(self) -> None:
         self.query_one("#remote-next", Button).disabled = False
+        if self.query_one(ContentSwitcher).current == "step-remote":
+            self._focus_step_target("step-remote")
 
     @on(Button.Pressed, "#remote-back")
     def on_remote_back(self) -> None:
-        self.query_one(ContentSwitcher).current = "step-discovery"
+        self._show_step("step-discovery")
 
     @on(Button.Pressed, "#remote-next")
     async def on_remote_next(self) -> None:
-        if getattr(self, "_key_on_remote", False):
-            self._save_and_finish()
-        else:
-            self.query_one(ContentSwitcher).current = "step-upload"
-            await self._populate_upload_options()
+        if self.actions.remote_action_running:
+            return
+        self.actions.remote_action_running = True
+        try:
+            if self._key_on_remote:
+                self._save_and_finish()
+            else:
+                self._show_step("step-upload")
+                await self._populate_upload_options()
+        finally:
+            self.actions.remote_action_running = False
 
     async def _populate_upload_options(self) -> None:
         radio = self.query_one("#upload-options", RadioSet)
@@ -662,12 +757,17 @@ Expire-Date: 0
             f"[dim]{pub_text[:200]}...[/]" if len(pub_text) > 200 else f"[dim]{pub_text}[/]"
         )
         self.query_one("#upload-go", Button).disabled = False
+        if self.query_one(ContentSwitcher).current == "step-upload":
+            self._focus_step_target("step-upload")
 
     @on(Button.Pressed, "#upload-go")
     def on_upload_go(self) -> None:
+        if self.actions.upload_running:
+            return
         radio = self.query_one("#upload-options", RadioSet)
         idx = radio.pressed_index if radio.pressed_index >= 0 else 0
         action = self._upload_actions[idx]
+        self.actions.upload_running = True
         self.run_upload(action)
 
     @on(Button.Pressed, "#upload-skip")
@@ -676,7 +776,7 @@ Expire-Date: 0
 
     @on(Button.Pressed, "#upload-back")
     def on_upload_back(self) -> None:
-        self.query_one(ContentSwitcher).current = "step-remote"
+        self._show_step("step-remote")
 
     @work(thread=True)
     def run_upload(self, action: str) -> None:
@@ -696,6 +796,7 @@ Expire-Date: 0
                     self.app.call_from_thread(self._save_and_finish)
                 else:
                     self.app.call_from_thread(result_label.update, f"[red]Something went wrong: {result.stderr.strip()}[/]")
+                    self.app.call_from_thread(self._finish_upload_action)
 
             case "github-gpg":
                 assert isinstance(key, GPGKeyInfo)
@@ -713,6 +814,7 @@ Expire-Date: 0
                         self.app.call_from_thread(self._save_and_finish)
                     else:
                         self.app.call_from_thread(result_label.update, f"[red]Something went wrong: {result.stderr.strip()}[/]")
+                        self.app.call_from_thread(self._finish_upload_action)
                 finally:
                     tmp_path.unlink(missing_ok=True)
 
@@ -735,6 +837,7 @@ Expire-Date: 0
                     self.app.call_from_thread(self._save_and_finish)
                 except httpx.HTTPError as e:
                     self.app.call_from_thread(result_label.update, f"[red]Couldn't reach keys.openpgp.org: {e}[/]")
+                    self.app.call_from_thread(self._finish_upload_action)
 
             case "manual":
                 assert key is not None
@@ -768,7 +871,8 @@ Expire-Date: 0
                 summary.update(f"Signed in as [b]{label}[/]")
 
         self._populate_done_info()
-        self.query_one(ContentSwitcher).current = "step-done"
+        self._finish_upload_action()
+        self._show_step("step-done")
         self.verify_server_config()
 
     @work()

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+import subprocess
+from time import sleep
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
@@ -100,6 +102,16 @@ class KeyPreviewHarness(App[None]):
             id="preview",
         )
         yield Button("Next", id="after")
+
+
+def current_step_actions(screen: SetupScreen) -> StepActions:
+    step = screen.query_one(f"#{screen.query_one(ContentSwitcher).current}", Vertical)
+    return step.query_one(StepActions)
+
+
+def primary_button(screen: SetupScreen) -> Button:
+    buttons = list(current_step_actions(screen).query(Button))
+    return next(button for button in buttons if button.variant == "primary")
 
 
 @pytest.fixture
@@ -651,6 +663,326 @@ async def test_setup_upload_options_gpg_shows_openpgp(no_auto_setup):
 
             assert "github-gpg" in screen._upload_actions
             assert "openpgp" in screen._upload_actions
+
+
+async def test_setup_button_contract_uses_step_actions_and_single_primary_per_step(no_auto_setup):
+    async with SetupHarness(AppState()).run_test() as pilot:
+        await pilot.pause(delay=0.3)
+        screen = pilot.app.screen
+
+        for step_id in ("step-username", "step-discovery", "step-remote", "step-upload", "step-done"):
+            step = screen.query_one(f"#{step_id}", Vertical)
+            buttons = list(step.query_one(StepActions).query(Button))
+
+            assert len([button for button in buttons if button.variant == "primary"]) == 1
+
+
+async def test_setup_button_contract_primary_is_rightmost(no_auto_setup):
+    async with SetupHarness(AppState()).run_test(size=(80, 24)) as pilot:
+        await pilot.pause(delay=0.3)
+        screen = pilot.app.screen
+
+        for step_id in ("step-username", "step-discovery", "step-remote", "step-upload"):
+            screen.query_one(ContentSwitcher).current = step_id
+            await pilot.pause()
+            buttons = list(current_step_actions(screen).query(Button))
+            primary = next(button for button in buttons if button.variant == "primary")
+            secondary_x = [button.region.x for button in buttons if button is not primary]
+
+            assert primary.region.x > max(secondary_x)
+
+
+async def test_setup_enter_advances_username_with_valid_input(no_auto_setup):
+    response = httpx.Response(
+        200,
+        request=httpx.Request("GET", "https://api.github.com/users/testuser"),
+    )
+
+    with patch("cc_sentiment.tui.screens.setup.httpx.get", return_value=response), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=False), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.has_tool", return_value=False):
+        async with SetupHarness(AppState()).run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.query_one("#username-input", Input).value = "testuser"
+
+            await pilot.press("enter")
+            await pilot.pause(delay=0.3)
+
+            assert screen.query_one(ContentSwitcher).current == "step-discovery"
+
+
+async def test_setup_enter_advances_username_blocks_empty_input(no_auto_setup):
+    async with SetupHarness(AppState()).run_test() as pilot:
+        await pilot.pause(delay=0.3)
+        screen = pilot.app.screen
+        screen.query_one("#username-input", Input).value = ""
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert screen.query_one(ContentSwitcher).current == "step-username"
+        assert "Username is required" in str(screen.query_one("#username-status", Label).render())
+
+
+async def test_setup_enter_advances_discovery_when_enabled(no_auto_setup):
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
+
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=(ssh_key,)), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch.object(SetupScreen, "check_remotes") as mock_check_remotes:
+        async with SetupHarness(AppState()).run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.3)
+
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert screen.query_one(ContentSwitcher).current == "step-remote"
+            mock_check_remotes.assert_called_once()
+
+
+async def test_setup_enter_advances_remote_to_upload(no_auto_setup):
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
+
+    with patch.object(SetupScreen, "_populate_upload_options", new_callable=AsyncMock) as mock_populate:
+        async with SetupHarness(AppState()).run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.selected_key = ssh_key
+            screen.query_one(ContentSwitcher).current = "step-remote"
+            screen.query_one("#remote-next", Button).disabled = False
+            screen._key_on_remote = False
+
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert screen.query_one(ContentSwitcher).current == "step-upload"
+            mock_populate.assert_awaited_once()
+
+
+async def test_setup_enter_advances_upload_and_done(no_auto_setup):
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
+    harness = SetupHarness(AppState())
+
+    with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True), \
+         patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"), \
+         patch("cc_sentiment.tui.screens.setup.subprocess.run", return_value=subprocess.CompletedProcess(["gh"], 0, "", "")), \
+         patch.object(SetupScreen, "_save_and_finish") as mock_save:
+        async with harness.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen.query_one(ContentSwitcher).current = "step-upload"
+            await screen._populate_upload_options()
+            await pilot.pause()
+
+            await pilot.press("enter")
+            await pilot.pause(delay=0.1)
+
+            assert mock_save.call_count == 1
+
+            mock_save.reset_mock()
+            screen.query_one(ContentSwitcher).current = "step-done"
+            await pilot.pause()
+
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert harness.dismissed is True
+
+
+@pytest.mark.parametrize("step_id", ["step-loading", "step-username", "step-discovery", "step-remote", "step-upload", "step-done"])
+@pytest.mark.parametrize("key", ["escape", "ctrl+c"])
+async def test_setup_escape_cancels_from_every_step(no_auto_setup, step_id: str, key: str):
+    harness = SetupHarness(AppState())
+
+    async with harness.run_test() as pilot:
+        await pilot.pause(delay=0.3)
+        pilot.app.screen.query_one(ContentSwitcher).current = step_id
+        await pilot.pause()
+
+        await pilot.press(key)
+        await pilot.pause()
+
+        assert harness.dismissed is False
+
+
+async def test_setup_focus_primary_on_interactive_step_entrance(no_auto_setup):
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
+
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=(ssh_key,)), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True), \
+         patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"), \
+         patch.object(SetupScreen, "check_remotes"):
+        async with SetupHarness(AppState()).run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+
+            assert pilot.app.focused == screen.query_one("#username-input", Input)
+
+            screen.username = "testuser"
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.3)
+            assert pilot.app.focused == screen.query_one("#discovery-next", Button)
+
+            screen.query_one(ContentSwitcher).current = "step-remote"
+            screen._enable_remote_next()
+            await pilot.pause()
+            assert pilot.app.focused == screen.query_one("#remote-next", Button)
+
+            screen.selected_key = ssh_key
+            screen.query_one(ContentSwitcher).current = "step-upload"
+            await screen._populate_upload_options()
+            await pilot.pause()
+            assert pilot.app.focused == screen.query_one("#upload-go", Button)
+
+            screen.selected_key = ssh_key
+            screen._save_and_finish()
+            await pilot.pause()
+            assert pilot.app.focused == screen.query_one("#done-btn", Button)
+
+
+async def test_setup_tab_order_body_secondary_primary(no_auto_setup):
+    gpg_key = GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096")
+
+    with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True), \
+         patch("cc_sentiment.tui.screens.setup.GPGBackend.public_key_text", return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----"):
+        async with SetupHarness(AppState()).run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+
+            assert pilot.app.focused == screen.query_one("#username-input", Input)
+            await pilot.press("tab")
+            await pilot.pause()
+            assert pilot.app.focused == screen.query_one("#username-skip", Button)
+            await pilot.press("tab")
+            await pilot.pause()
+            assert pilot.app.focused == screen.query_one("#username-next", Button)
+
+            screen.username = "testuser"
+            screen.selected_key = gpg_key
+            screen.query_one(ContentSwitcher).current = "step-upload"
+            await screen._populate_upload_options()
+            await pilot.pause()
+
+            radio = screen.query_one("#upload-options", RadioSet)
+            radio.focus()
+            await pilot.pause()
+
+            await pilot.press("tab")
+            await pilot.pause()
+            assert pilot.app.focused == screen.query_one("#upload-back", Button)
+            await pilot.press("tab")
+            await pilot.pause()
+            assert pilot.app.focused == screen.query_one("#upload-skip", Button)
+            await pilot.press("tab")
+            await pilot.pause()
+            assert pilot.app.focused == screen.query_one("#upload-go", Button)
+
+
+async def test_setup_double_enter_username_starts_one_validation(no_auto_setup):
+    calls: list[str] = []
+
+    def fake_get(url: str, timeout: float) -> httpx.Response:
+        calls.append(url)
+        sleep(0.1)
+        return httpx.Response(200, request=httpx.Request("GET", url))
+
+    with patch("cc_sentiment.tui.screens.setup.httpx.get", side_effect=fake_get), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=False), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.has_tool", return_value=False):
+        async with SetupHarness(AppState()).run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.query_one("#username-input", Input).value = "testuser"
+
+            await pilot.press("enter")
+            await pilot.press("enter")
+            await pilot.pause(delay=0.4)
+
+            assert calls == ["https://api.github.com/users/testuser"]
+
+
+async def test_setup_double_enter_discovery_starts_one_remote_check(no_auto_setup):
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
+
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=(ssh_key,)), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch.object(SetupScreen, "check_remotes", new=Mock()) as mock_check_remotes:
+        async with SetupHarness(AppState()).run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.3)
+
+            await pilot.press("enter")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert mock_check_remotes.call_count == 1
+
+
+async def test_setup_double_enter_remote_starts_one_upload_population(no_auto_setup):
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
+
+    with patch.object(SetupScreen, "_populate_upload_options", new_callable=AsyncMock) as mock_populate:
+        async with SetupHarness(AppState()).run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.selected_key = ssh_key
+            screen.query_one(ContentSwitcher).current = "step-remote"
+            screen.query_one("#remote-next", Button).disabled = False
+            screen._key_on_remote = False
+
+            await pilot.press("enter")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert mock_populate.await_count == 1
+
+
+async def test_setup_double_enter_upload_starts_one_upload_worker(no_auto_setup):
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
+    calls: list[list[str]] = []
+
+    def fake_run(*args, **kwargs):
+        calls.append(args[0])
+        sleep(0.1)
+        return subprocess.CompletedProcess(args[0], 0, "", "")
+
+    with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True), \
+         patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"), \
+         patch("cc_sentiment.tui.screens.setup.subprocess.run", side_effect=fake_run), \
+         patch.object(SetupScreen, "_save_and_finish"):
+        async with SetupHarness(AppState()).run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen.query_one(ContentSwitcher).current = "step-upload"
+            await screen._populate_upload_options()
+            await pilot.pause()
+
+            await pilot.press("enter")
+            await pilot.press("enter")
+            await pilot.pause(delay=0.4)
+
+            assert len(calls) == 1
 
 
 class CostHarness(App[None]):
