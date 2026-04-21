@@ -1,0 +1,21 @@
+{
+  "featureId": "remote-verify-elision-and-header",
+  "reviewedAt": "2026-04-21T13:59:46Z",
+  "commitId": "e047eb6ecd520d0282b392652b44345ab9fbee67",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Implementation matches the feature intent: remote checks now run from discovery, linked keys bypass the visible remote step and proceed directly to done, unlinked keys show the explicit not-linked remote header, remote check output is structured in a 3-column DataTable, and long GPG armor remains contained in a scrollable KeyPreview.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "Shared UI primitive docs are stale relative to this implemented behavior: KeyPreview height and remote/link action-row ownership no longer match what ui-primitives.md states.",
+      "evidence": ".factory/library/ui-primitives.md:36 documents `max-height: 6`, but commit e047 key_preview uses `max-height: 5` (client/cc_sentiment/tui/widgets/key_preview.py:13). .factory/library/ui-primitives.md:92 documents remote step actions as `Link my key` + `Skip`, while commit e047 renders remote actions as `Back` + `Next` (client/cc_sentiment/tui/screens/setup.py:476-477) and keeps `Link my key` on upload (setup.py:493)."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed handoff, transcript skeleton, skill procedure, and commit e047 diff for remote-verify-elision-and-header. No blocking or non-blocking code defects found for this feature; behavior aligns with the feature description and expected outcomes. One shared-state documentation drift was noted in ui-primitives.md."
+}

@@ -1,0 +1,15 @@
+{
+  "featureId": "link-my-key-collapse",
+  "reviewedAt": "2026-04-21T13:59:21Z",
+  "commitId": "5414ede17a7225694c1aaaeb4a079c6b311aa11d",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Implementation matches the feature description and expected behavior: upload choices are collapsed into one RadioSet with one primary action, unavailable GitHub options are hidden, best-path selection is defaulted, upload action routing is correct, manual path is non-error toned, github-gpg temp files are cleaned up via finally, and subprocess error handling prevents crashy failure paths. Tests were expanded to cover the new behavior matrix and robustness cases.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed handoff, commit diff, transcript skeleton, and skill guidance for link-my-key-collapse. No blocking or non-blocking defects were found in scope; the feature appears complete and aligned with VAL-NAV-022/023 and VAL-FLOW-016/017/018/019/020/021/033/034/036 requirements."
+}
