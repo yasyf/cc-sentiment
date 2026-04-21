@@ -1,0 +1,15 @@
+{
+  "featureId": "remove-or-wire-github-auth-pending-branch",
+  "reviewedAt": "2026-04-21T14:28:10Z",
+  "commitId": "721c8fd6b92b7317d201d0db03d64574ea5ebf22",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix commit removes the unreachable `github-auth` instructions branch from `SetupScreen` and updates pending-instructions test coverage so all surviving `_verification_action` values are exercised (`manual`, `openpgp`, `github-ssh`, `github-gpg`, `gist`). Reviewing both diffs confirms the original failure condition in `b906b60` (handler existed with no setter) is eliminated in `721c8fd`.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": ".factory/validation/auto-heal-honest-end-state/scrutiny/reviews/pending-live-polling.json",
+  "summary": "Reviewed the fix transcript skeleton, prior failed review, and both commit diffs (`b906b60` and `721c8fd`). The dead `github-auth` pending-instructions branch identified as blocking in the original review is now removed, no contract/test references remain, and surviving verification-action paths are covered by pilot tests. Marking this fix feature as pass."
+}
