@@ -161,6 +161,9 @@ class DoneBranch(Vertical):
                     id="done-summary-card",
                     classes="done-card success",
                 )
+                yield StepActions(
+                    primary=Button("Contribute my stats", id="done-btn", variant="primary"),
+                )
                 yield Static(
                     "Only signed stats leave your Mac, one row per conversation.",
                     id="done-payload-lead",
@@ -171,9 +174,6 @@ class DoneBranch(Vertical):
                     title="What actually gets sent",
                     id="done-payload-card",
                     classes="done-card",
-                )
-                yield StepActions(
-                    primary=Button("Contribute my stats", id="done-btn", variant="primary"),
                 )
                 yield Static(self.identify_text, id="done-identify", classes="muted")
                 yield Static(self.process_text, id="done-process", classes="muted")

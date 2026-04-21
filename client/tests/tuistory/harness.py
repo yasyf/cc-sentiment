@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -87,6 +88,16 @@ class HarnessRunner:
         output_dir.mkdir(parents=True, exist_ok=True)
         home_dir.mkdir(parents=True, exist_ok=True)
         self.write_home_files(home_dir, scenario)
+        fake_bin_dir = self.fake_bin_dir
+        if exclude := tuple(scenario.get("fake_bin_exclude", ())):
+            fake_bin_dir = tmp_path / slug / "fake-bin"
+            fake_bin_dir.mkdir(parents=True, exist_ok=True)
+            for source in self.fake_bin_dir.iterdir():
+                if source.name in exclude:
+                    continue
+                target = fake_bin_dir / source.name
+                shutil.copy2(source, target)
+                target.chmod(source.stat().st_mode)
         scenario_data = {
             **scenario,
             "addon_log_path": str(output_dir / "addon.jsonl"),
@@ -100,7 +111,7 @@ class HarnessRunner:
                 size,
                 str(self.mitm.port),
                 str(self.mitm.confdir),
-                str(self.fake_bin_dir),
+                str(fake_bin_dir),
                 str(home_dir),
                 str(self.mitm.scenario_path),
             ],

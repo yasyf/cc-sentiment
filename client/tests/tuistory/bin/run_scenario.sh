@@ -84,6 +84,8 @@ env = {
     "TERM": "xterm-truecolor",
     "COLORTERM": "truecolor",
     "LANG": "en_US.UTF-8",
+    "UV_NO_SYNC": "1",
+    "UV_OFFLINE": "1",
 }
 pairs = " ".join(f"{key}={shlex.quote(value)}" for key, value in env.items())
 print(
