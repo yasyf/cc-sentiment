@@ -6,6 +6,7 @@ import subprocess
 from time import monotonic as wall_monotonic, sleep
 from unittest.mock import AsyncMock, Mock, patch
 
+import anyio
 import httpx
 import pytest
 from textual.app import App
@@ -595,6 +596,199 @@ async def test_setup_save_gpg_config(tmp_path: Path, no_auto_setup):
 
             assert isinstance(state.config, GPGConfig)
             assert state.config.fpr == "F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A"
+
+
+async def test_setup_persist_at_commit_before_probe_returns(tmp_path: Path):
+    state = AppState()
+    state_file = tmp_path / "state.json"
+    probe_started = anyio.Event()
+    probe_release = anyio.Event()
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+
+    async def probe(_: Uploader, config: SSHConfig) -> AuthUnauthorized:
+        assert config.key_path == ssh_key.path
+        probe_started.set()
+        await probe_release.wait()
+        return AuthUnauthorized(status=401)
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch.object(AppState, "state_path", return_value=state_file), \
+         patch("cc_sentiment.upload.Uploader.probe_credentials", new=probe):
+        async with SetupHarness(state).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen._save_and_finish()
+            await probe_started.wait()
+            await pilot.pause()
+
+            assert state_file.exists()
+            assert AppState.model_validate_json(state_file.read_text()).config == SSHConfig(
+                contributor_id=ContributorId("testuser"),
+                key_path=ssh_key.path,
+            )
+            assert screen.current_stage.value == "step-done"
+
+            probe_release.set()
+            await pilot.pause(delay=0.3)
+
+
+def test_app_state_first_run_mkdir_creates_dir_with_0700(tmp_path: Path):
+    state_file = tmp_path / ".cc-sentiment" / "state.json"
+    config = SSHConfig(
+        contributor_id=ContributorId("testuser"),
+        key_path=Path("/home/.ssh/id_ed25519"),
+    )
+
+    with patch.object(AppState, "state_path", return_value=state_file):
+        AppState(config=config).save()
+
+    assert state_file.exists()
+    assert state_file.parent.is_dir()
+    assert state_file.parent.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        SSHConfig(
+            contributor_id=ContributorId("ssh-user"),
+            key_path=Path("/home/.ssh/id_ed25519"),
+        ),
+        GPGConfig(
+            contributor_type="github",
+            contributor_id=ContributorId("github-user"),
+            fpr="F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A",
+        ),
+        GPGConfig(
+            contributor_type="gpg",
+            contributor_id=ContributorId("F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A"),
+            fpr="F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A",
+        ),
+        GistConfig(
+            contributor_id=ContributorId("gist-user"),
+            key_path=Path("/home/.cc-sentiment/keys/id_ed25519"),
+            gist_id="abc123def456",
+        ),
+    ],
+)
+def test_app_state_roundtrip_terminal_configs(tmp_path: Path, config):
+    state_file = tmp_path / "state.json"
+
+    with patch.object(AppState, "state_path", return_value=state_file):
+        AppState(config=config).save()
+        loaded = AppState.load()
+
+    assert loaded.config is not None
+    assert loaded.config.model_dump() == config.model_dump()
+
+
+async def test_setup_idempotent_verified_saved_config_short_circuits_loading(tmp_path: Path):
+    state_file = tmp_path / "state.json"
+    key_path = tmp_path / "id_ed25519"
+    key_path.write_text("PRIVATE")
+    key_path.with_suffix(".pub").write_text("ssh-ed25519 AAAA saved@test")
+    config = SSHConfig(
+        contributor_id=ContributorId("testuser"),
+        key_path=key_path,
+    )
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new=AsyncMock(side_effect=AssertionError("resume should not rerun auto setup"))), \
+         patch.object(AppState, "state_path", return_value=state_file), \
+         patch("cc_sentiment.tui.screens.setup.TranscriptDiscovery.find_transcripts", return_value=()), \
+         patch("cc_sentiment.upload.Uploader.probe_credentials", new_callable=AsyncMock, return_value=AuthOk()) as probe:
+        state = AppState(config=config)
+        state.save()
+        async with SetupHarness(AppState.load()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.5)
+            screen = pilot.app.screen
+
+            assert screen.current_stage.value == "step-done"
+            assert screen.verification_state is VerificationState.VERIFIED
+            assert visible_step_ids(screen) == ["step-done"]
+            assert list(screen.query("#done-btn")) != []
+            probe.assert_awaited_once_with(config)
+
+
+async def test_setup_resume_pending_from_saved_config_skips_username(tmp_path: Path):
+    state_file = tmp_path / "state.json"
+    config = GPGConfig(
+        contributor_type="github",
+        contributor_id=ContributorId("testuser"),
+        fpr="F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A",
+    )
+    matching_key = GPGKeyInfo(
+        fpr=config.fpr,
+        email="test@example.com",
+        algo="ed25519",
+    )
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new=AsyncMock(side_effect=AssertionError("resume should not rerun auto setup"))), \
+         patch.object(AppState, "state_path", return_value=state_file), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=(matching_key,)), \
+         patch(
+             "cc_sentiment.upload.Uploader.probe_credentials",
+             new_callable=AsyncMock,
+             return_value=AuthUnauthorized(status=401),
+         ) as probe:
+        state = AppState(config=config)
+        state.save()
+        async with SetupHarness(AppState.load()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.5)
+            screen = pilot.app.screen
+
+            assert screen.current_stage.value == "step-done"
+            assert screen.verification_state is VerificationState.PENDING
+            assert visible_step_ids(screen) == ["step-done"]
+            assert list(screen.query("#done-btn")) == []
+            assert screen.query_one("#pending-status", PendingStatus) is not None
+            probe.assert_awaited_once_with(config)
+
+
+async def test_setup_stale_config_missing_key_falls_back_to_username(tmp_path: Path):
+    state_file = tmp_path / "state.json"
+    missing_key = tmp_path / "missing-key"
+    config = SSHConfig(
+        contributor_id=ContributorId("testuser"),
+        key_path=missing_key,
+    )
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)) as auto_setup, \
+         patch.object(AppState, "state_path", return_value=state_file), \
+         patch("cc_sentiment.upload.Uploader.probe_credentials", new_callable=AsyncMock) as probe:
+        state = AppState(config=config)
+        state.save()
+        async with SetupHarness(AppState.load()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.5)
+            screen = pilot.app.screen
+
+            assert screen.current_stage.value == "step-username"
+            auto_setup.assert_awaited_once()
+            probe.assert_not_called()
+
+
+async def test_setup_escape_loading_dismisses_without_partial_save(tmp_path: Path):
+    state_file = tmp_path / "state.json"
+    harness = SetupHarness(AppState())
+
+    async def slow_run(*_) -> tuple[bool, str | None]:
+        await anyio.sleep(0.5)
+        return False, None
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new=slow_run), \
+         patch.object(AppState, "state_path", return_value=state_file):
+        async with harness.run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.05)
+
+            assert pilot.app.screen.current_stage.value == "step-loading"
+
+            await pilot.press("escape")
+            await pilot.pause(delay=0.1)
+            await pilot.pause(delay=0.6)
+
+            assert harness.dismissed is False
+            assert not state_file.exists()
 
 
 async def test_setup_done_button_dismisses_true(tmp_path: Path, no_auto_setup):

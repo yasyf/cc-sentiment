@@ -58,5 +58,8 @@ class AppState(BaseModel):
 
     def save(self) -> None:
         path = self.state_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
+        created = not path.parent.exists()
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if created:
+            path.parent.chmod(0o700)
         path.write_text(self.model_dump_json(indent=2))

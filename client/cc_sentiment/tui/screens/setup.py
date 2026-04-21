@@ -868,12 +868,50 @@ class SetupScreen(Dialog[bool]):
 
     @work()
     async def try_auto_setup(self) -> None:
+        if await self._resume_saved_config():
+            return
         emit = StatusEmitter(self.query_one("#loading-activity", PendingStatus))
         ok, username = await AutoSetup(self.state, emit).run()
         if ok:
             self._on_auto_setup_success()
             return
         self._on_auto_setup_fail(username)
+
+    async def _resume_saved_config(self) -> bool:
+        match self.state.config:
+            case SSHConfig(contributor_id=cid, key_path=path):
+                if not await anyio.to_thread.run_sync(path.exists):
+                    return False
+                self.username = cid
+                self._done_summary_text = f"Signed in as {cid} using SSH key {path.name}."
+                self._verification_action = "github-ssh"
+            case GPGConfig(contributor_type=contributor_type, contributor_id=cid, fpr=fpr):
+                gpg_keys = await anyio.to_thread.run_sync(KeyDiscovery.find_gpg_keys)
+                if not (info := next((key for key in gpg_keys if key.fpr == fpr), None)):
+                    return False
+                self.username = cid if contributor_type == "github" else ""
+                self.selected_key = info
+                label = cid if contributor_type == "github" else f"GPG {fpr[-8:]}"
+                self._done_summary_text = (
+                    f"Signed in as {label} using GPG {self._display_fingerprint(fpr)}."
+                )
+                self._verification_action = "github-gpg" if contributor_type == "github" else "openpgp"
+            case GistConfig(contributor_id=cid, key_path=path, gist_id=gist_id):
+                if not await anyio.to_thread.run_sync(path.exists):
+                    return False
+                self.username = cid
+                self._done_summary_text = f"Signed in as {cid} using cc-sentiment gist {gist_id[:7]}."
+                self._verification_action = "gist"
+            case _:
+                return False
+        self.verification_poll.restart(monotonic())
+        self._verification_detail = ""
+        self._set_verification_branch(VerificationState.PENDING)
+        self._populate_done_info()
+        self.transition_to(SetupStage.DONE)
+        self._render_done_branch()
+        self.verify_server_config()
+        return True
 
     def _on_auto_setup_success(self) -> None:
         config = self.state.config
