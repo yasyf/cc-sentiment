@@ -215,7 +215,7 @@ def auth_ok():
 
 @pytest.fixture
 def no_stat_share():
-    with patch.object(CCSentimentApp, "_poll_card", new_callable=AsyncMock):
+    with patch.object(CCSentimentApp, "_poll_card", new=Mock(side_effect=lambda _config: lambda: None)):
         yield
 
 
