@@ -80,6 +80,25 @@ class RemoteCheckRow:
     tone: str
 
 
+@dataclass(slots=True)
+class VerificationPollState:
+    started_at: float
+    next_retry_at: float | None = None
+
+    def restart(self, now: float) -> None:
+        self.started_at = now
+        self.next_retry_at = None
+
+    def schedule_next(self, now: float) -> None:
+        self.next_retry_at = now + PENDING_RETRY_SECONDS
+
+    def clear(self) -> None:
+        self.next_retry_at = None
+
+    def due(self, now: float) -> bool:
+        return self.next_retry_at is not None and now >= self.next_retry_at
+
+
 class SetupStage(StrEnum):
     LOADING = "step-loading"
     USERNAME = "step-username"
@@ -167,8 +186,8 @@ class DoneBranch(Vertical):
                     classes="done-card",
                 )
                 yield StepActions(
-                    Button("Exit, continue later", id="exit-btn", variant="default"),
-                    primary=Button("Retry now", id="retry-btn", variant="primary"),
+                    Button("Exit, continue later", id="pending-exit", variant="default"),
+                    primary=Button("Retry now", id="pending-retry", variant="primary"),
                 )
             case VerificationState.FAILED:
                 yield Card(
@@ -185,8 +204,8 @@ class DoneBranch(Vertical):
                     classes="done-card",
                 )
                 yield StepActions(
-                    Button("Exit", id="exit-btn", variant="default"),
-                    primary=Button("Retry", id="retry-btn", variant="primary"),
+                    Button("Exit", id="failed-exit", variant="default"),
+                    primary=Button("Retry", id="failed-retry", variant="primary"),
                 )
 
     def watch_pending_label(self, label: str) -> None:
@@ -262,7 +281,8 @@ class SetupScreen(Dialog[bool]):
         self._key_on_openpgp = False
         self._remote_check_generation = 0
         self._remote_check_worker: Worker[None] | None = None
-        self.pending_started_at = monotonic()
+        self.verification_poll = VerificationPollState(started_at=monotonic())
+        self._verify_worker: Worker[None] | None = None
         self._done_summary_text = ""
         self._done_identify_text = ""
         self._done_process_text = ""
@@ -333,10 +353,16 @@ class SetupScreen(Dialog[bool]):
                     self._focus_widget(self.query_one("#done-btn", Button))
                     return
                 with suppress(NoMatches):
-                    self._focus_widget(self.query_one("#retry-btn", Button))
+                    self._focus_widget(self.query_one("#pending-retry", Button))
                     return
                 with suppress(NoMatches):
-                    self._focus_widget(self.query_one("#exit-btn", Button))
+                    self._focus_widget(self.query_one("#failed-retry", Button))
+                    return
+                with suppress(NoMatches):
+                    self._focus_widget(self.query_one("#pending-exit", Button))
+                    return
+                with suppress(NoMatches):
+                    self._focus_widget(self.query_one("#failed-exit", Button))
 
     def _finish_username_validation(self) -> None:
         self.actions.username_validation_running = False
@@ -450,7 +476,8 @@ class SetupScreen(Dialog[bool]):
         self._done_eta_text = ""
         self._verification_detail = ""
         self._verification_action = ""
-        self.pending_started_at = monotonic()
+        self.verification_poll.restart(monotonic())
+        self._cancel_verify_worker()
         self._render_done_branch()
 
     def _set_done_header(self, title: str, explainer: str, tone: str | None = None) -> None:
@@ -467,7 +494,7 @@ class SetupScreen(Dialog[bool]):
         return f"{elapsed // 60}:{elapsed % 60:02d}"
 
     def _pending_label(self) -> str:
-        return f"Waiting for your key to propagate… {self._format_pending_elapsed(monotonic() - self.pending_started_at)}"
+        return f"Waiting for your key to propagate… {self._format_pending_elapsed(monotonic() - self.verification_poll.started_at)}"
 
     def _manual_destination_url(self) -> str:
         return (
@@ -477,17 +504,24 @@ class SetupScreen(Dialog[bool]):
         )
 
     def _instructions_text(self) -> str:
+        prefix = (
+            "sentiments.cc is temporarily unreachable right now. "
+            if self._verification_detail == "temporarily unreachable"
+            else ""
+        )
         match self._verification_action:
             case "manual":
-                return f"Paste your public key at {self._manual_destination_url()}, then retry once GitHub shows it."
+                return prefix + f"Paste your public key at {self._manual_destination_url()}, then retry once GitHub shows it."
             case "openpgp":
-                return "Check your email for the keys.openpgp.org verification link, finish publishing the key, then retry."
+                return prefix + "Check your email for the keys.openpgp.org verification link, finish publishing the key, then retry."
+            case "github-auth":
+                return prefix + "Try `gh auth login` and retry."
             case "github-ssh" | "github-gpg":
-                return "Give GitHub a moment to propagate your public key, then retry."
+                return prefix + "Give GitHub a moment to propagate your public key, then retry."
             case "gist":
-                return "Keep your cc-sentiment gist public so the dashboard can read the key, then retry."
+                return prefix + "Keep your cc-sentiment gist public so the dashboard can read the key, then retry."
             case _:
-                return "Wait a moment for your public key to propagate, then retry."
+                return prefix + "Wait a moment for your public key to propagate, then retry."
 
     def _visible_verification_state(self) -> VerificationState:
         return (
@@ -532,9 +566,10 @@ class SetupScreen(Dialog[bool]):
     def _set_verification_branch(
         self,
         state: VerificationState,
-        detail: str = "",
+        detail: str | None = None,
     ) -> None:
-        self._verification_detail = detail
+        if detail is not None:
+            self._verification_detail = detail
         self.verification_state = state
         self.verification_ok = state is VerificationState.VERIFIED
         self._render_done_branch()
@@ -544,6 +579,23 @@ class SetupScreen(Dialog[bool]):
             return
         with suppress(NoMatches):
             self.query_one("#done-branch", DoneBranch).pending_label = self._pending_label()
+
+    def _cancel_verify_worker(self) -> None:
+        if self._verify_worker is not None:
+            self._verify_worker.cancel()
+        self._verify_worker = None
+
+    def _poll_verification_if_due(self) -> None:
+        if self.current_stage is not SetupStage.DONE:
+            return
+        if self._visible_verification_state() is not VerificationState.PENDING:
+            return
+        if self._verify_worker is not None and self._verify_worker.is_running:
+            return
+        if not self.verification_poll.due(monotonic()):
+            return
+        self.verification_poll.clear()
+        self.verify_server_config()
 
     def _mount_discovery_options(self, radio_children: list[RadioButton]) -> None:
         radio = self.query_one("#key-select", RadioSet)
@@ -802,8 +854,13 @@ class SetupScreen(Dialog[bool]):
         self.query_one("#key-select", RadioSet).display = False
         self._configure_remote_checks_table()
         self.set_interval(1, self._refresh_pending_status)
+        self.set_interval(0.1, self._poll_verification_if_due)
         self._render_done_branch()
         self.try_auto_setup()
+
+    def on_unmount(self) -> None:
+        self._cancel_remote_check()
+        self._cancel_verify_worker()
 
     def action_activate_primary(self) -> None:
         if button := self._current_primary_button():
@@ -1141,7 +1198,8 @@ Expire-Date: 0
         self._done_summary_text = (
             f"Signed in as {self.username} using cc-sentiment gist {gist_id[:7]}."
         )
-        self.pending_started_at = monotonic()
+        self.verification_poll.restart(monotonic())
+        self._verification_detail = ""
         self._verification_action = "gist"
         self._set_verification_branch(VerificationState.PENDING)
         self._populate_done_info()
@@ -1200,7 +1258,7 @@ Expire-Date: 0
                     else:
                         results.append(RemoteCheckRow("—", "keys.openpgp.org", "Not on keys.openpgp.org yet", "warning"))
                 except httpx.HTTPError:
-                    results.append(RemoteCheckRow("?", "keys.openpgp.org", "Couldn't reach keys.openpgp.org", "muted"))
+                    results.append(RemoteCheckRow("?", "keys.openpgp.org", "Couldn't reach keys.openpgp.org", "warning"))
 
         self.app.call_from_thread(
             self._apply_remote_results,
@@ -1412,7 +1470,8 @@ Expire-Date: 0
     def _save_and_finish(self) -> None:
         key = self.selected_key
         identity = self.username
-        self.pending_started_at = monotonic()
+        self.verification_poll.restart(monotonic())
+        self._verification_detail = ""
 
         match key:
             case SSHKeyInfo(path=p):
@@ -1440,36 +1499,58 @@ Expire-Date: 0
         self.verify_server_config()
 
     def verify_server_config(self) -> None:
-        self.run_worker(
+        if self._verify_worker is not None and self._verify_worker.is_running:
+            return
+        self._verify_worker = self.run_worker(
             self._verify_server_config(),
             name=f"setup-verify-{monotonic()}",
             exit_on_error=False,
         )
 
     async def _verify_server_config(self) -> None:
-        from cc_sentiment.upload import AuthOk, Uploader
-        await anyio.to_thread.run_sync(self.state.save)
-        assert self.state.config is not None
-        result = await Uploader().probe_credentials(self.state.config)
-        if isinstance(result, AuthOk):
-            self._set_verification_branch(VerificationState.VERIFIED)
-            return
-        self._set_verification_branch(
-            VerificationState.PENDING
-            if monotonic() - self.pending_started_at < PENDING_PROPAGATION_WINDOW_SECONDS
-            else VerificationState.FAILED,
-        )
+        from cc_sentiment.upload import AuthOk, AuthServerError, AuthUnauthorized, AuthUnreachable, Uploader
+
+        try:
+            await anyio.to_thread.run_sync(self.state.save)
+            assert self.state.config is not None
+            try:
+                result = await Uploader().probe_credentials(self.state.config)
+            except httpx.HTTPError as error:
+                result = AuthUnreachable(detail=str(error))
+
+            match result:
+                case AuthOk():
+                    self._verification_detail = ""
+                    self.verification_poll.clear()
+                    self._set_verification_branch(VerificationState.VERIFIED)
+                case AuthUnauthorized():
+                    self._verification_detail = ""
+                    if monotonic() - self.verification_poll.started_at < PENDING_PROPAGATION_WINDOW_SECONDS:
+                        self.verification_poll.schedule_next(monotonic())
+                        self._set_verification_branch(VerificationState.PENDING)
+                    else:
+                        self.verification_poll.clear()
+                        self._set_verification_branch(VerificationState.FAILED)
+                case AuthUnreachable() | AuthServerError():
+                    self._verification_detail = "temporarily unreachable"
+                    self.verification_poll.schedule_next(monotonic())
+                    self._set_verification_branch(VerificationState.PENDING)
+        finally:
+            self._verify_worker = None
 
     @on(Button.Pressed, "#done-btn")
     def on_done(self) -> None:
         self.dismiss(True)
 
-    @on(Button.Pressed, "#retry-btn")
+    @on(Button.Pressed, "#pending-retry")
+    @on(Button.Pressed, "#failed-retry")
     def on_retry(self) -> None:
+        self._cancel_verify_worker()
         self._set_verification_branch(VerificationState.PENDING)
         self.verify_server_config()
 
-    @on(Button.Pressed, "#exit-btn")
+    @on(Button.Pressed, "#pending-exit")
+    @on(Button.Pressed, "#failed-exit")
     def on_exit(self) -> None:
         self.dismiss(False)
 

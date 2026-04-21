@@ -75,7 +75,12 @@ class KeyDiscovery:
     @staticmethod
     def fetch_openpgp_key(fpr: str) -> str | None:
         response = httpx.get(f"https://keys.openpgp.org/vks/v1/by-fingerprint/{fpr.upper()}", timeout=10.0)
-        return response.text if response.status_code == 200 else None
+        if response.status_code == 200:
+            return response.text
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return None
 
     @staticmethod
     def upload_openpgp_key(armored_key: str) -> tuple[str, dict[str, str]]:

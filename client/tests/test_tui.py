@@ -3,7 +3,7 @@ from __future__ import annotations
 from html import unescape
 from pathlib import Path
 import subprocess
-from time import sleep
+from time import monotonic as wall_monotonic, sleep
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
@@ -148,6 +148,17 @@ def step_header_texts(step: Vertical) -> tuple[str, str]:
 
 def screenshot_text(app: App[None]) -> str:
     return unescape(app.export_screenshot())
+
+
+class FakeMonotonic:
+    def __init__(self, value: float = 0.0) -> None:
+        self.value = value
+
+    def __call__(self) -> float:
+        return self.value
+
+    def advance(self, seconds: float) -> None:
+        self.value += seconds
 
 
 @pytest.fixture
@@ -637,7 +648,7 @@ async def test_setup_honest_end_state_verified_branch_uses_payload_card_and_cont
             assert screen.query_one("#done-payload-card", Card).border_title == "What actually gets sent"
             assert "one row per conversation" in str(screen.query_one("#done-payload-lead", Static).render())
             assert "sentiment_score" in str(screen.query_one("#done-payload", Static).render())
-            assert list(screen.query("#retry-btn")) == []
+            assert list(screen.query("#pending-retry, #failed-retry")) == []
 
 
 async def test_setup_honest_end_state_pending_branch_on_unreachable_hides_contribute_visibility(
@@ -666,8 +677,8 @@ async def test_setup_honest_end_state_pending_branch_on_unreachable_hides_contri
             assert "warning" in screen.query_one("#done-summary-card", Card).classes
             assert list(screen.query("#done-btn")) == []
             assert screen.query_one("#pending-status", PendingStatus) is not None
-            assert screen.query_one("#exit-btn", Button).label.plain == "Exit, continue later"
-            assert screen.query_one("#retry-btn", Button).label.plain == "Retry now"
+            assert screen.query_one("#pending-exit", Button).label.plain == "Exit, continue later"
+            assert screen.query_one("#pending-retry", Button).label.plain == "Retry now"
 
 
 async def test_setup_manual_to_pending_routes_without_contribute_cta(tmp_path: Path):
@@ -729,9 +740,9 @@ async def test_setup_honest_end_state_failed_branch_retry_button_contract(tmp_pa
             assert screen.verification_ok is False
             assert "error" in screen.query_one("#done-summary-card", Card).classes
             assert list(screen.query("#done-btn")) == []
-            assert screen.query_one("#exit-btn", Button).variant == "default"
-            assert screen.query_one("#retry-btn", Button).variant == "primary"
-            assert buttons[-1].id == "retry-btn"
+            assert screen.query_one("#failed-exit", Button).variant == "default"
+            assert screen.query_one("#failed-retry", Button).variant == "primary"
+            assert buttons[-1].id == "failed-retry"
 
 
 async def test_setup_verification_ok_reactive_contribute_visibility(
@@ -764,7 +775,7 @@ async def test_setup_verification_ok_reactive_contribute_visibility(
             await pilot.pause()
 
             assert list(screen.query("#done-btn")) == []
-            assert screen.query_one("#retry-btn", Button).label.plain == "Retry now"
+            assert screen.query_one("#pending-retry", Button).label.plain == "Retry now"
 
             screen.verification_state = VerificationState.VERIFIED
             screen.verification_ok = True
@@ -808,6 +819,326 @@ async def test_setup_rapid_toggle_cta_never_visible_on_non_verified_branch(
                 await pilot.pause()
 
                 assert bool(list(screen.query("#done-btn"))) is (state_value is VerificationState.VERIFIED)
+
+
+async def test_setup_pending_elapsed_ticks_pending_elapsed(tmp_path: Path):
+    fake_clock = FakeMonotonic(100.0)
+    state = AppState()
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch("cc_sentiment.tui.screens.setup.monotonic", new=fake_clock), \
+         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
+         patch(
+             "cc_sentiment.upload.Uploader.probe_credentials",
+             new_callable=AsyncMock,
+             return_value=AuthUnauthorized(status=401),
+         ):
+        async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen._save_and_finish()
+            await pilot.pause(delay=0.3)
+
+            pending = screen.query_one("#pending-status", PendingStatus)
+
+            assert pending.label == "Waiting for your key to propagate… 0:00"
+
+            fake_clock.advance(61.0)
+            screen._refresh_pending_status()
+            await pilot.pause()
+
+            assert pending.label == "Waiting for your key to propagate… 1:01"
+
+
+async def test_setup_pending_retry_cadence_auto_polls_pending_retry_cadence(tmp_path: Path):
+    state = AppState()
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+    calls: list[float] = []
+
+    async def probe(*_) -> AuthUnauthorized:
+        calls.append(wall_monotonic())
+        return AuthUnauthorized(status=401)
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch("cc_sentiment.tui.screens.setup.PENDING_RETRY_SECONDS", 0.2), \
+         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
+         patch("cc_sentiment.upload.Uploader.probe_credentials", new=probe):
+        async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen._save_and_finish()
+            await pilot.pause(delay=0.9)
+
+            assert len(calls) >= 3
+            assert all(0.12 <= later - earlier <= 0.45 for earlier, later in zip(calls, calls[1:]))
+
+
+async def test_setup_pending_propagation_window_transitions_to_failed_propagation_window(tmp_path: Path):
+    fake_clock = FakeMonotonic()
+    state = AppState()
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch("cc_sentiment.tui.screens.setup.monotonic", new=fake_clock), \
+         patch("cc_sentiment.tui.screens.setup.PENDING_PROPAGATION_WINDOW_SECONDS", 5.0), \
+         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
+         patch(
+             "cc_sentiment.upload.Uploader.probe_credentials",
+             new_callable=AsyncMock,
+             return_value=AuthUnauthorized(status=401),
+         ):
+        async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen._save_and_finish()
+            await pilot.pause(delay=0.3)
+
+            assert screen.verification_state is VerificationState.PENDING
+
+            fake_clock.advance(4.9)
+            screen.verify_server_config()
+            await pilot.pause(delay=0.3)
+            assert screen.verification_state is VerificationState.PENDING
+
+            fake_clock.advance(0.2)
+            screen.verify_server_config()
+            await pilot.pause(delay=0.3)
+
+            assert screen.verification_state is VerificationState.FAILED
+            assert screen.query_one("#failed-exit", Button).variant == "default"
+            assert screen.query_one("#failed-retry", Button).variant == "primary"
+
+
+@pytest.mark.parametrize(
+    ("action", "selected_key", "expected"),
+    [
+        ("manual", SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment=""), ("Paste your public key at", "github.com/settings/ssh/new")),
+        ("openpgp", GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096"), ("verification link", "keys.openpgp.org")),
+        ("github-ssh", SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment=""), ("GitHub", "propagate")),
+        ("gist", None, ("gist", "retry")),
+    ],
+)
+async def test_setup_pending_instructions_per_method_instructions_per_method(
+    tmp_path: Path,
+    action: str,
+    selected_key: SSHKeyInfo | GPGKeyInfo | None,
+    expected: tuple[str, str],
+):
+    state = AppState()
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"):
+        async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.selected_key = selected_key
+            screen._verification_action = action
+            screen.transition_to(screen.current_stage.__class__.DONE)
+            screen._set_verification_branch(VerificationState.PENDING)
+            await pilot.pause(delay=0.2)
+
+            instructions = str(screen.query_one("#done-instructions", Static).render()).lower()
+
+            assert expected[0].lower() in instructions
+            assert expected[1].lower() in instructions
+
+
+async def test_setup_pending_exit_preserves_state_exit_preserves(tmp_path: Path):
+    state = AppState()
+    state_file = tmp_path / "state.json"
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+    harness = SetupHarness(state)
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch.object(AppState, "state_path", return_value=state_file), \
+         patch(
+             "cc_sentiment.upload.Uploader.probe_credentials",
+             new_callable=AsyncMock,
+             return_value=AuthUnauthorized(status=401),
+         ):
+        async with harness.run_test(size=(80, 50)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen._save_and_finish()
+            await pilot.pause(delay=0.3)
+
+            before = state_file.read_text()
+
+            await pilot.click("#pending-exit")
+            await pilot.pause()
+
+            assert harness.dismissed is False
+            assert state_file.read_text() == before
+
+
+async def test_setup_pending_retry_immediate_does_not_reset_elapsed_retry_immediate(tmp_path: Path):
+    fake_clock = FakeMonotonic()
+    state = AppState()
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+    calls: list[float] = []
+
+    async def probe(*_) -> AuthUnauthorized:
+        calls.append(fake_clock())
+        return AuthUnauthorized(status=401)
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch("cc_sentiment.tui.screens.setup.monotonic", new=fake_clock), \
+         patch("cc_sentiment.tui.screens.setup.PENDING_RETRY_SECONDS", 60.0), \
+         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
+         patch("cc_sentiment.upload.Uploader.probe_credentials", new=probe):
+        async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen._save_and_finish()
+            await pilot.pause(delay=0.3)
+
+            fake_clock.advance(5.0)
+            screen._refresh_pending_status()
+            await pilot.pause()
+
+            assert screen.query_one("#pending-status", PendingStatus).label.endswith("0:05")
+
+            await pilot.click("#pending-retry")
+            await pilot.pause(delay=0.3)
+
+            fake_clock.advance(1.0)
+            screen._refresh_pending_status()
+            await pilot.pause()
+
+            assert calls == [0.0, 5.0]
+            assert screen.query_one("#pending-status", PendingStatus).label.endswith("0:06")
+
+
+async def test_setup_pending_network_drop_pending_keeps_pending_network_drop_pending(tmp_path: Path):
+    request = httpx.Request("POST", "https://sentiments.cc/verify")
+    state = AppState()
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
+         patch(
+             "cc_sentiment.upload.Uploader.probe_credentials",
+             new=AsyncMock(side_effect=[AuthUnauthorized(status=401), httpx.ConnectError("boom", request=request)]),
+         ):
+        async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen._save_and_finish()
+            await pilot.pause(delay=0.3)
+
+            await pilot.click("#pending-retry")
+            await pilot.pause(delay=0.3)
+
+            assert screen.verification_state is VerificationState.PENDING
+            assert screen.query_one("#pending-status", PendingStatus) is not None
+            assert "temporarily unreachable" in str(screen.query_one("#done-instructions", Static).render()).lower()
+
+
+async def test_setup_pending_monotonic_clock_ignores_wall_time_skew_monotonic_clock(tmp_path: Path):
+    fake_clock = FakeMonotonic(50.0)
+    state = AppState()
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch("cc_sentiment.tui.screens.setup.monotonic", new=fake_clock), \
+         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
+         patch(
+             "cc_sentiment.upload.Uploader.probe_credentials",
+             new_callable=AsyncMock,
+             return_value=AuthUnauthorized(status=401),
+         ):
+        async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen._save_and_finish()
+            await pilot.pause(delay=0.3)
+
+            fake_clock.advance(30.0)
+            screen._refresh_pending_status()
+            await pilot.pause()
+            label = screen.query_one("#pending-status", PendingStatus).label
+
+            sleep(0.1)
+            screen._refresh_pending_status()
+            await pilot.pause()
+
+            assert label.endswith("0:30")
+            assert screen.query_one("#pending-status", PendingStatus).label == label
+
+
+async def test_setup_pending_sentiments_five_xx_unreachable_uses_pending_copy_five_xx_unreachable(
+    tmp_path: Path,
+):
+    state = AppState()
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
+         patch(
+             "cc_sentiment.upload.Uploader.probe_credentials",
+             new_callable=AsyncMock,
+             return_value=AuthServerError(status=502),
+         ):
+        async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen.selected_key = ssh_key
+            screen._save_and_finish()
+            await pilot.pause(delay=0.3)
+
+            assert screen.verification_state is VerificationState.PENDING
+            assert list(screen.query("#done-btn")) == []
+            assert "temporarily unreachable" in str(screen.query_one("#done-instructions", Static).render()).lower()
+
+
+async def test_setup_remote_openpgp_five_xx_unreachable_marks_row_warning_five_xx_unreachable(
+    no_auto_setup,
+):
+    request = httpx.Request("GET", "https://keys.openpgp.org/vks/v1/by-fingerprint/F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A")
+    response = httpx.Response(503, request=request)
+    gpg_key = GPGKeyInfo(
+        fpr="F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A",
+        email="test@example.com",
+        algo="ed25519",
+    )
+
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=(gpg_key,)), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gpg_key_on_github", return_value=False), \
+         patch(
+             "cc_sentiment.tui.screens.setup.KeyDiscovery.fetch_openpgp_key",
+             side_effect=httpx.HTTPStatusError("boom", request=request, response=response),
+         ):
+        async with SetupHarness(AppState()).run_test(size=(80, 24)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.3)
+
+            screen.on_discovery_next()
+            await pilot.pause(delay=0.6)
+
+            assert table_rows(screen.query_one("#remote-checks", DataTable)) == [
+                ("—", "GitHub", "Not on GitHub yet"),
+                ("?", "keys.openpgp.org", "Couldn't reach keys.openpgp.org"),
+            ]
 
 
 async def test_setup_cancel_dismisses_false(no_auto_setup):
