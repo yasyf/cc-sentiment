@@ -7,7 +7,7 @@ import httpx
 import pytest
 from textual.app import App
 from textual.containers import Vertical
-from textual.widgets import Button, ContentSwitcher, DataTable, Input, Label, Static
+from textual.widgets import Button, ContentSwitcher, DataTable, Input, Label, RadioButton, RadioSet, Static
 
 from cc_sentiment.models import AppState, ContributorId, GistConfig, GPGConfig, MyStat, SSHConfig
 from cc_sentiment.repo import Repository
@@ -27,6 +27,7 @@ from cc_sentiment.tui.screens import (
     SetupScreen,
     StatShareScreen,
 )
+from cc_sentiment.tui.screens.dialog import Dialog
 from cc_sentiment.tui.stages import (
     Discovering,
     IdleAfterUpload,
@@ -37,7 +38,15 @@ from cc_sentiment.tui.stages import (
     Stage,
     Uploading,
 )
-from cc_sentiment.tui.widgets import CommandBox, HourlyChart
+from cc_sentiment.tui.widgets import (
+    CommandBox,
+    HourlyChart,
+    KeyPreview,
+    PendingStatus,
+    StepActions,
+    StepBody,
+    StepHeader,
+)
 from cc_sentiment.upload import (
     DASHBOARD_URL,
     AuthOk,
@@ -62,6 +71,35 @@ class SetupHarness(App[None]):
 
     def _capture(self, result: bool | None) -> None:
         self.dismissed = result
+
+
+class PrimitiveHarness(App[None]):
+    CSS = Dialog.DEFAULT_CSS
+
+    def __init__(self, *widgets) -> None:
+        super().__init__()
+        self.widgets = widgets
+
+    def compose(self):
+        yield from self.widgets
+
+
+class KeyPreviewHarness(App[None]):
+    CSS = Dialog.DEFAULT_CSS
+
+    def compose(self):
+        yield Button("Back", id="before")
+        yield KeyPreview(
+            "\n".join(
+                [
+                    "-----BEGIN PGP PUBLIC KEY BLOCK-----",
+                    *[f"line-{index:02d}" for index in range(20)],
+                    "-----END PGP PUBLIC KEY BLOCK-----",
+                ]
+            ),
+            id="preview",
+        )
+        yield Button("Next", id="after")
 
 
 @pytest.fixture
@@ -283,6 +321,144 @@ async def test_setup_upload_options_with_gh(no_auto_setup):
 
             assert "github-ssh" in screen._upload_actions
             assert screen.query_one("#upload-go", Button).disabled is False
+
+
+async def test_step_header_renders_title_and_muted_explainer():
+    async with PrimitiveHarness(
+        StepHeader("Link your key", "We'll show the full public key.", id="header"),
+    ).run_test() as pilot:
+        await pilot.pause()
+        header = pilot.app.query_one("#header", StepHeader)
+        title, explainer = list(header.query(Static))
+
+        assert str(title.render()) == "Link your key"
+        assert "muted" in explainer.classes
+        assert str(explainer.render()) == "We'll show the full public key."
+        assert header.styles.margin.bottom == 1
+
+
+async def test_step_header_omits_optional_explainer():
+    async with PrimitiveHarness(StepHeader("Link your key", None, id="header")).run_test() as pilot:
+        await pilot.pause()
+        header = pilot.app.query_one("#header", StepHeader)
+
+        assert len(list(header.query(Static))) == 1
+
+
+def test_step_actions_rejects_multiple_primary_buttons():
+    with pytest.raises(ValueError, match="exactly one primary"):
+        StepActions(
+            Button("Back", variant="primary"),
+            primary=Button("Next", variant="primary"),
+        )
+
+
+async def test_step_actions_renders_primary_rightmost():
+    async with PrimitiveHarness(
+        StepActions(
+            Button("Back", id="back"),
+            Button("Skip", id="skip"),
+            primary=Button("Next", id="next", variant="primary"),
+            id="actions",
+        ),
+    ).run_test() as pilot:
+        await pilot.pause()
+        actions = pilot.app.query_one("#actions", StepActions)
+        buttons = list(actions.query(Button))
+
+        assert actions.styles.align_horizontal == "right"
+        assert buttons[-1].id == "next"
+        assert buttons[-1].variant == "primary"
+
+
+async def test_step_body_applies_shared_spacing_rules():
+    table = DataTable(id="table")
+
+    async with PrimitiveHarness(
+        StepBody(
+            Input(id="input"),
+            RadioSet(RadioButton("SSH"), id="radio"),
+            table,
+            Static("", id="status", classes="status-line"),
+            StepActions(Button("Back"), primary=Button("Next", variant="primary")),
+            id="body",
+        ),
+    ).run_test() as pilot:
+        await pilot.pause()
+        body = pilot.app.query_one("#body", StepBody)
+
+        assert body.styles.padding.top == 1
+        assert body.styles.padding.bottom == 1
+        assert pilot.app.query_one("#input", Input).styles.margin.bottom == 1
+        assert pilot.app.query_one("#radio", RadioSet).styles.max_height.value == 12
+        assert pilot.app.query_one("#table", DataTable).styles.max_height.value == 12
+        assert pilot.app.query_one("#status", Static).styles.min_height.value == 1
+
+
+async def test_key_preview_scrolls_without_losing_focus():
+    async with KeyPreviewHarness().run_test(size=(80, 18)) as pilot:
+        await pilot.pause()
+        preview = pilot.app.query_one("#preview", KeyPreview)
+
+        assert "-----END PGP PUBLIC KEY BLOCK-----" in str(preview.query_one(Static).render())
+
+        preview.focus()
+        await pilot.pause()
+        before = preview.scroll_y
+
+        await pilot.press("pagedown")
+        await pilot.pause()
+
+        assert pilot.app.focused is preview
+        assert preview.scroll_y > before
+
+        await pilot.press("tab")
+        await pilot.pause()
+
+        assert pilot.app.focused == pilot.app.query_one("#after", Button)
+
+
+async def test_pending_status_updates_reactive_label_and_spinner():
+    allowed = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+    async with PrimitiveHarness(PendingStatus("Checking GitHub", id="pending")).run_test() as pilot:
+        await pilot.pause()
+        pending = pilot.app.query_one("#pending", PendingStatus)
+        spinner, label = list(pending.children)
+        first = str(spinner.render())
+
+        pending.label = "Checking keys.openpgp.org"
+        await pilot.pause(delay=0.2)
+        second = str(spinner.render())
+
+        assert first in allowed
+        assert second in allowed
+        assert "muted" in label.classes
+        assert str(label.render()) == "Checking keys.openpgp.org"
+
+
+async def test_palette_classes_apply_shared_theme_rules():
+    async with PrimitiveHarness(
+        Label("Muted", id="muted", classes="muted"),
+        Label("Success", id="success", classes="success"),
+        Label("Warning", id="warning", classes="warning"),
+        Label("Error", id="error", classes="error"),
+        Static("code", id="code", classes="code"),
+    ).run_test() as pilot:
+        await pilot.pause()
+        muted = pilot.app.query_one("#muted", Label)
+        success = pilot.app.query_one("#success", Label)
+        warning = pilot.app.query_one("#warning", Label)
+        error = pilot.app.query_one("#error", Label)
+        code = pilot.app.query_one("#code", Static)
+
+        assert muted.styles.color != success.styles.color
+        assert success.styles.color != warning.styles.color
+        assert warning.styles.color != error.styles.color
+        assert code.styles.background is not None
+        assert code.styles.border_top[0] == "round"
+        assert code.styles.padding.left == 1
+        assert code.styles.padding.right == 1
 
 
 async def test_try_existing_gist_returns_config_when_found():
