@@ -1133,10 +1133,11 @@ async def test_setup_pending_propagation_window_transitions_to_failed_propagatio
         ("manual", SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment=""), ("Paste your public key at", "github.com/settings/ssh/new")),
         ("openpgp", GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096"), ("verification link", "keys.openpgp.org")),
         ("github-ssh", SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment=""), ("GitHub", "propagate")),
+        ("github-gpg", GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096"), ("GitHub", "propagate")),
         ("gist", None, ("gist", "retry")),
     ],
 )
-async def test_setup_pending_instructions_per_method_instructions_per_method(
+async def test_setup_pending_verification_action_instructions_cover_surviving_actions(
     tmp_path: Path,
     action: str,
     selected_key: SSHKeyInfo | GPGKeyInfo | None,

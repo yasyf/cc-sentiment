@@ -522,8 +522,6 @@ class SetupScreen(Dialog[bool]):
                 return prefix + f"Paste your public key at {self._manual_destination_url()}, then retry once GitHub shows it."
             case "openpgp":
                 return prefix + "Check your email for the keys.openpgp.org verification link, finish publishing the key, then retry."
-            case "github-auth":
-                return prefix + "Try `gh auth login` and retry."
             case "github-ssh" | "github-gpg":
                 return prefix + "Give GitHub a moment to propagate your public key, then retry."
             case "gist":
