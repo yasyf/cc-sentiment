@@ -17,6 +17,7 @@ from cc_sentiment.models import (
     SSHConfig,
 )
 from cc_sentiment.signing import GPGKeyInfo, KeyDiscovery
+from cc_sentiment.tui.widgets import PendingStatus
 
 
 @dataclass(frozen=True)
@@ -36,17 +37,25 @@ class Phase:
 
 @dataclass
 class StatusEmitter:
-    widget: Static
+    widget: Static | PendingStatus
     lines: list[str] = field(default_factory=list)
+
+    def update(self) -> None:
+        text = "\n".join(self.lines)
+        match self.widget:
+            case PendingStatus():
+                self.widget.label = text
+            case _:
+                self.widget.update(text)
 
     def begin(self, label: str) -> Phase:
         self.lines.append(f"  [dim]...[/] [dim]{label}[/]")
-        self.widget.update("\n".join(self.lines))
+        self.update()
         return Phase(self, len(self.lines) - 1)
 
     def replace(self, idx: int, marker: str, label: str) -> None:
         self.lines[idx] = f"  {marker} [dim]{label}[/]"
-        self.widget.update("\n".join(self.lines))
+        self.update()
 
 
 @dataclass(frozen=True)

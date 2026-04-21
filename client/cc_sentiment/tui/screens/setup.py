@@ -12,6 +12,7 @@ from typing import ClassVar
 import anyio
 import anyio.to_thread
 import httpx
+from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -23,7 +24,6 @@ from textual.widgets import (
     Button,
     ContentSwitcher,
     Input,
-    Label,
     RadioButton,
     RadioSet,
     Static,
@@ -50,7 +50,7 @@ from cc_sentiment.transcripts import TranscriptDiscovery
 from cc_sentiment.tui.format import TimeFormat
 from cc_sentiment.tui.screens.dialog import Dialog
 from cc_sentiment.tui.status import AutoSetup, StatusEmitter
-from cc_sentiment.tui.widgets import StepActions
+from cc_sentiment.tui.widgets import KeyPreview, PendingStatus, StepActions, StepBody, StepHeader
 
 
 @dataclass(slots=True)
@@ -72,18 +72,24 @@ class SetupStage(StrEnum):
 
 class SetupScreen(Dialog[bool]):
     ROUGH_BUCKETS_PER_FILE: ClassVar[int] = 6
+    PALETTE_CLASSES: ClassVar[tuple[str, ...]] = ("muted", "success", "warning", "error")
 
     DEFAULT_CSS = Dialog.DEFAULT_CSS + """
-    SetupScreen > #dialog-box Label { width: 100%; margin: 1 0 0 0; }
-    SetupScreen > #dialog-box .step-title { width: 100%; text-style: bold; color: $text; margin: 0 0 1 0; }
-    SetupScreen > #dialog-box Input { margin: 0 0 1 0; }
-    SetupScreen > #dialog-box .status { width: 100%; min-height: 1; color: $text-muted; margin: 0 0 1 0; }
-    SetupScreen > #dialog-box .faq { width: 100%; color: $text-muted; margin: 1 0 0 0; }
-    SetupScreen > #dialog-box .error { color: $error; }
-    SetupScreen > #dialog-box .success { color: $success; }
-    SetupScreen > #dialog-box RadioSet { width: 100%; margin: 0 0 1 0; }
-    SetupScreen > #dialog-box #key-select { max-height: 12; overflow-y: auto; }
-    SetupScreen > #dialog-box .key-text { width: 100%; color: $text-muted; margin: 0 0 1 0; max-height: 5; overflow-y: auto; }
+    SetupScreen > #dialog-box RadioSet {
+        width: 100%;
+    }
+    SetupScreen > #dialog-box RadioButton {
+        width: 100%;
+    }
+    SetupScreen > #dialog-box #remote-checks,
+    SetupScreen > #dialog-box #done-summary,
+    SetupScreen > #dialog-box #done-payload,
+    SetupScreen > #dialog-box #done-eta {
+        width: 100%;
+    }
+    SetupScreen > #dialog-box #loading-activity {
+        margin: 0 0 1 0;
+    }
     """
 
     BINDINGS = [
@@ -190,6 +196,38 @@ class SetupScreen(Dialog[bool]):
             )
         return None
 
+    def _set_tone(
+        self,
+        widget: Static,
+        text: str | Text,
+        tone: str = "muted",
+    ) -> None:
+        for palette_class in self.PALETTE_CLASSES:
+            widget.remove_class(palette_class)
+        widget.add_class(tone)
+        widget.update(text)
+
+    @staticmethod
+    def _display_fingerprint(fingerprint: str) -> str:
+        hex_chars = set("0123456789abcdefABCDEF")
+        if any(char not in hex_chars for char in fingerprint):
+            return fingerprint
+        if len(fingerprint) == 40:
+            return f"{fingerprint[:4]} {fingerprint[4:8]} ... {fingerprint[-8:-4]} {fingerprint[-4:]}"
+        return " ".join(
+            fingerprint[index:index + 4]
+            for index in range(0, len(fingerprint), 4)
+        )
+
+    def _key_radio_label(self, key: SSHKeyInfo | GPGKeyInfo) -> Text:
+        match key:
+            case SSHKeyInfo(path=path, algorithm=algorithm):
+                return Text(f"SSH · {path.name} · {algorithm}")
+            case GPGKeyInfo(fpr=fingerprint, email=email):
+                return Text(
+                    f"GPG · {self._display_fingerprint(fingerprint)} · {email}"
+                )
+
     def _clear_radio_set(self, radio: RadioSet) -> None:
         radio._pressed_button = None
         radio.display = False
@@ -202,15 +240,21 @@ class SetupScreen(Dialog[bool]):
         self._generation_radio_index = None
         self.selected_key = None
         self._clear_radio_set(radio)
-        self.query_one("#discovery-status", Label).update("Looking for signing keys on your machine...")
-        self.query_one("#no-keys-msg", Label).update("")
+        self._set_tone(
+            self.query_one("#discovery-status", Static),
+            "Looking for signing keys on your machine...",
+        )
+        self.query_one("#discovery-help", Static).update("")
         self.query_one("#discovery-next", Button).disabled = True
 
     def _reset_remote_stage(self) -> None:
         self._cancel_remote_check()
         self._key_on_remote = False
         self._key_on_openpgp = False
-        self.query_one("#remote-status", Label).update("Checking that the dashboard can verify your uploads...")
+        self._set_tone(
+            self.query_one("#remote-status", Static),
+            "Checking where the dashboard can read your public key...",
+        )
         self.query_one("#remote-checks", Static).update("")
         self.query_one("#remote-next", Button).disabled = True
 
@@ -218,16 +262,16 @@ class SetupScreen(Dialog[bool]):
         radio = self.query_one("#upload-options", RadioSet)
         self._upload_actions = []
         self._clear_radio_set(radio)
-        self.query_one("#upload-key-text", Label).update("")
-        self.query_one("#upload-result", Label).update("")
+        self.query_one("#upload-key-text", KeyPreview).text = ""
+        self._set_tone(self.query_one("#upload-result", Static), "")
         self.query_one("#upload-go", Button).disabled = True
 
     def _reset_done_stage(self) -> None:
-        self.query_one("#done-summary", Label).update("")
-        self.query_one("#done-verify", Label).update("")
+        self._set_tone(self.query_one("#done-summary", Static), "", "success")
+        self._set_tone(self.query_one("#done-verify", Static), "")
+        self.query_one("#done-payload", Static).update("")
         self.query_one("#done-identify", Static).update("")
         self.query_one("#done-process", Static).update("")
-        self.query_one("#done-payload", Static).update("")
         self.query_one("#done-eta", Static).update("")
 
     def _mount_discovery_options(self, radio_children: list[RadioButton]) -> None:
@@ -266,99 +310,104 @@ class SetupScreen(Dialog[bool]):
         self._key_on_openpgp = key_on_openpgp
         self.query_one("#remote-checks", Static).update(results)
         self._key_on_remote = found
-        self.query_one("#remote-status", Label).update(
-            "[green]You're set up. Ready to upload.[/]"
-            if found
-            else "Not linked yet. We can set this up next."
+        self._set_tone(
+            self.query_one("#remote-status", Static),
+            "You're set up. Ready to upload." if found else "Not linked yet. We can set this up next.",
+            "success" if found else "muted",
         )
         self._enable_remote_next()
 
     def compose_loading_step(self) -> ComposeResult:
         with Vertical(id="step-loading"):
-            yield Label("Setting things up...", classes="step-title")
-            yield Label(
-                "Checking if we can verify your uploads automatically.",
-                classes="status",
+            yield StepHeader(
+                "Setting things up...",
+                "Checking whether your current setup already works.",
             )
-            yield Static("", id="loading-activity", classes="status")
+            yield StepBody(
+                PendingStatus("", id="loading-activity"),
+            )
 
     def compose_username_step(self) -> ComposeResult:
         with Vertical(id="step-username"):
-            yield Label("Who are you?", classes="step-title")
-            yield Label(
-                "Your GitHub username lets us verify your uploads. "
-                "No account creation, no permissions needed. "
-                "We just check that your public keys match.",
-                classes="status",
+            yield StepHeader(
+                "Who are you?",
+                "Add your GitHub username so we can match the public key you already use.",
             )
-            yield Input(placeholder="GitHub username", id="username-input")
-            yield Label("", id="username-status", classes="status")
-            yield StepActions(
-                Button("I don't use GitHub", id="username-skip", variant="default"),
-                primary=Button("Next", id="username-next", variant="primary"),
+            yield StepBody(
+                Input(placeholder="GitHub username", id="username-input"),
+                Static("", id="username-status", classes="status-line muted"),
+                StepActions(
+                    Button("I don't use GitHub", id="username-skip", variant="default"),
+                    primary=Button("Next", id="username-next", variant="primary"),
+                ),
             )
 
     def compose_discovery_step(self) -> ComposeResult:
         with Vertical(id="step-discovery"):
-            yield Label("Pick a signing key", classes="step-title")
-            yield Label(
-                "Looking for signing keys on your machine...",
-                id="discovery-status", classes="status",
+            yield StepHeader(
+                "Pick a signing key",
+                "Choose a local key to sign your uploads.",
             )
-            yield RadioSet(id="key-select")
-            yield Label("", id="no-keys-msg", classes="status")
-            yield Label(
-                "[dim]Why do we need this? Your key is like a personal stamp. "
-                "It proves the data came from you, without sharing anything "
-                "private. We never read or upload your private key.[/]",
-                classes="faq",
-            )
-            yield StepActions(
-                Button("Back", id="discovery-back", variant="default"),
-                primary=Button("Next", id="discovery-next", variant="primary", disabled=True),
+            yield StepBody(
+                RadioSet(id="key-select"),
+                Static("", id="discovery-status", classes="status-line muted"),
+                StepActions(
+                    Button("Back", id="discovery-back", variant="default"),
+                    primary=Button("Next", id="discovery-next", variant="primary", disabled=True),
+                ),
+                Static("", classes="after-actions-rule"),
+                Static("", id="discovery-help", classes="after-actions-copy muted"),
             )
 
     def compose_remote_step(self) -> ComposeResult:
         with Vertical(id="step-remote"):
-            yield Label("Verifying your key", classes="step-title")
-            yield Label(
-                "Checking that the dashboard can verify your uploads...",
-                id="remote-status", classes="status",
+            yield StepHeader(
+                "Verifying your key",
+                "Checking where the dashboard can read your public key.",
             )
-            yield Static("", id="remote-checks")
-            yield StepActions(
-                Button("Back", id="remote-back", variant="default"),
-                primary=Button("Next", id="remote-next", variant="primary", disabled=True),
+            yield StepBody(
+                Static("", id="remote-checks", classes="copy-block"),
+                Static("", id="remote-status", classes="status-line muted"),
+                StepActions(
+                    Button("Back", id="remote-back", variant="default"),
+                    primary=Button("Next", id="remote-next", variant="primary", disabled=True),
+                ),
             )
 
     def compose_upload_step(self) -> ComposeResult:
         with Vertical(id="step-upload"):
-            yield Label("Link your key", classes="step-title")
-            yield Label(
-                "The dashboard needs to be able to look up your key "
-                "to verify your uploads. We'll help you set this up.",
-                id="upload-status", classes="status",
+            yield StepHeader(
+                "Link your key",
+                "Choose how the dashboard can look up your public key.",
             )
-            yield RadioSet(id="upload-options")
-            yield Label("", id="upload-key-text", classes="key-text")
-            yield Label("", id="upload-result", classes="status")
-            yield StepActions(
-                Button("Back", id="upload-back", variant="default"),
-                Button("I'll do it myself", id="upload-skip", variant="default"),
-                primary=Button("Link my key", id="upload-go", variant="primary", disabled=True),
+            yield StepBody(
+                RadioSet(id="upload-options"),
+                KeyPreview("", id="upload-key-text"),
+                Static("", id="upload-result", classes="status-line muted"),
+                StepActions(
+                    Button("Back", id="upload-back", variant="default"),
+                    Button("I'll do it myself", id="upload-skip", variant="default"),
+                    primary=Button("Link my key", id="upload-go", variant="primary", disabled=True),
+                ),
             )
 
     def compose_done_step(self) -> ComposeResult:
         with Vertical(id="step-done"):
-            yield Label("You're all set", classes="step-title")
-            yield Label("", id="done-summary", classes="success")
-            yield Label("", id="done-verify", classes="status")
-            yield Static("", id="done-identify", classes="faq")
-            yield Static("", id="done-process", classes="faq")
-            yield Static("", id="done-payload", classes="faq")
-            yield Static("", id="done-eta", classes="faq")
-            yield StepActions(
-                primary=Button("Contribute my stats", id="done-btn", variant="primary"),
+            yield StepHeader(
+                "You're all set",
+                "Review how uploads are signed and what the dashboard receives.",
+            )
+            yield StepBody(
+                Static("", id="done-summary", classes="copy-block success"),
+                Static("", id="done-verify", classes="status-line muted"),
+                Static("", id="done-payload", classes="copy-block"),
+                StepActions(
+                    primary=Button("Contribute my stats", id="done-btn", variant="primary"),
+                ),
+                Static("", classes="after-actions-rule"),
+                Static("", id="done-identify", classes="after-actions-copy muted"),
+                Static("", id="done-process", classes="after-actions-copy muted"),
+                Static("", id="done-eta", classes="after-actions-copy muted"),
             )
 
     def _populate_done_info(self) -> None:
@@ -366,29 +415,21 @@ class SetupScreen(Dialog[bool]):
         match self.state.config:
             case GistConfig(gist_id=g):
                 identify.update(
-                    "[b]How we know it's you:[/] each upload is signed with a cc-sentiment "
-                    f"key stored only on this machine. Its public half lives in gist {g[:7]} "
-                    "on your GitHub; the dashboard reads it from there to verify signatures."
+                    f"How we know it's you: uploads are signed on this Mac, and gist {g[:7]} holds the public key."
                 )
             case _:
                 identify.update(
-                    "[b]How we know it's you:[/] each upload is signed locally with "
-                    "your private key. The dashboard checks the signature against "
-                    "your public key. No account, no password, no permissions."
+                    "How we know it's you: uploads are signed on this Mac, and the dashboard checks your public key."
                 )
         process = self.query_one("#done-process", Static)
         match EngineFactory.default():
             case "omlx":
                 process.update(
-                    "[b]Where scoring happens:[/] entirely on your Mac. A "
-                    "small Gemma model runs on your Apple Silicon GPU; your "
-                    "conversation text never leaves the machine."
+                    "Where scoring happens: entirely on your Mac with a local Gemma model."
                 )
             case "claude":
                 process.update(
-                    "[b]Where scoring happens:[/] on your machine via the "
-                    "`claude` CLI (no Apple Silicon here for local inference). "
-                    "Transcripts go to the Claude API, never to our dashboard."
+                    "Where scoring happens: through the claude CLI on this Mac, never through the dashboard."
                 )
         self.query_one("#done-payload", Static).update(self.render_sample_payload())
         self._finalize_done_screen()
@@ -399,33 +440,24 @@ class SetupScreen(Dialog[bool]):
         files = len(transcripts)
         rate = Hardware.estimate_buckets_per_sec(EngineFactory.default())
         self.query_one("#done-eta", Static).update(
-            f"[dim]Found [b]{files:,}[/] transcripts. "
-            f"About {TimeFormat.format_duration(files * self.ROUGH_BUCKETS_PER_FILE / rate)} to score on this Mac.[/]"
+            f"Found {files:,} transcripts. About {TimeFormat.format_duration(files * self.ROUGH_BUCKETS_PER_FILE / rate)} to score here."
             if rate and files else ""
         )
 
     @staticmethod
     def render_sample_payload() -> str:
-        fields = (
-            ("time", '"2026-04-15T14:23:05Z"'),
-            ("conversation_id", '"7f3a9b2c-0e4d-4a91-b6f8-e2c8d9a1f4b2"'),
-            ("sentiment_score", "4"),
-            ("claude_model", '"claude-haiku-4-5"'),
-            ("turn_count", "14"),
-            ("thinking_chars", "2847"),
-            ("read_edit_ratio", "0.71"),
-        )
-        width = max(len(k) for k, _ in fields)
-        rows = [
-            f'  [cyan]"{k}"[/]:{" " * (width - len(k) + 2)}[{"green" if v.startswith(chr(34)) else "yellow"}]{v}[/],'
-            for k, v in fields
-        ]
-        return (
-            "[b]What actually gets sent:[/] one row per conversation, "
-            "[dim]signed by your key. No text, no prompts, no code.[/]\n\n"
-            "[dim]{[/]\n"
-            + "\n".join(rows)
-            + "\n  [dim]...[/]\n[dim]}[/]"
+        return "\n".join(
+            (
+                "What gets sent:",
+                "{",
+                '  "time": "2026-04-15T14:23:05Z",',
+                '  "conversation_id": "7f3a9b2c-0e4d-4a91-b6f8",',
+                '  "sentiment_score": 4,',
+                '  "claude_model": "claude-haiku-4-5",',
+                '  "turn_count": 14,',
+                '  "read_edit_ratio": 0.71',
+                "}",
+            )
         )
 
     def on_mount(self) -> None:
@@ -438,7 +470,7 @@ class SetupScreen(Dialog[bool]):
 
     @work()
     async def try_auto_setup(self) -> None:
-        emit = StatusEmitter(self.query_one("#loading-activity", Static))
+        emit = StatusEmitter(self.query_one("#loading-activity", PendingStatus))
         ok, username = await AutoSetup(self.state, emit).run()
         if ok:
             self._on_auto_setup_success()
@@ -448,16 +480,18 @@ class SetupScreen(Dialog[bool]):
     def _on_auto_setup_success(self) -> None:
         config = self.state.config
         assert config is not None
-        summary = self.query_one("#done-summary", Label)
+        summary = self.query_one("#done-summary", Static)
         match config:
             case SSHConfig(contributor_id=cid, key_path=p):
-                summary.update(f"Signed in as [b]{cid}[/] using SSH key [dim]{p.name}[/]")
+                summary.update(f"Signed in as {cid} using SSH key {p.name}.")
             case GPGConfig(contributor_id=cid, fpr=f):
-                summary.update(f"Signed in as [b]{cid}[/] using GPG [dim]{f[-8:]}[/]")
+                summary.update(f"Signed in as {cid} using GPG {self._display_fingerprint(f)}.")
             case GistConfig(contributor_id=cid, gist_id=g):
-                summary.update(f"Signed in as [b]{cid}[/] using cc-sentiment gist [dim]{g[:7]}[/]")
-        self.query_one("#done-verify", Label).update(
-            "[green]You're set up. Ready to upload.[/]"
+                summary.update(f"Signed in as {cid} using cc-sentiment gist {g[:7]}.")
+        self._set_tone(
+            self.query_one("#done-verify", Static),
+            "You're set up. Ready to upload.",
+            "success",
         )
         self._populate_done_info()
         self.transition_to(SetupStage.DONE)
@@ -465,7 +499,10 @@ class SetupScreen(Dialog[bool]):
     def _on_auto_setup_fail(self, username: str | None) -> None:
         if username:
             self.query_one("#username-input", Input).value = username
-            self.query_one("#username-status", Label).update(f"Auto-detected: {username}")
+            self._set_tone(
+                self.query_one("#username-status", Static),
+                f"Auto-detected: {username}",
+            )
         self.transition_to(SetupStage.USERNAME)
 
     @on(Button.Pressed, "#username-next")
@@ -474,9 +511,13 @@ class SetupScreen(Dialog[bool]):
             return
         username = self.query_one("#username-input", Input).value.strip()
         if not username:
-            self.query_one("#username-status", Label).update("[red]Username is required[/]")
+            self._set_tone(
+                self.query_one("#username-status", Static),
+                "Username is required",
+                "error",
+            )
             return
-        self._username_status_snapshot = str(self.query_one("#username-status", Label).render())
+        self._username_status_snapshot = str(self.query_one("#username-status", Static).render())
         self.username = username
         self.actions.username_validation_running = True
         self.validate_and_discover()
@@ -488,16 +529,21 @@ class SetupScreen(Dialog[bool]):
 
     @work(thread=True)
     def validate_and_discover(self) -> None:
-        status = self.query_one("#username-status", Label)
-        self.app.call_from_thread(status.update, f"Validating {self.username}...")
+        status = self.query_one("#username-status", Static)
+        self.app.call_from_thread(self._set_tone, status, f"Validating {self.username}...")
         try:
             response = httpx.get(f"https://api.github.com/users/{self.username}", timeout=10.0)
         except httpx.HTTPError:
-            self.app.call_from_thread(status.update, "[red]Could not reach GitHub API[/]")
+            self.app.call_from_thread(self._set_tone, status, "Could not reach GitHub API", "error")
             self.app.call_from_thread(self._finish_username_validation)
             return
         if response.status_code != 200:
-            self.app.call_from_thread(status.update, f"[red]GitHub user '{self.username}' not found[/]")
+            self.app.call_from_thread(
+                self._set_tone,
+                status,
+                f"GitHub user '{self.username}' not found",
+                "error",
+            )
             self.app.call_from_thread(self._finish_username_validation)
             return
         self.app.call_from_thread(self._switch_to_discovery)
@@ -520,8 +566,8 @@ class SetupScreen(Dialog[bool]):
         gpg_keys: tuple[GPGKeyInfo, ...],
     ) -> None:
         radio = self.query_one("#key-select", RadioSet)
-        status = self.query_one("#discovery-status", Label)
-        no_keys = self.query_one("#no-keys-msg", Label)
+        status = self.query_one("#discovery-status", Static)
+        help_text = self.query_one("#discovery-help", Static)
         next_btn = self.query_one("#discovery-next", Button)
         self._clear_radio_set(radio)
 
@@ -534,34 +580,32 @@ class SetupScreen(Dialog[bool]):
 
         radio_children = [
             *[
-                RadioButton(f"SSH · {key.path.name} · {key.algorithm}")
-                if isinstance(key, SSHKeyInfo)
-                else RadioButton(f"GPG · {key.fpr[-8:]} · {key.email}")
+                RadioButton(self._key_radio_label(key))
                 for key in all_keys
             ],
             *([RadioButton("Create a new cc-sentiment key")] if self._generation_mode is not None else []),
         ]
 
         if not radio_children:
-            status.update("No signing keys found on your machine.")
+            self._set_tone(status, "No signing keys found on your machine.")
             if not self.username:
-                no_keys.update(
+                help_text.update(
                     "Go back and enter a GitHub username, or install gpg "
-                    "([dim]brew install gnupg[/]) to use GPG."
+                    "(brew install gnupg) to use GPG."
                 )
             else:
-                no_keys.update(
+                help_text.update(
                     "To create a signing key for cc-sentiment, install the GitHub CLI "
-                    "([dim]brew install gh[/]) or gpg ([dim]brew install gnupg[/])."
+                    "(brew install gh) or gpg (brew install gnupg)."
                 )
             next_btn.disabled = True
             return
 
         if not all_keys:
-            status.update("No signing keys found on your machine.")
-            no_keys.update(self._generation_prompt())
+            self._set_tone(status, "No signing keys found on your machine.")
+            help_text.update(self._generation_prompt())
         else:
-            no_keys.update("")
+            help_text.update("")
             hint = (
                 " Pick one, or create a new cc-sentiment key."
                 if self._generation_mode
@@ -570,7 +614,7 @@ class SetupScreen(Dialog[bool]):
                 else ""
             )
             plural = "s" if len(all_keys) != 1 else ""
-            status.update(f"Found {len(all_keys)} key{plural} on your machine.{hint}")
+            self._set_tone(status, f"Found {len(all_keys)} key{plural} on your machine.{hint}")
 
         self.call_after_refresh(self._mount_discovery_options, radio_children)
         next_btn.disabled = False
@@ -590,22 +634,20 @@ class SetupScreen(Dialog[bool]):
         match self._generation_mode:
             case "gist":
                 return (
-                    "We can make a small signing key just for cc-sentiment and save its "
-                    "public half as a gist on your GitHub. Press Next."
+                    "We can make a small signing key for cc-sentiment and save its public key in a gist."
                 )
             case "ssh":
                 return (
-                    "We'll create a small SSH key just for cc-sentiment on this machine, "
-                    "then help you paste its public half into your GitHub settings. Press Next."
+                    "We'll create a small SSH key here, then help you add its public key to GitHub."
                 )
             case "gpg":
-                return "No problem. We'll create one for you. Just press Next."
+                return "No problem. We'll create a GPG key for you here."
             case _:
                 return ""
 
     @on(Button.Pressed, "#discovery-back")
     def on_discovery_back(self) -> None:
-        self.query_one("#username-status", Label).update(self._username_status_snapshot)
+        self.query_one("#username-status", Static).update(self._username_status_snapshot)
         self.transition_to(SetupStage.USERNAME)
 
     @on(RadioSet.Changed, "#key-select")
@@ -641,8 +683,8 @@ class SetupScreen(Dialog[bool]):
 
     @work(thread=True)
     def generate_gpg_key(self) -> None:
-        status = self.query_one("#discovery-status", Label)
-        self.app.call_from_thread(status.update, "Creating a signing key for you...")
+        status = self.query_one("#discovery-status", Static)
+        self.app.call_from_thread(self._set_tone, status, "Creating a signing key for you...")
 
         email = self.username + "@users.noreply.github.com"
         batch_input = f"""%no-protection
@@ -662,30 +704,45 @@ Expire-Date: 0
             )
 
         if result.returncode != 0:
-            self.app.call_from_thread(status.update, f"[red]Key generation failed: {result.stderr.strip()}[/]")
+            self.app.call_from_thread(
+                self._set_tone,
+                status,
+                f"Key generation failed: {result.stderr.strip()}",
+                "error",
+            )
             self.app.call_from_thread(self._finish_discovery_action)
             return
 
         gpg_keys = KeyDiscovery.find_gpg_keys()
         new_key = next((k for k in gpg_keys if k.email == email), None)
         if not new_key:
-            self.app.call_from_thread(status.update, "[red]Key generated but not found in keyring[/]")
+            self.app.call_from_thread(
+                self._set_tone,
+                status,
+                "Key generated but not found in keyring",
+                "error",
+            )
             self.app.call_from_thread(self._finish_discovery_action)
             return
 
         self.selected_key = new_key
-        self.app.call_from_thread(status.update, f"[green]Generated key: {new_key.fpr[-8:]}[/]")
+        self.app.call_from_thread(
+            self._set_tone,
+            status,
+            f"Generated key: {self._display_fingerprint(new_key.fpr)}",
+            "success",
+        )
         self.app.call_from_thread(self._go_to_remote)
 
     @work(thread=True)
     def generate_managed_ssh_key(self) -> None:
-        status = self.query_one("#discovery-status", Label)
-        self.app.call_from_thread(status.update, "Creating a local signing key for cc-sentiment...")
+        status = self.query_one("#discovery-status", Static)
+        self.app.call_from_thread(self._set_tone, status, "Creating a local signing key for cc-sentiment...")
         try:
             key_path = KeyDiscovery.generate_gist_keypair()
         except subprocess.CalledProcessError as e:
             err = (e.stderr.decode() if isinstance(e.stderr, bytes) else e.stderr or str(e)).strip()
-            self.app.call_from_thread(status.update, f"[red]Couldn't create the key: {err}[/]")
+            self.app.call_from_thread(self._set_tone, status, f"Couldn't create the key: {err}", "error")
             self.app.call_from_thread(self._finish_discovery_action)
             return
         parts = key_path.with_suffix(key_path.suffix + ".pub").read_text().strip().split()
@@ -694,19 +751,28 @@ Expire-Date: 0
             algorithm=parts[0] if len(parts) >= 2 else "unknown",
             comment=parts[2] if len(parts) >= 3 else "",
         )
-        self.app.call_from_thread(status.update, "[green]Created a local key. Let's link it next.[/]")
+        self.app.call_from_thread(
+            self._set_tone,
+            status,
+            "Created a local key. Let's link it next.",
+            "success",
+        )
         self.app.call_from_thread(self._go_to_remote)
 
     @work(thread=True)
     def generate_gist_key(self) -> None:
-        status = self.query_one("#discovery-status", Label)
-        self.app.call_from_thread(status.update, "Creating a signing key and saving it as a gist...")
+        status = self.query_one("#discovery-status", Static)
+        self.app.call_from_thread(
+            self._set_tone,
+            status,
+            "Creating a signing key and saving its public key as a gist...",
+        )
         try:
             key_path = KeyDiscovery.generate_gist_keypair()
             gist_id = KeyDiscovery.create_gist(key_path)
         except subprocess.CalledProcessError as e:
             err = (e.stderr.decode() if isinstance(e.stderr, bytes) else e.stderr or str(e)).strip()
-            self.app.call_from_thread(status.update, f"[red]Couldn't create the gist: {err}[/]")
+            self.app.call_from_thread(self._set_tone, status, f"Couldn't create the gist: {err}", "error")
             self.app.call_from_thread(self._finish_discovery_action)
             return
         self.state.config = GistConfig(
@@ -714,12 +780,17 @@ Expire-Date: 0
             key_path=key_path,
             gist_id=gist_id,
         )
-        self.app.call_from_thread(status.update, f"[green]Saved key to gist {gist_id[:7]}[/]")
+        self.app.call_from_thread(
+            self._set_tone,
+            status,
+            f"Saved key to gist {gist_id[:7]}",
+            "success",
+        )
         self.app.call_from_thread(self._finish_gist, gist_id)
 
     def _finish_gist(self, gist_id: str) -> None:
-        self.query_one("#done-summary", Label).update(
-            f"Signed in as [b]{self.username}[/] using cc-sentiment gist [dim]{gist_id[:7]}[/]"
+        self.query_one("#done-summary", Static).update(
+            f"Signed in as {self.username} using cc-sentiment gist {gist_id[:7]}."
         )
         self._populate_done_info()
         self._finish_discovery_action()
@@ -867,9 +938,7 @@ Expire-Date: 0
             case GPGKeyInfo(fpr=f):
                 pub_text = await anyio.to_thread.run_sync(GPGBackend(fpr=f).public_key_text)
 
-        self.query_one("#upload-key-text", Label).update(
-            f"[dim]{pub_text[:200]}...[/]" if len(pub_text) > 200 else f"[dim]{pub_text}[/]"
-        )
+        self.query_one("#upload-key-text", KeyPreview).text = pub_text
         self.query_one("#upload-go", Button).disabled = False
         if self.current_stage is SetupStage.UPLOAD:
             self._focus_step_target(SetupStage.UPLOAD)
@@ -894,7 +963,7 @@ Expire-Date: 0
 
     @work(thread=True)
     def run_upload(self, action: str) -> None:
-        result_label = self.query_one("#upload-result", Label)
+        result_label = self.query_one("#upload-result", Static)
         key = self.selected_key
 
         match action:
@@ -906,10 +975,15 @@ Expire-Date: 0
                     capture_output=True, text=True, timeout=30,
                 )
                 if result.returncode == 0:
-                    self.app.call_from_thread(result_label.update, "[green]Key linked to GitHub. You're all set.[/]")
+                    self.app.call_from_thread(self._set_tone, result_label, "Key linked to GitHub. You're all set.", "success")
                     self.app.call_from_thread(self._save_and_finish)
                 else:
-                    self.app.call_from_thread(result_label.update, f"[red]Something went wrong: {result.stderr.strip()}[/]")
+                    self.app.call_from_thread(
+                        self._set_tone,
+                        result_label,
+                        f"Something went wrong: {result.stderr.strip()}",
+                        "error",
+                    )
                     self.app.call_from_thread(self._finish_upload_action)
 
             case "github-gpg":
@@ -924,17 +998,22 @@ Expire-Date: 0
                         capture_output=True, text=True, timeout=30,
                     )
                     if result.returncode == 0:
-                        self.app.call_from_thread(result_label.update, "[green]Key linked to GitHub. You're all set.[/]")
+                        self.app.call_from_thread(self._set_tone, result_label, "Key linked to GitHub. You're all set.", "success")
                         self.app.call_from_thread(self._save_and_finish)
                     else:
-                        self.app.call_from_thread(result_label.update, f"[red]Something went wrong: {result.stderr.strip()}[/]")
+                        self.app.call_from_thread(
+                            self._set_tone,
+                            result_label,
+                            f"Something went wrong: {result.stderr.strip()}",
+                            "error",
+                        )
                         self.app.call_from_thread(self._finish_upload_action)
                 finally:
                     tmp_path.unlink(missing_ok=True)
 
             case "openpgp":
                 assert isinstance(key, GPGKeyInfo)
-                self.app.call_from_thread(result_label.update, "Publishing to keys.openpgp.org...")
+                self.app.call_from_thread(self._set_tone, result_label, "Publishing to keys.openpgp.org...")
                 try:
                     pub_text = GPGBackend(fpr=key.fpr).public_key_text()
                     token, statuses = KeyDiscovery.upload_openpgp_key(pub_text)
@@ -942,15 +1021,21 @@ Expire-Date: 0
                     if emails:
                         KeyDiscovery.request_openpgp_verify(token, emails)
                         self.app.call_from_thread(
-                            result_label.update,
-                            f"[yellow]Almost done. Check your email ({', '.join(emails)}) "
-                            f"for a verification link, then press Start scanning.[/]",
+                            self._set_tone,
+                            result_label,
+                            f"Almost done. Check your email ({', '.join(emails)}) for a verification link.",
+                            "warning",
                         )
                     else:
-                        self.app.call_from_thread(result_label.update, "[green]Key already published. You're all set.[/]")
+                        self.app.call_from_thread(self._set_tone, result_label, "Key already published. You're all set.", "success")
                     self.app.call_from_thread(self._save_and_finish)
                 except httpx.HTTPError as e:
-                    self.app.call_from_thread(result_label.update, f"[red]Couldn't reach keys.openpgp.org: {e}[/]")
+                    self.app.call_from_thread(
+                        self._set_tone,
+                        result_label,
+                        f"Couldn't reach keys.openpgp.org: {e}",
+                        "error",
+                    )
                     self.app.call_from_thread(self._finish_upload_action)
 
             case "manual":
@@ -960,7 +1045,7 @@ Expire-Date: 0
                     if isinstance(key, SSHKeyInfo)
                     else "https://github.com/settings/gpg/new"
                 )
-                self.app.call_from_thread(result_label.update, f"Paste your public key at:\n{url}")
+                self.app.call_from_thread(self._set_tone, result_label, f"Paste your public key at:\n{url}")
                 self.app.call_from_thread(self._save_and_finish)
 
     def _save_and_finish(self) -> None:
@@ -976,13 +1061,13 @@ Expire-Date: 0
                 else:
                     self.state.config = GPGConfig(contributor_type="gpg", contributor_id=ContributorId(f), fpr=f)
 
-        summary = self.query_one("#done-summary", Label)
+        summary = self.query_one("#done-summary", Static)
         match key:
             case SSHKeyInfo(path=p):
-                summary.update(f"Signed in as [b]{identity}[/] using SSH key [dim]{p.name}[/]")
+                summary.update(f"Signed in as {identity} using SSH key {p.name}.")
             case GPGKeyInfo(fpr=f):
                 label = identity or f"GPG {f[-8:]}"
-                summary.update(f"Signed in as [b]{label}[/]")
+                summary.update(f"Signed in as {label}.")
 
         self._populate_done_info()
         self._finish_upload_action()
@@ -993,21 +1078,14 @@ Expire-Date: 0
     async def verify_server_config(self) -> None:
         from cc_sentiment.upload import AuthOk, Uploader
         await anyio.to_thread.run_sync(self.state.save)
-        verify_label = self.query_one("#done-verify", Label)
-        verify_label.update("[dim]Verifying with dashboard...[/]")
+        verify_label = self.query_one("#done-verify", Static)
+        self._set_tone(verify_label, "Verifying with the dashboard...")
 
         assert self.state.config is not None
         if isinstance(await Uploader().probe_credentials(self.state.config), AuthOk):
-            verify_label.update(
-                "[green]You're set up. Ready to upload.[/]",
-            )
+            self._set_tone(verify_label, "You're set up. Ready to upload.", "success")
         else:
-            verify_label.update(
-                "[yellow]We couldn't verify your setup just yet. This usually means:\n"
-                "  • If you uploaded to keys.openpgp.org — check your email for a verification link\n"
-                "  • If you just added a key to GitHub — it can take a minute to propagate\n"
-                "  • You can run cc-sentiment again anytime to retry[/]",
-            )
+            self._set_tone(verify_label, "We couldn't verify your setup just yet.", "warning")
 
     @on(Button.Pressed, "#done-btn")
     def on_done(self) -> None:

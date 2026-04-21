@@ -38,7 +38,7 @@ class PendingStatus(Horizontal):
         align-vertical: middle;
     }
     PendingStatus > .pending-status-label {
-        width: auto;
+        width: 1fr;
     }
     """
 

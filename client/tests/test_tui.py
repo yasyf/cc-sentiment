@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html import unescape
 from pathlib import Path
 import subprocess
 from time import sleep
@@ -121,6 +122,10 @@ def visible_step_ids(screen: SetupScreen) -> list[str]:
 
 def radio_labels(radio: RadioSet) -> list[str]:
     return [str(button.label) for button in radio.query(RadioButton)]
+
+
+def screenshot_text(app: App[None]) -> str:
+    return unescape(app.export_screenshot())
 
 
 @pytest.fixture
@@ -416,8 +421,7 @@ async def test_step_body_applies_shared_spacing_rules():
         await pilot.pause()
         body = pilot.app.query_one("#body", StepBody)
 
-        assert body.styles.padding.top == 1
-        assert body.styles.padding.bottom == 1
+        assert body.styles.margin.bottom == 1
         assert pilot.app.query_one("#input", Input).styles.margin.bottom == 1
         assert pilot.app.query_one("#radio", RadioSet).styles.max_height.value == 12
         assert pilot.app.query_one("#table", DataTable).styles.max_height.value == 12
@@ -741,7 +745,7 @@ async def test_setup_enter_advances_username_blocks_empty_input(no_auto_setup):
         await pilot.pause()
 
         assert screen.query_one(ContentSwitcher).current == "step-username"
-        assert "Username is required" in str(screen.query_one("#username-status", Label).render())
+        assert "Username is required" in str(screen.query_one("#username-status", Static).render())
 
 
 async def test_setup_enter_advances_discovery_when_enabled(no_auto_setup):
@@ -899,6 +903,9 @@ async def test_setup_tab_order_body_secondary_primary(no_auto_setup):
 
             await pilot.press("tab")
             await pilot.pause()
+            assert pilot.app.focused == screen.query_one("#upload-key-text", KeyPreview)
+            await pilot.press("tab")
+            await pilot.pause()
             assert pilot.app.focused == screen.query_one("#upload-back", Button)
             await pilot.press("tab")
             await pilot.pause()
@@ -1036,7 +1043,7 @@ async def test_setup_back_nav_discovery_preserves_username_input_and_status(no_a
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.query_one("#username-input", Input).value = "testuser"
-            screen.query_one("#username-status", Label).update("Auto-detected: testuser")
+            screen.query_one("#username-status", Static).update("Auto-detected: testuser")
 
             await pilot.click("#username-next")
             await pilot.pause(delay=0.3)
@@ -1045,7 +1052,7 @@ async def test_setup_back_nav_discovery_preserves_username_input_and_status(no_a
 
             assert screen.current_stage.value == "step-username"
             assert screen.query_one("#username-input", Input).value == "testuser"
-            assert str(screen.query_one("#username-status", Label).render()) == "Auto-detected: testuser"
+            assert str(screen.query_one("#username-status", Static).render()) == "Auto-detected: testuser"
             assert len(list(screen.query("#username-input"))) == 1
             assert len(list(screen.query("#username-next"))) == 1
 
@@ -1113,7 +1120,7 @@ async def test_setup_back_nav_upload_preserves_remote_results_without_rerun(no_a
             screen.selected_key = ssh_key
             screen.transition_to(screen.current_stage.__class__.REMOTE)
             screen.query_one("#remote-next", Button).disabled = False
-            screen.query_one("#remote-status", Label).update("Not linked yet. We can set this up next.")
+            screen.query_one("#remote-status", Static).update("Not linked yet. We can set this up next.")
             screen.query_one("#remote-checks", Static).update("  ✓ Found on GitHub")
 
             await pilot.click("#remote-next")
@@ -1122,7 +1129,7 @@ async def test_setup_back_nav_upload_preserves_remote_results_without_rerun(no_a
             await pilot.pause()
 
             assert screen.current_stage.value == "step-remote"
-            assert str(screen.query_one("#remote-status", Label).render()) == "Not linked yet. We can set this up next."
+            assert str(screen.query_one("#remote-status", Static).render()) == "Not linked yet. We can set this up next."
             assert str(screen.query_one("#remote-checks", Static).render()) == "  ✓ Found on GitHub"
             assert screen.query_one("#remote-next", Button).disabled is False
             assert mock_check_remotes.call_count == 0
@@ -1151,7 +1158,7 @@ async def test_setup_back_nav_key_change_resets_downstream_upload_state(no_auto_
             screen.query_one("#remote-next", Button).disabled = False
             await pilot.click("#remote-next")
             await pilot.pause(delay=0.3)
-            screen.query_one("#upload-result", Label).update("Paste your public key at:\nhttps://github.com/settings/ssh/new")
+            screen.query_one("#upload-result", Static).update("Paste your public key at:\nhttps://github.com/settings/ssh/new")
 
             await pilot.click("#upload-back")
             await pilot.pause()
@@ -1177,8 +1184,8 @@ async def test_setup_back_nav_key_change_resets_downstream_upload_state(no_auto_
                 "Show key so I can add it myself",
             ]
             assert "github-ssh" not in screen._upload_actions
-            assert "PGP PUBLIC KEY BLOCK" in str(screen.query_one("#upload-key-text", Label).render())
-            assert str(screen.query_one("#upload-result", Label).render()) == ""
+            assert "PGP PUBLIC KEY BLOCK" in screen.query_one("#upload-key-text", KeyPreview).text
+            assert str(screen.query_one("#upload-result", Static).render()) == ""
 
 
 async def test_setup_check_remotes_cancel_on_remote_back(no_auto_setup):
@@ -1317,23 +1324,142 @@ async def test_setup_status_line_reserved_height_across_steps(no_auto_setup):
         screen = pilot.app.screen
 
         username_y = current_step_actions(screen).region.y
-        screen.query_one("#username-status", Label).update("Username is required")
+        screen.query_one("#username-status", Static).update("Username is required")
         await pilot.pause()
         assert current_step_actions(screen).region.y == username_y
 
         screen.transition_to(screen.current_stage.__class__.REMOTE)
         await pilot.pause()
         remote_y = current_step_actions(screen).region.y
-        screen.query_one("#remote-status", Label).update("Not linked yet. We can set this up next.")
+        screen.query_one("#remote-status", Static).update("Not linked yet. We can set this up next.")
         await pilot.pause()
         assert current_step_actions(screen).region.y == remote_y
 
         screen.transition_to(screen.current_stage.__class__.UPLOAD)
         await pilot.pause()
         upload_y = current_step_actions(screen).region.y
-        screen.query_one("#upload-result", Label).update("Key linked to GitHub. You're all set.")
+        screen.query_one("#upload-result", Static).update("Key linked to GitHub. You're all set.")
         await pilot.pause()
         assert current_step_actions(screen).region.y == upload_y
+
+
+async def test_setup_step_header_everywhere_copy_hierarchy(no_auto_setup):
+    async with SetupHarness(AppState()).run_test(size=(80, 24)) as pilot:
+        await pilot.pause(delay=0.3)
+        screen = pilot.app.screen
+
+        for step_id in ("step-loading", "step-username", "step-discovery", "step-remote", "step-upload", "step-done"):
+            step = screen.query_one(f"#{step_id}", Vertical)
+
+            assert len(list(step.query(StepHeader))) == 1
+            assert len(list(step.query(StepBody))) == 1
+            assert list(step.query("Label.step-title")) == []
+
+
+async def test_setup_fingerprint_format_and_email_angle_copy_hierarchy(no_auto_setup):
+    gpg_key = GPGKeyInfo(
+        fpr="F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A",
+        email="John Doe <john.doe@example.org>",
+        algo="rsa4096",
+    )
+
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=(gpg_key,)), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.has_tool", return_value=False):
+        async with SetupHarness(AppState()).run_test(size=(80, 24)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = ""
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.3)
+
+            assert radio_labels(screen.query_one("#key-select", RadioSet)) == [
+                "GPG · F329 9DE3 ... A700 D73A · John Doe <john.doe@example.org>",
+            ]
+
+
+async def test_setup_text_wrap_long_username_copy_hierarchy(no_auto_setup):
+    long_username = "a" * 39
+
+    async with SetupHarness(AppState()).run_test(size=(80, 24)) as pilot:
+        await pilot.pause(delay=0.3)
+        screen = pilot.app.screen
+        actions_y = current_step_actions(screen).region.y
+        screen.query_one("#username-status", Static).update(f"Auto-detected: {long_username}")
+        await pilot.pause()
+
+        assert "…" not in screenshot_text(pilot.app)
+        assert long_username in screenshot_text(pilot.app)
+        assert current_step_actions(screen).region.y == actions_y
+
+
+async def test_setup_text_wrap_one_char_username_keeps_layout(no_auto_setup):
+    async with SetupHarness(AppState()).run_test(size=(80, 24)) as pilot:
+        await pilot.pause(delay=0.3)
+        screen = pilot.app.screen
+        actions_y = current_step_actions(screen).region.y
+        screen.query_one("#username-input", Input).value = "a"
+        await pilot.pause()
+
+        assert current_step_actions(screen).region.y == actions_y
+        assert "…" not in screenshot_text(pilot.app)
+
+
+async def test_setup_resize_preserves_current_step_state(no_auto_setup):
+    gpg_key = GPGKeyInfo(
+        fpr="F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A",
+        email="John Doe <john.doe@example.org>",
+        algo="rsa4096",
+    )
+
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=(gpg_key,)), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.has_tool", return_value=False):
+        async with SetupHarness(AppState()).run_test(size=(80, 24)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.query_one("#username-input", Input).value = "testuser"
+
+            await pilot.resize_terminal(120, 40)
+            await pilot.pause()
+
+            assert screen.query_one("#username-input", Input).value == "testuser"
+
+            screen.username = ""
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.3)
+            radio = screen.query_one("#key-select", RadioSet)
+            button = next(iter(radio.query(RadioButton)))
+            await pilot.click(button)
+            await pilot.pause()
+
+            await pilot.resize_terminal(80, 24)
+            await pilot.pause()
+
+            assert screen.current_stage.value == "step-discovery"
+            assert radio.pressed_index == 0
+
+
+async def test_setup_text_wrap_small_terminal_does_not_crash(no_auto_setup):
+    async with SetupHarness(AppState()).run_test(size=(40, 20)) as pilot:
+        await pilot.pause(delay=0.3)
+
+        assert pilot.app.screen.current_stage.value == "step-username"
+        assert "Traceback" not in screenshot_text(pilot.app)
+
+
+async def test_setup_text_wrap_wide_dialog_stays_centered(no_auto_setup):
+    async with SetupHarness(AppState()).run_test(size=(180, 68)) as pilot:
+        await pilot.pause(delay=0.3)
+        dialog = pilot.app.screen.query_one("#dialog-box", Vertical)
+
+        assert dialog.region.width <= 90
+        assert dialog.region.x > 40
+        assert dialog.region.x + dialog.region.width < 140
+
+
+def test_setup_ansi_escape_sample_payload_is_plain_text():
+    assert "\x1b[" not in SetupScreen.render_sample_payload()
 
 
 class CostHarness(App[None]):
