@@ -124,6 +124,24 @@ def radio_labels(radio: RadioSet) -> list[str]:
     return [str(button.label) for button in radio.query(RadioButton)]
 
 
+def cell_text(cell: object) -> str:
+    return cell.plain if hasattr(cell, "plain") else str(cell)
+
+
+def table_rows(table: DataTable) -> list[tuple[str, ...]]:
+    return [
+        tuple(cell_text(cell) for cell in table.get_row_at(index))
+        for index in range(table.row_count)
+    ]
+
+
+def step_header_texts(step: Vertical) -> tuple[str, str]:
+    header = step.query_one(StepHeader)
+    title = cell_text(header.query_one(".step-title", Static).render())
+    explainer_widget = next(iter(header.query(".step-explainer").results(Static)), None)
+    return title, (cell_text(explainer_widget.render()) if explainer_widget is not None else "")
+
+
 def screenshot_text(app: App[None]) -> str:
     return unescape(app.export_screenshot())
 
@@ -397,6 +415,134 @@ async def test_setup_remote_check_ssh_not_found(no_auto_setup):
             await pilot.pause(delay=0.5)
 
             assert screen._key_on_remote is False
+
+
+async def test_setup_remote_elision_skips_visible_remote_step(no_auto_setup):
+    gpg_key = GPGKeyInfo(
+        fpr="F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A",
+        email="test@example.com",
+        algo="ed25519",
+    )
+
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=(gpg_key,)), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.fetch_openpgp_key", return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----"), \
+         patch.object(AppState, "save"), \
+         patch("cc_sentiment.tui.screens.setup.TranscriptDiscovery.find_transcripts", return_value=()):
+        async with SetupHarness(AppState()).run_test(size=(80, 24)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.3)
+
+            screen.on_discovery_next()
+            await pilot.pause(delay=0.6)
+
+            assert screen.current_stage.value == "step-done"
+            assert "step-remote" not in [stage.value for stage in screen.transition_history]
+            assert visible_step_ids(screen) == ["step-done"]
+            assert "Ready to upload" in cell_text(screen.query_one("#done-verify", Static).render())
+
+
+async def test_setup_not_linked_header_uses_warning_copy(no_auto_setup):
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
+
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=(ssh_key,)), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.fetch_github_ssh_keys", return_value=("ssh-ed25519 BBBB other",)), \
+         patch("cc_sentiment.tui.screens.setup.SSHBackend.fingerprint", return_value="ssh-ed25519 AAAA"):
+        async with SetupHarness(AppState()).run_test(size=(80, 24)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.3)
+
+            screen.on_discovery_next()
+            await pilot.pause(delay=0.6)
+
+            step = screen.query_one("#step-remote", Vertical)
+            title, explainer = step_header_texts(step)
+
+            assert screen.current_stage.value == "step-remote"
+            assert "Your key isn't linked yet" in title
+            assert "Verifying your key" not in title
+            assert "Verifying your key" not in explainer
+            assert "warning" in step.query_one(".step-title", Static).classes
+
+
+async def test_setup_check_results_datatable_uses_columns_and_row_tones(no_auto_setup):
+    request = httpx.Request("GET", "https://github.com/testuser.gpg")
+    gpg_key = GPGKeyInfo(
+        fpr="F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A",
+        email="test@example.com",
+        algo="ed25519",
+    )
+
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=(gpg_key,)), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gpg_key_on_github", side_effect=httpx.ConnectError("boom", request=request)), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.fetch_openpgp_key", return_value=""):
+        async with SetupHarness(AppState()).run_test(size=(80, 24)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.3)
+
+            screen.on_discovery_next()
+            await pilot.pause(delay=0.6)
+
+            table = screen.query_one("#remote-checks", DataTable)
+
+            assert [cell_text(column.label) for column in table.ordered_columns] == ["glyph", "check", "detail"]
+            assert table_rows(table) == [
+                ("?", "GitHub", "Couldn't reach GitHub"),
+                ("—", "keys.openpgp.org", "Not on keys.openpgp.org yet"),
+            ]
+            assert [getattr(cell, "style", "") for cell in table.get_row_at(0)] == ["dim", "dim", "dim"]
+            assert [getattr(cell, "style", "") for cell in table.get_row_at(1)] == ["yellow", "yellow", "yellow"]
+
+
+async def test_setup_key_preview_gpg_long_ascii_armor_stays_within_dialog(no_auto_setup):
+    long_key = "\n".join(
+        (
+            "-----BEGIN PGP PUBLIC KEY BLOCK-----",
+            *["A" * 64 for _ in range(40)],
+            "-----END PGP PUBLIC KEY BLOCK-----",
+        )
+    )
+    gpg_key = GPGKeyInfo(
+        fpr="F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A",
+        email="test@example.com",
+        algo="ed25519",
+    )
+
+    with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value=None), \
+         patch("cc_sentiment.tui.screens.setup.GPGBackend.public_key_text", return_value=long_key):
+        async with SetupHarness(AppState()).run_test(size=(80, 24)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.selected_key = gpg_key
+            screen.transition_to(screen.current_stage.__class__.UPLOAD)
+            await screen._populate_upload_options()
+            await pilot.pause()
+
+            dialog = screen.query_one("#dialog-box", Vertical)
+            preview = screen.query_one("#upload-key-text", KeyPreview)
+
+            assert preview.region.y + preview.region.height <= dialog.region.y + dialog.region.height
+            assert preview.region.height <= 5
+            assert "-----BEGIN PGP PUBLIC KEY BLOCK-----" in preview.text
+            assert "-----END PGP PUBLIC KEY BLOCK-----" in preview.text
+            assert preview.max_scroll_y > 0
+
+            before = preview.scroll_y
+            preview.scroll_end(animate=False)
+            await pilot.pause()
+
+            assert preview.scroll_y > before
+            assert preview.scroll_y == preview.max_scroll_y
 
 
 async def test_setup_save_ssh_config(tmp_path: Path, no_auto_setup):
@@ -1186,7 +1332,8 @@ async def test_setup_enter_advances_discovery_when_enabled(no_auto_setup):
             await pilot.press("enter")
             await pilot.pause()
 
-            assert screen.query_one(ContentSwitcher).current == "step-remote"
+            assert screen.query_one(ContentSwitcher).current == "step-discovery"
+            assert screen.actions.discovery_action_running is True
             mock_check_remotes.assert_called_once()
 
 
@@ -1508,6 +1655,8 @@ async def test_setup_discovery_reset_on_remote_back_no_duplicate(no_auto_setup):
             await pilot.pause()
             screen.on_discovery_next()
             await pilot.pause()
+            screen.transition_to(screen.current_stage.__class__.REMOTE)
+            await pilot.pause()
             await pilot.click("#remote-back")
             await pilot.pause(delay=0.3)
 
@@ -1524,7 +1673,7 @@ async def test_setup_discovery_reset_on_remote_back_no_duplicate(no_auto_setup):
             screen.on_discovery_next()
             await pilot.pause()
 
-            assert screen.current_stage.value == "step-remote"
+            assert screen.current_stage.value == "step-discovery"
             assert mock_check_remotes.call_count == 2
 
 
@@ -1539,8 +1688,10 @@ async def test_setup_back_nav_upload_preserves_remote_results_without_rerun(no_a
             screen.selected_key = ssh_key
             screen.transition_to(screen.current_stage.__class__.REMOTE)
             screen.query_one("#remote-next", Button).disabled = False
-            screen.query_one("#remote-status", Static).update("Not linked yet. We can set this up next.")
-            screen.query_one("#remote-checks", Static).update("  ✓ Found on GitHub")
+            screen.query_one("#remote-status", Static).update("Link this key next so the dashboard can verify your uploads.")
+            table = screen.query_one("#remote-checks", DataTable)
+            table.clear(columns=False)
+            table.add_row("✓", "GitHub", "Found on GitHub")
 
             await pilot.click("#remote-next")
             await pilot.pause()
@@ -1548,8 +1699,8 @@ async def test_setup_back_nav_upload_preserves_remote_results_without_rerun(no_a
             await pilot.pause()
 
             assert screen.current_stage.value == "step-remote"
-            assert str(screen.query_one("#remote-status", Static).render()) == "Not linked yet. We can set this up next."
-            assert str(screen.query_one("#remote-checks", Static).render()) == "  ✓ Found on GitHub"
+            assert str(screen.query_one("#remote-status", Static).render()) == "Link this key next so the dashboard can verify your uploads."
+            assert table_rows(screen.query_one("#remote-checks", DataTable)) == [("✓", "GitHub", "Found on GitHub")]
             assert screen.query_one("#remote-next", Button).disabled is False
             assert mock_check_remotes.call_count == 0
 
@@ -1574,6 +1725,8 @@ async def test_setup_back_nav_key_change_resets_downstream_upload_state(no_auto_
 
             screen.on_discovery_next()
             await pilot.pause()
+            screen.transition_to(screen.current_stage.__class__.REMOTE)
+            await pilot.pause()
             screen.query_one("#remote-next", Button).disabled = False
             await pilot.click("#remote-next")
             await pilot.pause(delay=0.3)
@@ -1590,6 +1743,8 @@ async def test_setup_back_nav_key_change_resets_downstream_upload_state(no_auto_
             assert radio.pressed_index == 1
 
             screen.on_discovery_next()
+            await pilot.pause()
+            screen.transition_to(screen.current_stage.__class__.REMOTE)
             await pilot.pause()
             screen.query_one("#remote-next", Button).disabled = False
             await pilot.click("#remote-next")
@@ -1627,6 +1782,8 @@ async def test_setup_check_remotes_cancel_on_remote_back(no_auto_setup):
             await pilot.click("#username-next")
             await pilot.pause(delay=0.3)
             screen.on_discovery_next()
+            await pilot.pause()
+            screen.transition_to(screen.current_stage.__class__.REMOTE)
             await pilot.pause()
             await pilot.click("#remote-back")
             await pilot.pause()

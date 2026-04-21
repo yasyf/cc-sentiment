@@ -10,7 +10,7 @@ class KeyPreview(VerticalScroll):
     KeyPreview {
         width: 100%;
         height: auto;
-        max-height: 6;
+        max-height: 5;
         border: round $panel-lighten-2;
         background: $boost;
         padding: 0 1;

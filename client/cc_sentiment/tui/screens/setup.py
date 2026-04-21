@@ -23,6 +23,7 @@ from textual.worker import Worker
 from textual.widgets import (
     Button,
     ContentSwitcher,
+    DataTable,
     Input,
     RadioButton,
     RadioSet,
@@ -65,6 +66,14 @@ class SetupActionState:
 class UploadOption:
     action: str
     label: str
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteCheckRow:
+    glyph: str
+    check: str
+    detail: str
+    tone: str
 
 
 class SetupStage(StrEnum):
@@ -136,7 +145,7 @@ class SetupScreen(Dialog[bool]):
     def current_stage(self) -> SetupStage:
         return SetupStage(self.query_one(ContentSwitcher).current)
 
-    def transition_to(self, stage: SetupStage) -> None:
+    def transition_to(self, stage: SetupStage, preserve_remote: bool = False) -> None:
         previous = self.current_stage
         if stage is previous:
             self.call_after_refresh(self._focus_step_target, stage)
@@ -152,7 +161,7 @@ class SetupScreen(Dialog[bool]):
                 self._reset_upload_stage()
                 self._reset_done_stage()
             case SetupStage.REMOTE:
-                if previous is not SetupStage.UPLOAD:
+                if previous is not SetupStage.UPLOAD and not preserve_remote:
                     self._reset_remote_stage()
                 self._reset_upload_stage()
                 self._reset_done_stage()
@@ -208,10 +217,14 @@ class SetupScreen(Dialog[bool]):
         text: str | Text,
         tone: str = "muted",
     ) -> None:
+        self._set_palette_classes(widget, tone)
+        widget.update(text)
+
+    def _set_palette_classes(self, widget: Static, tone: str | None) -> None:
         for palette_class in self.PALETTE_CLASSES:
             widget.remove_class(palette_class)
-        widget.add_class(tone)
-        widget.update(text)
+        if tone is not None:
+            widget.add_class(tone)
 
     @staticmethod
     def _display_fingerprint(fingerprint: str) -> str:
@@ -257,11 +270,15 @@ class SetupScreen(Dialog[bool]):
         self._cancel_remote_check()
         self._key_on_remote = False
         self._key_on_openpgp = False
+        self._set_remote_header(
+            "Verifying your key",
+            "Checking where the dashboard can read your public key.",
+        )
+        self._render_remote_checks([])
         self._set_tone(
             self.query_one("#remote-status", Static),
             "Checking where the dashboard can read your public key...",
         )
-        self.query_one("#remote-checks", Static).update("")
         self.query_one("#remote-next", Button).disabled = True
 
     def _reset_upload_stage(self) -> None:
@@ -300,29 +317,108 @@ class SetupScreen(Dialog[bool]):
     ) -> bool:
         return generation == self._remote_check_generation and key == self.selected_key
 
-    def _set_remote_pending(self, generation: int, checks: str, key: SSHKeyInfo | GPGKeyInfo | None) -> None:
+    def _configure_remote_checks_table(self) -> DataTable:
+        table = self.query_one("#remote-checks", DataTable)
+        if not table.ordered_columns:
+            table.add_columns("glyph", "check", "detail")
+        return table
+
+    @staticmethod
+    def _remote_tone_style(tone: str) -> str:
+        match tone:
+            case "success":
+                return "green"
+            case "warning":
+                return "yellow"
+            case "muted":
+                return "dim"
+            case _:
+                return ""
+
+    def _render_remote_checks(self, rows: list[RemoteCheckRow]) -> None:
+        table = self._configure_remote_checks_table()
+        table.clear(columns=False)
+        for row in rows:
+            table.add_row(
+                *(
+                    Text(value, style=self._remote_tone_style(row.tone))
+                    for value in (row.glyph, row.check, row.detail)
+                )
+            )
+
+    def _set_remote_header(self, title: str, explainer: str, tone: str | None = None) -> None:
+        header = self.query_one("#step-remote", Vertical).query_one(StepHeader)
+        title_widget = header.query_one(".step-title", Static)
+        explainer_widget = header.query_one(".step-explainer", Static)
+        self._set_palette_classes(title_widget, tone)
+        title_widget.update(title)
+        self._set_tone(explainer_widget, explainer)
+
+    def _set_remote_pending(self, generation: int, key: SSHKeyInfo | GPGKeyInfo | None) -> None:
         if not self._remote_check_is_current(generation, key):
             return
-        self.query_one("#remote-checks", Static).update(checks)
+        if self.current_stage is SetupStage.REMOTE:
+            self._set_remote_header(
+                "Verifying your key",
+                "Checking where the dashboard can read your public key.",
+            )
+            self._render_remote_checks([])
+            self._set_tone(
+                self.query_one("#remote-status", Static),
+                "Checking where the dashboard can read your public key...",
+            )
+            self.query_one("#remote-next", Button).disabled = True
+            return
+        self._set_tone(
+            self.query_one("#discovery-status", Static),
+            "Checking where the dashboard can read your public key...",
+        )
+        self.query_one("#discovery-next", Button).disabled = True
 
     def _apply_remote_results(
         self,
         generation: int,
         key: SSHKeyInfo | GPGKeyInfo | None,
-        results: str,
+        results: list[RemoteCheckRow],
         found: bool,
         key_on_openpgp: bool,
     ) -> None:
         if not self._remote_check_is_current(generation, key):
             return
+        self._remote_check_worker = None
         self._key_on_openpgp = key_on_openpgp
-        self.query_one("#remote-checks", Static).update(results)
+        self._render_remote_checks(results)
         self._key_on_remote = found
+        if found:
+            self._set_remote_header(
+                "Your key is ready",
+                "We found this public key somewhere the dashboard can already read.",
+                "success",
+            )
+            self._set_tone(
+                self.query_one("#remote-status", Static),
+                "You're set up. Ready to upload.",
+                "success",
+            )
+            self._finish_discovery_action()
+            if self.current_stage is SetupStage.REMOTE:
+                self._enable_remote_next()
+                return
+            self._save_and_finish()
+            return
+        if self.current_stage is not SetupStage.REMOTE:
+            self.transition_to(SetupStage.REMOTE, preserve_remote=True)
+        self._set_remote_header(
+            "Your key isn't linked yet",
+            "We checked the public places the dashboard looks for this key.",
+            "warning",
+        )
         self._set_tone(
             self.query_one("#remote-status", Static),
-            "You're set up. Ready to upload." if found else "Not linked yet. We can set this up next.",
-            "success" if found else "muted",
+            "Link this key next so the dashboard can verify your uploads.",
+            "warning",
         )
+        self._finish_discovery_action()
         self._enable_remote_next()
 
     def compose_loading_step(self) -> ComposeResult:
@@ -374,7 +470,7 @@ class SetupScreen(Dialog[bool]):
                 "Checking where the dashboard can read your public key.",
             )
             yield StepBody(
-                Static("", id="remote-checks", classes="copy-block"),
+                DataTable(id="remote-checks"),
                 Static("", id="remote-status", classes="status-line muted"),
                 StepActions(
                     Button("Back", id="remote-back", variant="default"),
@@ -469,6 +565,7 @@ class SetupScreen(Dialog[bool]):
 
     def on_mount(self) -> None:
         self.query_one("#key-select", RadioSet).display = False
+        self._configure_remote_checks_table()
         self.try_auto_setup()
 
     def action_activate_primary(self) -> None:
@@ -561,6 +658,7 @@ class SetupScreen(Dialog[bool]):
         self.app.call_from_thread(self._finish_username_validation)
 
     def _switch_to_discovery(self) -> None:
+        self._finish_discovery_action()
         self._reset_discovery_stage()
         self.transition_to(SetupStage.DISCOVERY)
         self.discover_keys()
@@ -658,12 +756,17 @@ class SetupScreen(Dialog[bool]):
 
     @on(Button.Pressed, "#discovery-back")
     def on_discovery_back(self) -> None:
+        self._cancel_remote_check()
+        self._finish_discovery_action()
         self.query_one("#username-status", Static).update(self._username_status_snapshot)
         self.transition_to(SetupStage.USERNAME)
 
     @on(RadioSet.Changed, "#key-select")
     def on_discovery_selection_changed(self) -> None:
         self._cancel_remote_check()
+        self._finish_discovery_action()
+        if list(self.query("#key-select RadioButton")):
+            self.query_one("#discovery-next", Button).disabled = False
 
     @on(Button.Pressed, "#discovery-next")
     def on_discovery_next(self) -> None:
@@ -809,8 +912,6 @@ Expire-Date: 0
         self.verify_server_config()
 
     def _go_to_remote(self) -> None:
-        self._finish_discovery_action()
-        self.transition_to(SetupStage.REMOTE)
         self._remote_check_generation += 1
         self._remote_check_worker = self.check_remotes(self._remote_check_generation, self.selected_key)
 
@@ -822,57 +923,51 @@ Expire-Date: 0
     ) -> None:
         generation = self._remote_check_generation if generation is None else generation
         key = self.selected_key if key is None else key
-        results: list[str] = []
+        results: list[RemoteCheckRow] = []
         found = False
         key_on_openpgp = False
+        self.app.call_from_thread(self._set_remote_pending, generation, key)
 
         match key:
             case SSHKeyInfo(path=p):
-                self.app.call_from_thread(self._set_remote_pending, generation, "  [dim]...[/] Checking GitHub", key)
                 try:
                     github_keys = KeyDiscovery.fetch_github_ssh_keys(self.username)
                     local_fp = SSHBackend(private_key_path=p).fingerprint()
                     if any(" ".join(gk.split()[:2]) == local_fp for gk in github_keys):
-                        results.append("  [green]✓[/] Found on GitHub")
+                        results.append(RemoteCheckRow("✓", "GitHub", "Found on GitHub", "success"))
                         found = True
                     else:
-                        results.append("  [yellow]—[/] Not on GitHub yet")
+                        results.append(RemoteCheckRow("—", "GitHub", "Not on GitHub yet", "warning"))
                 except httpx.HTTPError:
-                    results.append("  [yellow]?[/] Couldn't reach GitHub")
+                    results.append(RemoteCheckRow("?", "GitHub", "Couldn't reach GitHub", "muted"))
 
             case GPGKeyInfo(fpr=f):
-                checks = []
-                if self.username:
-                    checks.append("  [dim]...[/] Checking GitHub")
-                checks.append("  [dim]...[/] Checking keys.openpgp.org")
-                self.app.call_from_thread(self._set_remote_pending, generation, "\n".join(checks), key)
-
                 if self.username:
                     try:
                         if KeyDiscovery.gpg_key_on_github(self.username, f):
-                            results.append("  [green]✓[/] Found on GitHub")
+                            results.append(RemoteCheckRow("✓", "GitHub", "Found on GitHub", "success"))
                             found = True
                         else:
-                            results.append("  [yellow]—[/] Not on GitHub yet")
+                            results.append(RemoteCheckRow("—", "GitHub", "Not on GitHub yet", "warning"))
                     except httpx.HTTPError:
-                        results.append("  [yellow]?[/] Couldn't reach GitHub")
+                        results.append(RemoteCheckRow("?", "GitHub", "Couldn't reach GitHub", "muted"))
 
                 try:
                     openpgp_key = KeyDiscovery.fetch_openpgp_key(f)
                     if openpgp_key:
-                        results.append("  [green]✓[/] Found on keys.openpgp.org")
+                        results.append(RemoteCheckRow("✓", "keys.openpgp.org", "Found on keys.openpgp.org", "success"))
                         found = True
                         key_on_openpgp = True
                     else:
-                        results.append("  [yellow]—[/] Not on keys.openpgp.org yet")
+                        results.append(RemoteCheckRow("—", "keys.openpgp.org", "Not on keys.openpgp.org yet", "warning"))
                 except httpx.HTTPError:
-                    results.append("  [yellow]?[/] Couldn't reach keys.openpgp.org")
+                    results.append(RemoteCheckRow("?", "keys.openpgp.org", "Couldn't reach keys.openpgp.org", "muted"))
 
         self.app.call_from_thread(
             self._apply_remote_results,
             generation,
             key,
-            "\n".join(results),
+            results,
             found,
             key_on_openpgp,
         )
