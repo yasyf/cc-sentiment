@@ -196,6 +196,97 @@ async def test_setup_auto_success_jumps_to_done():
             assert pilot.app.screen.query_one(ContentSwitcher).current == "step-done"
 
 
+async def test_auto_setup_run_short_circuits_after_matching_ssh():
+    from cc_sentiment.tui.status import AutoSetup, StatusEmitter
+
+    config = SSHConfig(
+        contributor_id=ContributorId("Alice-01"),
+        key_path=Path("/home/.ssh/id_ed25519"),
+    )
+    setup = AutoSetup(AppState(), StatusEmitter(Static()))
+
+    with patch.object(AutoSetup, "detect_username", new=AsyncMock(return_value="Alice-01")), \
+         patch.object(AutoSetup, "try_github_ssh", new=AsyncMock(return_value=config)) as try_github_ssh, \
+         patch.object(AutoSetup, "probe_and_save", new=AsyncMock(return_value=True)) as probe_and_save, \
+         patch.object(AutoSetup, "try_github_gpg", new=AsyncMock()) as try_github_gpg, \
+         patch.object(AutoSetup, "try_existing_gist", new=AsyncMock()) as try_existing_gist, \
+         patch.object(AutoSetup, "find_local_gpg", new=AsyncMock(return_value=())) as find_local_gpg:
+        assert await setup.run() == (True, "Alice-01")
+        try_github_ssh.assert_awaited_once_with("Alice-01")
+        probe_and_save.assert_awaited_once_with(config)
+        try_github_gpg.assert_not_called()
+        try_existing_gist.assert_not_called()
+        find_local_gpg.assert_not_called()
+
+
+async def test_auto_setup_run_tries_openpgp_without_github_username():
+    from cc_sentiment.tui.status import AutoSetup, StatusEmitter
+
+    key = GPGKeyInfo(
+        fpr="F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A",
+        email="test@example.com",
+        algo="rsa4096",
+    )
+    config = GPGConfig(
+        contributor_type="gpg",
+        contributor_id=ContributorId(key.fpr),
+        fpr=key.fpr,
+    )
+    setup = AutoSetup(AppState(), StatusEmitter(Static()))
+
+    with patch.object(AutoSetup, "detect_username", new=AsyncMock(return_value=None)), \
+         patch.object(AutoSetup, "find_local_gpg", new=AsyncMock(return_value=(key,))), \
+         patch.object(AutoSetup, "try_openpgp", new=AsyncMock(return_value=config)) as try_openpgp, \
+         patch.object(AutoSetup, "probe_and_save", new=AsyncMock(return_value=True)) as probe_and_save:
+        assert await setup.run() == (True, None)
+        try_openpgp.assert_awaited_once_with(key, None)
+        probe_and_save.assert_awaited_once_with(config)
+
+
+async def test_setup_auto_success_openpgp_without_username_uses_short_gpg_label():
+    fingerprint = "F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A"
+    state = AppState()
+
+    async def fake_run(self) -> tuple[bool, str | None]:
+        self.state.config = GPGConfig(
+            contributor_type="gpg",
+            contributor_id=ContributorId(fingerprint),
+            fpr=fingerprint,
+        )
+        return True, None
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new=fake_run), \
+         patch.object(AppState, "save"):
+        async with SetupHarness(state).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            summary = str(pilot.app.screen.query_one("#done-summary", Static).render())
+
+            assert "Signed in as GPG A700D73A" in summary
+            assert fingerprint not in summary
+
+
+async def test_setup_username_flow_auto_detected_username_survives_discovery_round_trip():
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, "Alice-01")), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=False), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.has_tool", return_value=False):
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+
+            assert screen.query_one("#username-input", Input).value == "Alice-01"
+            assert str(screen.query_one("#username-status", Static).render()) == "Auto-detected: Alice-01"
+
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.3)
+            screen.on_discovery_back()
+            await pilot.pause()
+
+            assert screen.query_one("#username-input", Input).value == "Alice-01"
+            assert str(screen.query_one("#username-status", Static).render()) == "Auto-detected: Alice-01"
+
+
 async def test_setup_discovery_single_radioset_no_datatable(no_auto_setup):
     ssh_keys = (SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host"),)
 
@@ -234,6 +325,43 @@ async def test_setup_no_keys_without_gpg_disables_next(no_auto_setup):
             assert list(screen.query("#step-discovery DataTable")) == []
             assert radio_labels(screen.query_one("#key-select", RadioSet)) == []
             assert getattr(screen, "_generation_mode", "unset") is None
+
+
+async def test_setup_discovery_no_gh_username_hides_ssh_keys(no_auto_setup):
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
+    gpg_key = GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096")
+
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=(ssh_key,)), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=(gpg_key,)), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.has_tool", return_value=False):
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+
+            await pilot.click("#username-skip")
+            await pilot.pause(delay=0.3)
+
+            assert radio_labels(screen.query_one("#key-select", RadioSet)) == [
+                "GPG · ABCD EF12 3456 7890 · test@example.com",
+            ]
+
+
+async def test_setup_tooling_absent_shows_install_hints_and_disables_next(no_auto_setup):
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=False), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.has_tool", return_value=False):
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "alice"
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.3)
+
+            assert str(screen.query_one("#discovery-status", Static).render()) == "No signing keys found on your machine."
+            assert "install the GitHub CLI" in str(screen.query_one("#discovery-help", Static).render())
+            assert "brew install gnupg" in str(screen.query_one("#discovery-help", Static).render())
+            assert screen.query_one("#discovery-next", Button).disabled is True
 
 
 async def test_setup_remote_check_ssh_found(no_auto_setup):
@@ -733,6 +861,48 @@ async def test_setup_enter_advances_username_with_valid_input(no_auto_setup):
             await pilot.pause(delay=0.3)
 
             assert screen.query_one(ContentSwitcher).current == "step-discovery"
+
+
+async def test_setup_username_mixed_case_and_hyphen_round_trip_verbatim(no_auto_setup):
+    requests: list[str] = []
+
+    def fake_get(url: str, timeout: float) -> httpx.Response:
+        requests.append(url)
+        return httpx.Response(404, request=httpx.Request("GET", url))
+
+    with patch("cc_sentiment.tui.screens.setup.httpx.get", side_effect=fake_get):
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.query_one("#username-input", Input).value = "Alice-01"
+
+            await pilot.click("#username-next")
+            await pilot.pause(delay=0.3)
+
+            assert requests == ["https://api.github.com/users/Alice-01"]
+            assert screen.query_one(ContentSwitcher).current == "step-username"
+            assert "GitHub user 'Alice-01' not found" in str(screen.query_one("#username-status", Static).render())
+
+
+async def test_setup_username_special_chars_round_trip_verbatim(no_auto_setup):
+    requests: list[str] = []
+
+    def fake_get(url: str, timeout: float) -> httpx.Response:
+        requests.append(url)
+        return httpx.Response(404, request=httpx.Request("GET", url))
+
+    with patch("cc_sentiment.tui.screens.setup.httpx.get", side_effect=fake_get):
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.query_one("#username-input", Input).value = "hello$world"
+
+            await pilot.click("#username-next")
+            await pilot.pause(delay=0.3)
+
+            assert requests == ["https://api.github.com/users/hello$world"]
+            assert screen.query_one(ContentSwitcher).current == "step-username"
+            assert "GitHub user 'hello$world' not found" in str(screen.query_one("#username-status", Static).render())
 
 
 async def test_setup_enter_advances_username_blocks_empty_input(no_auto_setup):

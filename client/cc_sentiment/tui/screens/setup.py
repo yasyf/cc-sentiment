@@ -484,8 +484,9 @@ class SetupScreen(Dialog[bool]):
         match config:
             case SSHConfig(contributor_id=cid, key_path=p):
                 summary.update(f"Signed in as {cid} using SSH key {p.name}.")
-            case GPGConfig(contributor_id=cid, fpr=f):
-                summary.update(f"Signed in as {cid} using GPG {self._display_fingerprint(f)}.")
+            case GPGConfig(contributor_type=contributor_type, contributor_id=cid, fpr=f):
+                label = cid if contributor_type == "github" else f"GPG {f[-8:]}"
+                summary.update(f"Signed in as {label} using GPG {self._display_fingerprint(f)}.")
             case GistConfig(contributor_id=cid, gist_id=g):
                 summary.update(f"Signed in as {cid} using cc-sentiment gist {g[:7]}.")
         self._set_tone(
@@ -503,6 +504,9 @@ class SetupScreen(Dialog[bool]):
                 self.query_one("#username-status", Static),
                 f"Auto-detected: {username}",
             )
+            self._username_status_snapshot = f"Auto-detected: {username}"
+        else:
+            self._username_status_snapshot = ""
         self.transition_to(SetupStage.USERNAME)
 
     @on(Button.Pressed, "#username-next")
