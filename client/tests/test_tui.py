@@ -114,6 +114,19 @@ def primary_button(screen: SetupScreen) -> Button:
     return next(button for button in buttons if button.variant == "primary")
 
 
+def visible_step_ids(screen: SetupScreen) -> list[str]:
+    switcher = screen.query_one(ContentSwitcher)
+    return [widget.id for widget in switcher.displayed_and_visible_children]
+
+
+def table_rows(table: DataTable) -> list[tuple[object, ...]]:
+    return [table.get_row_at(index) for index in range(table.row_count)]
+
+
+def radio_labels(radio: RadioSet) -> list[str]:
+    return [str(button.label) for button in radio.query(RadioButton)]
+
+
 @pytest.fixture
 def no_auto_setup():
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
@@ -163,7 +176,7 @@ async def test_setup_empty_username_blocked(no_auto_setup):
 async def test_setup_auto_detect_prepopulates_username():
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, "testuser")), \
          patch("cc_sentiment.tui.screens.setup.AutoSetup.find_git_username", return_value="testuser"):
-        async with SetupHarness(AppState()).run_test() as pilot:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             assert pilot.app.screen.query_one("#username-input", Input).value == "testuser"
 
@@ -187,7 +200,7 @@ async def test_setup_key_discovery_populates_table(no_auto_setup):
 
     with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=ssh_keys), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()):
-        async with SetupHarness(AppState()).run_test() as pilot:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.username = "testuser"
@@ -203,7 +216,7 @@ async def test_setup_no_keys_without_gpg_disables_next(no_auto_setup):
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.has_tool", return_value=False), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=False):
-        async with SetupHarness(AppState()).run_test() as pilot:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.username = "testuser"
@@ -219,7 +232,7 @@ async def test_setup_remote_check_ssh_found(no_auto_setup):
 
     with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.fetch_github_ssh_keys", return_value=("ssh-ed25519 AAAA key1",)), \
          patch("cc_sentiment.tui.screens.setup.SSHBackend.fingerprint", return_value="ssh-ed25519 AAAA"):
-        async with SetupHarness(AppState()).run_test() as pilot:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.username = "testuser"
@@ -237,7 +250,7 @@ async def test_setup_remote_check_ssh_not_found(no_auto_setup):
 
     with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.fetch_github_ssh_keys", return_value=("ssh-ed25519 BBBB other",)), \
          patch("cc_sentiment.tui.screens.setup.SSHBackend.fingerprint", return_value="ssh-ed25519 AAAA"):
-        async with SetupHarness(AppState()).run_test() as pilot:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.username = "testuser"
@@ -321,7 +334,7 @@ async def test_setup_upload_options_with_gh(no_auto_setup):
 
     with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
          patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"):
-        async with SetupHarness(AppState()).run_test() as pilot:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.username = "testuser"
@@ -538,7 +551,7 @@ async def test_setup_no_keys_with_gh_auth_uses_gist_mode(no_auto_setup):
     with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True):
-        async with SetupHarness(AppState()).run_test() as pilot:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.username = "testuser"
@@ -557,7 +570,7 @@ async def test_setup_no_gh_auth_with_ssh_keygen_picks_ssh_mode(no_auto_setup):
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=False), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.has_tool", side_effect=has_tool):
-        async with SetupHarness(AppState()).run_test() as pilot:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.username = "testuser"
@@ -574,7 +587,7 @@ async def test_setup_existing_keys_offer_create_new_as_last_option(no_auto_setup
     with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=ssh_keys), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True):
-        async with SetupHarness(AppState()).run_test() as pilot:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.username = "testuser"
@@ -604,7 +617,7 @@ async def test_generate_managed_ssh_key_routes_to_remote(tmp_path: Path, no_auto
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.generate_gist_keypair", return_value=key_path), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.fetch_github_ssh_keys", return_value=()), \
          patch("cc_sentiment.tui.screens.setup.SSHBackend.fingerprint", return_value="ssh-ed25519 AAAA"):
-        async with SetupHarness(state).run_test() as pilot:
+        async with SetupHarness(state).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.username = "testuser"
@@ -651,7 +664,7 @@ async def test_setup_upload_options_gpg_shows_openpgp(no_auto_setup):
 
     with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
          patch("cc_sentiment.tui.screens.setup.GPGBackend.public_key_text", return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----"):
-        async with SetupHarness(AppState()).run_test() as pilot:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.username = "testuser"
@@ -666,7 +679,7 @@ async def test_setup_upload_options_gpg_shows_openpgp(no_auto_setup):
 
 
 async def test_setup_button_contract_uses_step_actions_and_single_primary_per_step(no_auto_setup):
-    async with SetupHarness(AppState()).run_test() as pilot:
+    async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
         await pilot.pause(delay=0.3)
         screen = pilot.app.screen
 
@@ -703,7 +716,7 @@ async def test_setup_enter_advances_username_with_valid_input(no_auto_setup):
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=False), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.has_tool", return_value=False):
-        async with SetupHarness(AppState()).run_test() as pilot:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.query_one("#username-input", Input).value = "testuser"
@@ -733,7 +746,7 @@ async def test_setup_enter_advances_discovery_when_enabled(no_auto_setup):
     with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=(ssh_key,)), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
          patch.object(SetupScreen, "check_remotes") as mock_check_remotes:
-        async with SetupHarness(AppState()).run_test() as pilot:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.username = "testuser"
@@ -751,7 +764,7 @@ async def test_setup_enter_advances_remote_to_upload(no_auto_setup):
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
 
     with patch.object(SetupScreen, "_populate_upload_options", new_callable=AsyncMock) as mock_populate:
-        async with SetupHarness(AppState()).run_test() as pilot:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.selected_key = ssh_key
@@ -824,7 +837,7 @@ async def test_setup_focus_primary_on_interactive_step_entrance(no_auto_setup):
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True), \
          patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"), \
          patch.object(SetupScreen, "check_remotes"):
-        async with SetupHarness(AppState()).run_test() as pilot:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
 
@@ -858,7 +871,7 @@ async def test_setup_tab_order_body_secondary_primary(no_auto_setup):
     with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True), \
          patch("cc_sentiment.tui.screens.setup.GPGBackend.public_key_text", return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----"):
-        async with SetupHarness(AppState()).run_test() as pilot:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
 
@@ -904,7 +917,7 @@ async def test_setup_double_enter_username_starts_one_validation(no_auto_setup):
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=False), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.has_tool", return_value=False):
-        async with SetupHarness(AppState()).run_test() as pilot:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.query_one("#username-input", Input).value = "testuser"
@@ -922,7 +935,7 @@ async def test_setup_double_enter_discovery_starts_one_remote_check(no_auto_setu
     with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=(ssh_key,)), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
          patch.object(SetupScreen, "check_remotes", new=Mock()) as mock_check_remotes:
-        async with SetupHarness(AppState()).run_test() as pilot:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.username = "testuser"
@@ -940,7 +953,7 @@ async def test_setup_double_enter_remote_starts_one_upload_population(no_auto_se
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
 
     with patch.object(SetupScreen, "_populate_upload_options", new_callable=AsyncMock) as mock_populate:
-        async with SetupHarness(AppState()).run_test() as pilot:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.selected_key = ssh_key
@@ -969,7 +982,7 @@ async def test_setup_double_enter_upload_starts_one_upload_worker(no_auto_setup)
          patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"), \
          patch("cc_sentiment.tui.screens.setup.subprocess.run", side_effect=fake_run), \
          patch.object(SetupScreen, "_save_and_finish"):
-        async with SetupHarness(AppState()).run_test() as pilot:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.username = "testuser"
@@ -983,6 +996,280 @@ async def test_setup_double_enter_upload_starts_one_upload_worker(no_auto_setup)
             await pilot.pause(delay=0.4)
 
             assert len(calls) == 1
+
+
+async def test_setup_state_machine_transition_to_tracks_stage_history(no_auto_setup):
+    async with SetupHarness(AppState()).run_test() as pilot:
+        await pilot.pause(delay=0.3)
+        screen = pilot.app.screen
+
+        assert screen.current_stage.__class__.__name__ == "SetupStage"
+        assert screen.current_stage.value == "step-username"
+        assert [stage.value for stage in screen.transition_history] == [
+            "step-loading",
+            "step-username",
+        ]
+
+        screen.transition_to(screen.current_stage.__class__.DISCOVERY)
+        await pilot.pause()
+
+        assert screen.current_stage.value == "step-discovery"
+        assert screen.query_one(ContentSwitcher).current == "step-discovery"
+        assert visible_step_ids(screen) == ["step-discovery"]
+
+
+async def test_setup_back_nav_discovery_preserves_username_input_and_status(no_auto_setup):
+    response = httpx.Response(
+        200,
+        request=httpx.Request("GET", "https://api.github.com/users/testuser"),
+    )
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
+
+    with patch("cc_sentiment.tui.screens.setup.httpx.get", return_value=response), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=(ssh_key,)), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()):
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.query_one("#username-input", Input).value = "testuser"
+            screen.query_one("#username-status", Label).update("Auto-detected: testuser")
+
+            await pilot.click("#username-next")
+            await pilot.pause(delay=0.3)
+            await pilot.click("#discovery-back")
+            await pilot.pause()
+
+            assert screen.current_stage.value == "step-username"
+            assert screen.query_one("#username-input", Input).value == "testuser"
+            assert str(screen.query_one("#username-status", Label).render()) == "Auto-detected: testuser"
+            assert len(list(screen.query("#username-input"))) == 1
+            assert len(list(screen.query("#username-next"))) == 1
+
+
+async def test_setup_back_nav_remote_preserves_discovery_rows_and_selection(no_auto_setup):
+    response = httpx.Response(
+        200,
+        request=httpx.Request("GET", "https://api.github.com/users/testuser"),
+    )
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
+    gpg_key = GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096")
+
+    with patch("cc_sentiment.tui.screens.setup.httpx.get", return_value=response), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=(ssh_key,)), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=(gpg_key,)), \
+         patch.object(SetupScreen, "check_remotes", new=Mock()) as mock_check_remotes:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.query_one("#username-input", Input).value = "testuser"
+
+            await pilot.click("#username-next")
+            await pilot.pause(delay=0.3)
+
+            table = screen.query_one("#key-table", DataTable)
+            radio = screen.query_one("#key-select", RadioSet)
+            await pilot.click(list(screen.query("#key-select RadioButton").results(RadioButton))[1])
+            await pilot.pause()
+            expected_rows = table_rows(table)
+            expected_labels = radio_labels(radio)
+
+            screen.on_discovery_next()
+            await pilot.pause()
+            await pilot.click("#remote-back")
+            await pilot.pause()
+
+            assert screen.current_stage.value == "step-discovery"
+            assert table_rows(table) == expected_rows
+            assert radio_labels(radio) == expected_labels
+            assert radio.pressed_index == 1
+
+            screen.on_discovery_next()
+            await pilot.pause()
+
+            assert screen.current_stage.value == "step-remote"
+            assert mock_check_remotes.call_count == 2
+
+
+async def test_setup_back_nav_upload_preserves_remote_results_without_rerun(no_auto_setup):
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
+
+    with patch.object(SetupScreen, "_populate_upload_options", new_callable=AsyncMock), \
+         patch.object(SetupScreen, "check_remotes", new=Mock()) as mock_check_remotes:
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.selected_key = ssh_key
+            screen.transition_to(screen.current_stage.__class__.REMOTE)
+            screen.query_one("#remote-next", Button).disabled = False
+            screen.query_one("#remote-status", Label).update("Not linked yet. We can set this up next.")
+            screen.query_one("#remote-checks", Static).update("  ✓ Found on GitHub")
+
+            await pilot.click("#remote-next")
+            await pilot.pause()
+            await pilot.click("#upload-back")
+            await pilot.pause()
+
+            assert screen.current_stage.value == "step-remote"
+            assert str(screen.query_one("#remote-status", Label).render()) == "Not linked yet. We can set this up next."
+            assert str(screen.query_one("#remote-checks", Static).render()) == "  ✓ Found on GitHub"
+            assert screen.query_one("#remote-next", Button).disabled is False
+            assert mock_check_remotes.call_count == 0
+
+
+async def test_setup_back_nav_key_change_resets_downstream_upload_state(no_auto_setup):
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
+    gpg_key = GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096")
+
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=(ssh_key,)), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=(gpg_key,)), \
+         patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True), \
+         patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"), \
+         patch("cc_sentiment.tui.screens.setup.GPGBackend.public_key_text", return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----"), \
+         patch.object(SetupScreen, "check_remotes", new=Mock()):
+        async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.3)
+
+            screen.on_discovery_next()
+            await pilot.pause()
+            screen.query_one("#remote-next", Button).disabled = False
+            await pilot.click("#remote-next")
+            await pilot.pause(delay=0.3)
+            screen.query_one("#upload-result", Label).update("Paste your public key at:\nhttps://github.com/settings/ssh/new")
+
+            await pilot.click("#upload-back")
+            await pilot.pause()
+            await pilot.click("#remote-back")
+            await pilot.pause()
+
+            radio = screen.query_one("#key-select", RadioSet)
+            list(screen.query("#key-select RadioButton").results(RadioButton))[1].toggle()
+            await pilot.pause()
+            assert radio.pressed_index == 1
+
+            screen.on_discovery_next()
+            await pilot.pause()
+            screen.query_one("#remote-next", Button).disabled = False
+            await pilot.click("#remote-next")
+            await pilot.pause(delay=0.3)
+
+            assert screen.current_stage.value == "step-upload"
+            assert screen._upload_actions == ["github-gpg", "openpgp", "manual"]
+            assert radio_labels(screen.query_one("#upload-options", RadioSet)) == [
+                "Link to GitHub",
+                "Publish to keys.openpgp.org",
+                "Show key so I can add it myself",
+            ]
+            assert "github-ssh" not in screen._upload_actions
+            assert "PGP PUBLIC KEY BLOCK" in str(screen.query_one("#upload-key-text", Label).render())
+            assert str(screen.query_one("#upload-result", Label).render()) == ""
+
+
+async def test_setup_rapid_toggle_username_discovery_preserves_widget_state(no_auto_setup):
+    response = httpx.Response(
+        200,
+        request=httpx.Request("GET", "https://api.github.com/users/testuser"),
+    )
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
+    gpg_key = GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096")
+
+    with patch("cc_sentiment.tui.screens.setup.httpx.get", return_value=response), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=(ssh_key,)), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=(gpg_key,)):
+        async with SetupHarness(AppState()).run_test(size=(80, 24)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.query_one("#username-input", Input).value = "testuser"
+
+            await pilot.click("#username-next")
+            await pilot.pause(delay=0.3)
+
+            table = screen.query_one("#key-table", DataTable)
+            radio = screen.query_one("#key-select", RadioSet)
+            expected_rows = table_rows(table)
+            expected_labels = radio_labels(radio)
+            expected_actions_y = current_step_actions(screen).region.y
+
+            for _ in range(5):
+                screen.on_discovery_back()
+                await pilot.pause(delay=0.1)
+                screen.on_username_next()
+                await pilot.pause(delay=0.3)
+
+            assert screen.current_stage.value == "step-discovery"
+            assert screen.query_one("#username-input", Input).value == "testuser"
+            assert table_rows(table) == expected_rows
+            assert radio_labels(radio) == expected_labels
+            assert current_step_actions(screen).region.y == expected_actions_y
+
+
+async def test_setup_short_circuit_auto_success_uses_loading_and_done_only():
+    state = AppState()
+
+    async def fake_run(self) -> tuple[bool, str | None]:
+        self.state.config = SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519"))
+        return True, "testuser"
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new=fake_run), \
+         patch.object(AppState, "save"):
+        async with SetupHarness(state).run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+
+            assert screen.current_stage.value == "step-done"
+            assert [stage.value for stage in screen.transition_history] == [
+                "step-loading",
+                "step-done",
+            ]
+            assert visible_step_ids(screen) == ["step-done"]
+
+
+async def test_setup_content_switcher_single_visible_pane_per_stage(no_auto_setup):
+    async with SetupHarness(AppState()).run_test() as pilot:
+        await pilot.pause(delay=0.3)
+        screen = pilot.app.screen
+
+        for stage in (
+            screen.current_stage.__class__.USERNAME,
+            screen.current_stage.__class__.DISCOVERY,
+            screen.current_stage.__class__.REMOTE,
+            screen.current_stage.__class__.UPLOAD,
+            screen.current_stage.__class__.DONE,
+        ):
+            screen.transition_to(stage)
+            await pilot.pause()
+
+            assert screen.current_stage is stage
+            assert visible_step_ids(screen) == [stage.value]
+
+
+async def test_setup_status_line_reserved_height_across_steps(no_auto_setup):
+    async with SetupHarness(AppState()).run_test(size=(80, 24)) as pilot:
+        await pilot.pause(delay=0.3)
+        screen = pilot.app.screen
+
+        username_y = current_step_actions(screen).region.y
+        screen.query_one("#username-status", Label).update("Username is required")
+        await pilot.pause()
+        assert current_step_actions(screen).region.y == username_y
+
+        screen.transition_to(screen.current_stage.__class__.REMOTE)
+        await pilot.pause()
+        remote_y = current_step_actions(screen).region.y
+        screen.query_one("#remote-status", Label).update("Not linked yet. We can set this up next.")
+        await pilot.pause()
+        assert current_step_actions(screen).region.y == remote_y
+
+        screen.transition_to(screen.current_stage.__class__.UPLOAD)
+        await pilot.pause()
+        upload_y = current_step_actions(screen).region.y
+        screen.query_one("#upload-result", Label).update("Key linked to GitHub. You're all set.")
+        await pilot.pause()
+        assert current_step_actions(screen).region.y == upload_y
 
 
 class CostHarness(App[None]):

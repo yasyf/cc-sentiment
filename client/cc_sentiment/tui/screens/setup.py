@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import suppress
 from dataclasses import dataclass
+from enum import StrEnum
 import shutil
 import subprocess
 import tempfile
@@ -60,6 +61,15 @@ class SetupActionState:
     upload_running: bool = False
 
 
+class SetupStage(StrEnum):
+    LOADING = "step-loading"
+    USERNAME = "step-username"
+    DISCOVERY = "step-discovery"
+    REMOTE = "step-remote"
+    UPLOAD = "step-upload"
+    DONE = "step-done"
+
+
 class SetupScreen(Dialog[bool]):
     ROUGH_BUCKETS_PER_FILE: ClassVar[int] = 6
 
@@ -67,7 +77,7 @@ class SetupScreen(Dialog[bool]):
     SetupScreen > #dialog-box Label { width: 100%; margin: 1 0 0 0; }
     SetupScreen > #dialog-box .step-title { width: 100%; text-style: bold; color: $text; margin: 0 0 1 0; }
     SetupScreen > #dialog-box Input { margin: 0 0 1 0; }
-    SetupScreen > #dialog-box .status { width: 100%; color: $text-muted; margin: 0 0 1 0; }
+    SetupScreen > #dialog-box .status { width: 100%; min-height: 1; color: $text-muted; margin: 0 0 1 0; }
     SetupScreen > #dialog-box .faq { width: 100%; color: $text-muted; margin: 1 0 0 0; }
     SetupScreen > #dialog-box .error { color: $error; }
     SetupScreen > #dialog-box .success { color: $success; }
@@ -89,7 +99,11 @@ class SetupScreen(Dialog[bool]):
         super().__init__()
         self.state = state
         self.actions = SetupActionState()
+        self.transition_history = [SetupStage.LOADING]
+        self._username_status_snapshot = ""
         self._discovered_keys: list[SSHKeyInfo | GPGKeyInfo] = []
+        self._discovery_ready = False
+        self._discovery_identity: str | None = None
         self._generation_mode: str | None = None
         self._generation_radio_index: int | None = None
         self._upload_actions: list[str] = []
@@ -98,7 +112,7 @@ class SetupScreen(Dialog[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog-box"):
-            with ContentSwitcher(initial="step-loading"):
+            with ContentSwitcher(initial=SetupStage.LOADING.value):
                 yield from self.compose_loading_step()
                 yield from self.compose_username_step()
                 yield from self.compose_discovery_step()
@@ -106,26 +120,55 @@ class SetupScreen(Dialog[bool]):
                 yield from self.compose_upload_step()
                 yield from self.compose_done_step()
 
-    def _show_step(self, step_id: str) -> None:
-        self.query_one(ContentSwitcher).current = step_id
-        self.call_after_refresh(self._focus_step_target, step_id)
+    @property
+    def current_stage(self) -> SetupStage:
+        return SetupStage(self.query_one(ContentSwitcher).current)
+
+    def transition_to(self, stage: SetupStage) -> None:
+        previous = self.current_stage
+        if stage is previous:
+            self.call_after_refresh(self._focus_step_target, stage)
+            return
+        match stage:
+            case SetupStage.LOADING:
+                self._reset_discovery_stage()
+                self._reset_remote_stage()
+                self._reset_upload_stage()
+                self._reset_done_stage()
+            case SetupStage.USERNAME | SetupStage.DISCOVERY:
+                self._reset_remote_stage()
+                self._reset_upload_stage()
+                self._reset_done_stage()
+            case SetupStage.REMOTE:
+                if previous is not SetupStage.UPLOAD:
+                    self._reset_remote_stage()
+                self._reset_upload_stage()
+                self._reset_done_stage()
+            case SetupStage.UPLOAD:
+                self._reset_upload_stage()
+                self._reset_done_stage()
+            case SetupStage.DONE:
+                pass
+        self.query_one(ContentSwitcher).current = stage.value
+        self.transition_history.append(stage)
+        self.call_after_refresh(self._focus_step_target, stage)
 
     def _focus_widget(self, widget: Input | Button | RadioSet) -> None:
         if getattr(widget, "disabled", False) or not widget.display:
             return
         widget.focus()
 
-    def _focus_step_target(self, step_id: str) -> None:
-        match step_id:
-            case "step-username":
+    def _focus_step_target(self, stage: SetupStage | str) -> None:
+        match stage if isinstance(stage, SetupStage) else SetupStage(stage):
+            case SetupStage.USERNAME:
                 self._focus_widget(self.query_one("#username-input", Input))
-            case "step-discovery":
+            case SetupStage.DISCOVERY:
                 self._focus_widget(self.query_one("#discovery-next", Button))
-            case "step-remote":
+            case SetupStage.REMOTE:
                 self._focus_widget(self.query_one("#remote-next", Button))
-            case "step-upload":
+            case SetupStage.UPLOAD:
                 self._focus_widget(self.query_one("#upload-go", Button))
-            case "step-done":
+            case SetupStage.DONE:
                 self._focus_widget(self.query_one("#done-btn", Button))
 
     def _finish_username_validation(self) -> None:
@@ -138,15 +181,59 @@ class SetupScreen(Dialog[bool]):
         self.actions.upload_running = False
 
     def _current_primary_button(self) -> Button | None:
-        current = self.query_one(ContentSwitcher).current
         with suppress(NoMatches, StopIteration):
-            step = self.query_one(f"#{current}", Vertical)
+            step = self.query_one(f"#{self.current_stage.value}", Vertical)
             return next(
                 button
                 for button in step.query(Button).results(Button)
                 if button.variant == "primary"
             )
         return None
+
+    def _reset_discovery_stage(self) -> None:
+        table = self.query_one("#key-table", DataTable)
+        radio = self.query_one("#key-select", RadioSet)
+        self._discovered_keys = []
+        self._discovery_ready = False
+        self._discovery_identity = None
+        self._generation_mode = None
+        self._generation_radio_index = None
+        table.clear()
+        table.display = False
+        radio.display = False
+        radio.remove_children()
+        self.query_one("#discovery-status", Label).update("Looking for signing keys on your machine...")
+        self.query_one("#no-keys-msg", Label).update("")
+        self.query_one("#discovery-next", Button).disabled = True
+
+    def _reset_remote_stage(self) -> None:
+        self._key_on_remote = False
+        self._key_on_openpgp = False
+        self.query_one("#remote-status", Label).update("Checking that the dashboard can verify your uploads...")
+        self.query_one("#remote-checks", Static).update("")
+        self.query_one("#remote-next", Button).disabled = True
+
+    def _reset_upload_stage(self) -> None:
+        radio = self.query_one("#upload-options", RadioSet)
+        self._upload_actions = []
+        radio.display = False
+        radio.remove_children()
+        self.query_one("#upload-key-text", Label).update("")
+        self.query_one("#upload-result", Label).update("")
+        self.query_one("#upload-go", Button).disabled = True
+
+    def _reset_done_stage(self) -> None:
+        self.query_one("#done-summary", Label).update("")
+        self.query_one("#done-verify", Label).update("")
+        self.query_one("#done-identify", Static).update("")
+        self.query_one("#done-process", Static).update("")
+        self.query_one("#done-payload", Static).update("")
+        self.query_one("#done-eta", Static).update("")
+
+    def _mount_discovery_options(self, radio_children: list[RadioButton]) -> None:
+        radio = self.query_one("#key-select", RadioSet)
+        radio.mount_all(radio_children)
+        radio.display = True
 
     def compose_loading_step(self) -> ComposeResult:
         with Vertical(id="step-loading"):
@@ -339,13 +426,13 @@ class SetupScreen(Dialog[bool]):
             "[green]You're set up. Ready to upload.[/]"
         )
         self._populate_done_info()
-        self._show_step("step-done")
+        self.transition_to(SetupStage.DONE)
 
     def _on_auto_setup_fail(self, username: str | None) -> None:
         if username:
             self.query_one("#username-input", Input).value = username
             self.query_one("#username-status", Label).update(f"Auto-detected: {username}")
-        self._show_step("step-username")
+        self.transition_to(SetupStage.USERNAME)
 
     @on(Button.Pressed, "#username-next")
     def on_username_next(self) -> None:
@@ -355,12 +442,19 @@ class SetupScreen(Dialog[bool]):
         if not username:
             self.query_one("#username-status", Label).update("[red]Username is required[/]")
             return
+        if username == self.username and self._discovery_ready and self._discovery_identity == username:
+            self.transition_to(SetupStage.DISCOVERY)
+            return
+        self._username_status_snapshot = str(self.query_one("#username-status", Label).render())
         self.username = username
         self.actions.username_validation_running = True
         self.validate_and_discover()
 
     @on(Button.Pressed, "#username-skip")
     def on_username_skip(self) -> None:
+        if self.username == "" and self._discovery_ready and self._discovery_identity == "":
+            self.transition_to(SetupStage.DISCOVERY)
+            return
         self.username = ""
         self._switch_to_discovery()
 
@@ -382,7 +476,12 @@ class SetupScreen(Dialog[bool]):
         self.app.call_from_thread(self._finish_username_validation)
 
     def _switch_to_discovery(self) -> None:
-        self._show_step("step-discovery")
+        should_discover = not self._discovery_ready or self._discovery_identity != self.username
+        if should_discover:
+            self._reset_discovery_stage()
+        self.transition_to(SetupStage.DISCOVERY)
+        if not should_discover:
+            return
         self.discover_keys()
 
     @work(thread=True)
@@ -401,11 +500,17 @@ class SetupScreen(Dialog[bool]):
         status = self.query_one("#discovery-status", Label)
         no_keys = self.query_one("#no-keys-msg", Label)
         next_btn = self.query_one("#discovery-next", Button)
+        table.clear()
+        table.display = False
+        radio.display = False
+        radio.remove_children()
 
         all_keys: list[SSHKeyInfo | GPGKeyInfo] = (
             [*ssh_keys, *gpg_keys] if self.username else list(gpg_keys)
         )
         self._discovered_keys = all_keys
+        self._discovery_ready = True
+        self._discovery_identity = self.username
         self._generation_mode = self._pick_generation_mode()
         self._generation_radio_index = None
 
@@ -428,8 +533,8 @@ class SetupScreen(Dialog[bool]):
             status.update("No signing keys found on your machine.")
             no_keys.update(self._generation_prompt())
             next_btn.disabled = False
-            if self.query_one(ContentSwitcher).current == "step-discovery":
-                self._focus_step_target("step-discovery")
+            if self.current_stage is SetupStage.DISCOVERY:
+                self._focus_step_target(SetupStage.DISCOVERY)
             return
 
         no_keys.update("")
@@ -455,14 +560,13 @@ class SetupScreen(Dialog[bool]):
             self._generation_radio_index = len(all_keys)
 
         if len(radio_children) > 1:
-            radio.display = True
-            radio.mount_all(radio_children)
+            self.call_after_refresh(self._mount_discovery_options, radio_children)
         else:
             radio.display = False
 
         next_btn.disabled = False
-        if self.query_one(ContentSwitcher).current == "step-discovery":
-            self._focus_step_target("step-discovery")
+        if self.current_stage is SetupStage.DISCOVERY:
+            self._focus_step_target(SetupStage.DISCOVERY)
 
         for key in all_keys:
             match key:
@@ -499,7 +603,8 @@ class SetupScreen(Dialog[bool]):
 
     @on(Button.Pressed, "#discovery-back")
     def on_discovery_back(self) -> None:
-        self._show_step("step-username")
+        self.query_one("#username-status", Label).update(self._username_status_snapshot)
+        self.transition_to(SetupStage.USERNAME)
 
     @on(Button.Pressed, "#discovery-next")
     def on_discovery_next(self) -> None:
@@ -612,12 +717,12 @@ Expire-Date: 0
         )
         self._populate_done_info()
         self._finish_discovery_action()
-        self._show_step("step-done")
+        self.transition_to(SetupStage.DONE)
         self.verify_server_config()
 
     def _go_to_remote(self) -> None:
         self._finish_discovery_action()
-        self._show_step("step-remote")
+        self.transition_to(SetupStage.REMOTE)
         self.check_remotes()
 
     @work(thread=True)
@@ -672,7 +777,6 @@ Expire-Date: 0
                     results.append("  [yellow]?[/] Couldn't reach keys.openpgp.org")
 
         self.app.call_from_thread(checks_widget.update, "\n".join(results))
-
         if found:
             self.app.call_from_thread(status.update, "[green]You're set up. Ready to upload.[/]")
             self.app.call_from_thread(self._enable_remote_next)
@@ -685,12 +789,12 @@ Expire-Date: 0
 
     def _enable_remote_next(self) -> None:
         self.query_one("#remote-next", Button).disabled = False
-        if self.query_one(ContentSwitcher).current == "step-remote":
-            self._focus_step_target("step-remote")
+        if self.current_stage is SetupStage.REMOTE:
+            self._focus_step_target(SetupStage.REMOTE)
 
     @on(Button.Pressed, "#remote-back")
     def on_remote_back(self) -> None:
-        self._show_step("step-discovery")
+        self.transition_to(SetupStage.DISCOVERY)
 
     @on(Button.Pressed, "#remote-next")
     async def on_remote_next(self) -> None:
@@ -701,13 +805,15 @@ Expire-Date: 0
             if self._key_on_remote:
                 self._save_and_finish()
             else:
-                self._show_step("step-upload")
+                self.transition_to(SetupStage.UPLOAD)
                 await self._populate_upload_options()
         finally:
             self.actions.remote_action_running = False
 
     async def _populate_upload_options(self) -> None:
         radio = self.query_one("#upload-options", RadioSet)
+        await radio.remove_children()
+        radio.display = False
         has_gh = shutil.which("gh") is not None
         gh_authed = has_gh and await anyio.to_thread.run_sync(KeyDiscovery.gh_authenticated)
         gh_suffix = "" if gh_authed else (" (needs `gh auth login`)" if has_gh else " (needs gh CLI)")
@@ -745,6 +851,7 @@ Expire-Date: 0
             radio.display = False
         else:
             radio.mount_all(options)
+            radio.display = True
 
         pub_text = ""
         match key:
@@ -757,8 +864,8 @@ Expire-Date: 0
             f"[dim]{pub_text[:200]}...[/]" if len(pub_text) > 200 else f"[dim]{pub_text}[/]"
         )
         self.query_one("#upload-go", Button).disabled = False
-        if self.query_one(ContentSwitcher).current == "step-upload":
-            self._focus_step_target("step-upload")
+        if self.current_stage is SetupStage.UPLOAD:
+            self._focus_step_target(SetupStage.UPLOAD)
 
     @on(Button.Pressed, "#upload-go")
     def on_upload_go(self) -> None:
@@ -776,7 +883,7 @@ Expire-Date: 0
 
     @on(Button.Pressed, "#upload-back")
     def on_upload_back(self) -> None:
-        self._show_step("step-remote")
+        self.transition_to(SetupStage.REMOTE)
 
     @work(thread=True)
     def run_upload(self, action: str) -> None:
@@ -872,7 +979,7 @@ Expire-Date: 0
 
         self._populate_done_info()
         self._finish_upload_action()
-        self._show_step("step-done")
+        self.transition_to(SetupStage.DONE)
         self.verify_server_config()
 
     @work()
