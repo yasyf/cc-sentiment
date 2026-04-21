@@ -231,8 +231,7 @@ class CCSentimentApp(App[None]):
         self.set_interval(self.CTA_ROTATE_SECONDS, self.view.rotate_cta)
         if self.setup_only:
             await self._dismiss_boot_screen()
-            await self.push_screen_wait(SetupScreen(self.state))
-            self.exit()
+            await self.push_screen(SetupScreen(self.state), lambda _: self.exit())
             return
         self.run_flow()
 

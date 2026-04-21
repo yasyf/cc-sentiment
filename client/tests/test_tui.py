@@ -3143,6 +3143,23 @@ async def test_ccsentiment_app_pushes_setup_when_no_config(tmp_path: Path):
             assert isinstance(pilot.app.screen, SetupScreen)
 
 
+async def test_ccsentiment_app_setup_only_pushes_setup_without_worker(tmp_path: Path):
+    state = AppState()
+    db_path = tmp_path / "records.db"
+
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
+         patch("cc_sentiment.tui.screens.setup.AutoSetup.find_git_username", return_value=None):
+        app = CCSentimentApp(state=state, db_path=db_path, setup_only=True)
+        app.exit = Mock(wraps=app.exit)
+        async with app.run_test() as pilot:
+            await pilot.pause(delay=0.5)
+            assert isinstance(pilot.app.screen, SetupScreen)
+            await pilot.press("escape")
+            await pilot.pause(delay=0.1)
+
+    app.exit.assert_called_once_with()
+
+
 async def test_ccsentiment_app_claude_engine_shows_cost_review(tmp_path: Path, auth_ok):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
