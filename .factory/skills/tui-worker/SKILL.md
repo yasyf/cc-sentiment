@@ -19,7 +19,7 @@ Any feature that touches:
 
 ## Required Skills
 
-None required to be invoked via the Skill tool. Use direct file tools.
+None. Do **NOT** invoke the `tuistory` skill. Do **NOT** spawn any Task subagent that invokes the `tuistory` skill, runs `uv run cc-sentiment setup`, `cc-sentiment`, `uv run cc-sentiment …` interactively, `script`, `expect`, or any other process that attaches to a terminal. These grab the parent tty and hijack the orchestrator's keyboard input. All behavioral verification in M1/M2 is done through Textual's in-process `Pilot` (inside `pytest`), which runs headless and NEVER touches any tty.
 
 ## Work Procedure
 
@@ -50,11 +50,7 @@ None required to be invoked via the Skill tool. Use direct file tools.
 
 5. **Run the full test suite** — `cd client && uv run pytest tests/test_tui.py -xvs`. All tests green.
 
-6. **Manual TUI smoke check** — Launch the app:
-   ```
-   cd client && timeout 8 uv run cc-sentiment setup < /dev/null 2>&1 | head -80
-   ```
-   Observe that the screen renders. If a real interactive check is needed for this feature, invoke the `tuistory` skill.
+6. **Render verification via Pilot only** — If you need to inspect rendered geometry/text, use `Pilot` in a pytest case: `async with SetupHarness(AppState()).run_test(size=(80, 24)) as pilot: ...` then read `pilot.app.screen` / `widget.region` / `pilot.app.screen.render_line(...)`. **DO NOT** run `uv run cc-sentiment setup`, `cc-sentiment`, `script`, `expect`, `tuistory`, or any subprocess that attaches to a terminal. **DO NOT** spawn Task subagents that invoke the `tuistory` skill or run the setup subprocess. Any such command is forbidden because it captures the orchestrator's tty and hijacks keyboard input into the wrong session. E2E subprocess-level verification belongs exclusively to Milestone 3 (`tui-tests-worker`), inside a pytest fixture with an isolated pty.
 
 7. **Confirm no regression elsewhere** — `cd client && uv run pytest -x` (full client test suite). All green.
 
@@ -74,11 +70,10 @@ Every feature has a `fulfills` list. For each assertion ID, your implementation 
   "verification": {
     "commandsRun": [
       {"command": "cd client && uv run pytest tests/test_tui.py -xvs", "exitCode": 0, "observation": "54 passed, 0 failed"},
-      {"command": "cd client && uv run pytest -x", "exitCode": 0, "observation": "full client suite green"},
-      {"command": "cd client && timeout 8 uv run cc-sentiment setup < /dev/null 2>&1 | head -80", "exitCode": 0, "observation": "username step rendered with Next button rightmost at col 68/80"}
+      {"command": "cd client && uv run pytest -x", "exitCode": 0, "observation": "full client suite green"}
     ],
     "interactiveChecks": [
-      {"action": "Rendered username step at 80x24 via Pilot, captured widget geometry", "observed": "Primary Next button x-offset=54, secondary 'I don't use GitHub' x-offset=30; Spacer absorbs slack"}
+      {"action": "Rendered username step at 80x24 via Pilot (in-process, headless), captured widget geometry", "observed": "Primary Next button x-offset=54, secondary 'I don't use GitHub' x-offset=30; Spacer absorbs slack"}
     ]
   },
   "tests": {
