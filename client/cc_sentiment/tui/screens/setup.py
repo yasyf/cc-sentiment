@@ -1015,14 +1015,14 @@ class SetupScreen(Dialog[bool]):
         )
         self._discovered_keys = all_keys
         self._generation_mode = self._pick_generation_mode()
-        self._generation_radio_index = len(all_keys) if self._generation_mode is not None else None
+        self._generation_radio_index = len(all_keys) if self._generation_mode is not None and not all_keys else None
 
         radio_children = [
             *[
                 RadioButton(self._key_radio_label(key))
                 for key in all_keys
             ],
-            *([RadioButton("Create a new cc-sentiment key")] if self._generation_mode is not None else []),
+            *([RadioButton("Create a new cc-sentiment key")] if self._generation_radio_index is not None else []),
         ]
 
         if not radio_children:
@@ -1045,13 +1045,7 @@ class SetupScreen(Dialog[bool]):
             help_text.update(self._generation_prompt())
         else:
             help_text.update("")
-            hint = (
-                " Pick one, or create a new cc-sentiment key."
-                if self._generation_mode
-                else " Pick one."
-                if len(all_keys) > 1
-                else ""
-            )
+            hint = " Pick one." if len(all_keys) > 1 else ""
             plural = "s" if len(all_keys) != 1 else ""
             self._set_tone(status, f"Found {len(all_keys)} key{plural} on your machine.{hint}")
 
@@ -1130,11 +1124,12 @@ class SetupScreen(Dialog[bool]):
         status = self.query_one("#discovery-status", Static)
         self.app.call_from_thread(self._set_tone, status, "Creating a signing key for you...")
 
-        email = self.username + "@users.noreply.github.com"
+        identity = self.username or "cc-sentiment"
+        email = identity + "@users.noreply.github.com"
         batch_input = f"""%no-protection
 Key-Type: eddsa
 Key-Curve: ed25519
-Name-Real: {self.username}
+Name-Real: {identity}
 Name-Email: {email}
 Expire-Date: 0
 %commit

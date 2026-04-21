@@ -15,7 +15,7 @@ from textual.widgets import Button, ContentSwitcher, DataTable, Input, Label, Ra
 
 from cc_sentiment.models import AppState, ContributorId, GistConfig, GPGConfig, MyStat, SSHConfig
 from cc_sentiment.repo import Repository
-from cc_sentiment.signing import GPGKeyInfo, SSHKeyInfo
+from cc_sentiment.signing import GPGKeyInfo, KeyDiscovery, SSHBackend, SSHKeyInfo
 from cc_sentiment.engines import (
     ClaudeNotAuthenticated,
     ClaudeNotInstalled,
@@ -33,6 +33,7 @@ from cc_sentiment.tui.screens import (
 )
 from cc_sentiment.tui.screens.dialog import Dialog
 from cc_sentiment.tui.screens.setup import (
+    SetupStage,
     VerificationState,
 )
 from cc_sentiment.tui.stages import (
@@ -1666,8 +1667,89 @@ async def test_try_existing_gist_returns_none_when_no_gist_found():
          patch("cc_sentiment.tui.status.KeyDiscovery.find_cc_sentiment_gist_id", return_value=None):
         assert await setup.try_existing_gist("octocat") is None
 
+def test_setup_malformed_gist_list_returns_none_malformed_gist_list() -> None:
+    with (
+        patch.object(KeyDiscovery, "has_tool", return_value=True),
+        patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = subprocess.CompletedProcess(
+            ["gh", "gist", "list"],
+            0,
+            "\n\tcc-sentiment public key\t2 files\tpublic\tupdated\nnot-a-tsv-row\n",
+            "",
+        )
+        assert KeyDiscovery.find_cc_sentiment_gist_id() is None
 
-async def test_setup_no_keys_with_gh_auth_uses_gist_mode(no_auto_setup):
+
+def test_setup_passphrase_ssh_skips_unusable_key_passphrase_ssh() -> None:
+    ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
+
+    with (
+        patch.object(KeyDiscovery, "fetch_github_ssh_keys", return_value=("ssh-ed25519 AAAA key1",)),
+        patch.object(KeyDiscovery, "find_ssh_keys", return_value=(ssh_key,)),
+        patch.object(SSHBackend, "fingerprint", return_value="ssh-ed25519 AAAA"),
+        patch("cc_sentiment.signing.discovery.subprocess.run", side_effect=subprocess.TimeoutExpired(["ssh-keygen"], 2)),
+    ):
+        assert KeyDiscovery.match_ssh_key("testuser") is None
+
+
+def test_setup_multi_ssh_priority_prefers_first_match_multi_ssh_priority() -> None:
+    ed25519 = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host")
+    rsa = SSHKeyInfo(path=Path("/home/.ssh/id_rsa"), algorithm="ssh-rsa", comment="user@host")
+
+    with (
+        patch.object(
+            KeyDiscovery,
+            "fetch_github_ssh_keys",
+            return_value=("ssh-ed25519 AAAA key1", "ssh-rsa BBBB key2"),
+        ),
+        patch.object(KeyDiscovery, "find_ssh_keys", return_value=(ed25519, rsa)),
+        patch.object(KeyDiscovery, "ssh_key_usable", return_value=True),
+        patch.object(SSHBackend, "fingerprint", side_effect=("ssh-ed25519 AAAA", "ssh-rsa BBBB")),
+    ):
+        result = KeyDiscovery.match_ssh_key("testuser")
+
+    assert result is not None
+    assert result.private_key_path == ed25519.path
+
+
+async def test_setup_ssh_over_gpg_prefers_github_ssh_ssh_over_gpg():
+    from cc_sentiment.tui.status import AutoSetup, StatusEmitter
+    from textual.widgets import Static
+
+    state = AppState()
+    widget = Static()
+    setup = AutoSetup(state, StatusEmitter(widget=widget))
+    ssh_config = SSHConfig(
+        contributor_id=ContributorId("octocat"),
+        key_path=Path("/home/.ssh/id_ed25519"),
+    )
+    gpg_key = GPGKeyInfo(
+        fpr="ABCDEF1234567890ABCDEF1234567890ABCDEF12",
+        email="octocat@example.com",
+        algo="ed25519",
+    )
+
+    with (
+        patch.object(AutoSetup, "detect_username", new=AsyncMock(return_value="octocat")),
+        patch.object(AutoSetup, "try_github_ssh", new=AsyncMock(return_value=ssh_config)) as try_github_ssh,
+        patch.object(AutoSetup, "probe_and_save", new=AsyncMock(return_value=True)) as probe_and_save,
+        patch.object(AutoSetup, "try_github_gpg", new=AsyncMock()) as try_github_gpg,
+        patch.object(AutoSetup, "try_existing_gist", new=AsyncMock()) as try_existing_gist,
+        patch.object(AutoSetup, "find_local_gpg", new=AsyncMock(return_value=(gpg_key,))) as find_local_gpg,
+        patch.object(AutoSetup, "try_openpgp", new=AsyncMock()) as try_openpgp,
+    ):
+        assert await setup.run() == (True, "octocat")
+
+    try_github_ssh.assert_awaited_once_with("octocat")
+    probe_and_save.assert_awaited_once_with(ssh_config)
+    try_github_gpg.assert_not_awaited()
+    try_existing_gist.assert_not_awaited()
+    find_local_gpg.assert_not_awaited()
+    try_openpgp.assert_not_awaited()
+
+
+async def test_setup_no_keys_with_gh_auth_uses_gist_mode_generation_gist(no_auto_setup):
     with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True):
@@ -1682,7 +1764,7 @@ async def test_setup_no_keys_with_gh_auth_uses_gist_mode(no_auto_setup):
             assert screen.query_one("#discovery-next", Button).disabled is False
 
 
-async def test_setup_no_gh_auth_with_ssh_keygen_picks_ssh_mode(no_auto_setup):
+async def test_setup_no_gh_auth_with_ssh_keygen_picks_ssh_mode_generation_ssh(no_auto_setup):
     def has_tool(name: str) -> bool:
         return name == "ssh-keygen"
 
@@ -1701,7 +1783,7 @@ async def test_setup_no_gh_auth_with_ssh_keygen_picks_ssh_mode(no_auto_setup):
             assert screen.query_one("#discovery-next", Button).disabled is False
 
 
-async def test_setup_existing_keys_offer_create_new_as_last_option(no_auto_setup):
+async def test_setup_existing_keys_hide_create_new_option_generation_gist(no_auto_setup):
     ssh_keys = (SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host"),)
 
     with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=ssh_keys), \
@@ -1715,13 +1797,12 @@ async def test_setup_existing_keys_offer_create_new_as_last_option(no_auto_setup
             await pilot.pause(delay=0.5)
 
             assert screen._generation_mode == "gist"
-            assert screen._generation_radio_index == 1
-            from textual.widgets import RadioButton
             labels = [str(rb.label) for rb in screen.query("#key-select RadioButton").results(RadioButton)]
-            assert any("Create a new cc-sentiment key" in label for label in labels)
+            assert screen._generation_radio_index is None
+            assert "Create a new cc-sentiment key" not in labels
 
 
-async def test_generate_managed_ssh_key_routes_to_remote(tmp_path: Path, no_auto_setup):
+async def test_setup_generation_ssh_routes_to_remote(tmp_path: Path, no_auto_setup):
     state = AppState()
     key_path = tmp_path / "id_ed25519"
     pub_path = tmp_path / "id_ed25519.pub"
@@ -1752,7 +1833,7 @@ async def test_generate_managed_ssh_key_routes_to_remote(tmp_path: Path, no_auto
             assert screen.query_one(ContentSwitcher).current == "step-remote"
 
 
-async def test_generate_gist_key_saves_gist_config(tmp_path: Path, no_auto_setup, auth_ok):
+async def test_setup_generation_gist_routes_directly_to_done_verified(tmp_path: Path, no_auto_setup, auth_ok):
     state = AppState()
     state_file = tmp_path / "state.json"
     key_path = tmp_path / "id_ed25519"
@@ -1777,6 +1858,50 @@ async def test_generate_gist_key_saves_gist_config(tmp_path: Path, no_auto_setup
             assert state.config.contributor_id == ContributorId("testuser")
             assert state.config.gist_id == "abcdef1234567890abcd"
             assert state.config.key_path == key_path
+            assert screen.query_one(ContentSwitcher).current == "step-done"
+            assert SetupStage.REMOTE not in screen.transition_history
+            assert SetupStage.UPLOAD not in screen.transition_history
+            assert screen.query_one("#done-btn", Button).label == "Contribute my stats"
+
+
+async def test_setup_generation_gpg_routes_to_remote(tmp_path: Path, no_auto_setup):
+    state = AppState()
+    generated_key = GPGKeyInfo(
+        fpr="ABCDEF1234567890ABCDEF1234567890ABCDEF12",
+        email="alice@users.noreply.github.com",
+        algo="ed25519",
+    )
+    batch_inputs: list[str] = []
+
+    def has_tool(name: str) -> bool:
+        return name == "gpg"
+
+    def run_gpg(command: list[str], **kwargs):
+        batch_inputs.append(Path(command[-1]).read_text())
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", side_effect=((), (generated_key,))), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=False), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.has_tool", side_effect=has_tool), \
+         patch("cc_sentiment.tui.screens.setup.subprocess.run", side_effect=run_gpg), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.fetch_openpgp_key", return_value=None):
+        async with SetupHarness(state).run_test(size=(80, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "alice"
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.5)
+
+            screen.on_discovery_next()
+            await pilot.pause(delay=0.5)
+
+            assert batch_inputs
+            assert "Key-Type: eddsa" in batch_inputs[0]
+            assert "Name-Email: alice@users.noreply.github.com" in batch_inputs[0]
+            assert isinstance(screen.selected_key, GPGKeyInfo)
+            assert screen.selected_key.fpr == generated_key.fpr
+            assert screen.query_one(ContentSwitcher).current == "step-remote"
 
 
 async def test_setup_upload_options_gpg_shows_openpgp(no_auto_setup):

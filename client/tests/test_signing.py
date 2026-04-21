@@ -63,7 +63,8 @@ class TestKeyDiscovery:
     @patch.object(KeyDiscovery, "find_ssh_keys")
     def test_match_ssh_key_success(self, mock_find: MagicMock, mock_fetch: MagicMock) -> None:
         mock_find.return_value = (SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment=""),)
-        with patch.object(SSHBackend, "fingerprint", return_value="ssh-ed25519 AAAA"):
+        with patch.object(KeyDiscovery, "ssh_key_usable", return_value=True), \
+             patch.object(SSHBackend, "fingerprint", return_value="ssh-ed25519 AAAA"):
             result = KeyDiscovery.match_ssh_key("testuser")
 
         assert result is not None
@@ -73,7 +74,8 @@ class TestKeyDiscovery:
     @patch.object(KeyDiscovery, "find_ssh_keys")
     def test_match_ssh_key_no_match(self, mock_find: MagicMock, mock_fetch: MagicMock) -> None:
         mock_find.return_value = (SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment=""),)
-        with patch.object(SSHBackend, "fingerprint", return_value="ssh-ed25519 CCCC"):
+        with patch.object(KeyDiscovery, "ssh_key_usable", return_value=True), \
+             patch.object(SSHBackend, "fingerprint", return_value="ssh-ed25519 CCCC"):
             result = KeyDiscovery.match_ssh_key("testuser")
 
         assert result is None

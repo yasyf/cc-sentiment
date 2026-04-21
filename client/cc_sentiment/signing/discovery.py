@@ -49,6 +49,22 @@ class KeyDiscovery:
         )
 
     @staticmethod
+    def ssh_key_usable(path: Path) -> bool:
+        if not KeyDiscovery.has_tool("ssh-keygen"):
+            return False
+        try:
+            result = subprocess.run(
+                ["ssh-keygen", "-y", "-f", str(path)],
+                capture_output=True,
+                text=True,
+                stdin=subprocess.DEVNULL,
+                timeout=2,
+            )
+        except subprocess.TimeoutExpired:
+            return False
+        return result.returncode == 0
+
+    @staticmethod
     def find_gpg_keys() -> tuple[GPGKeyInfo, ...]:
         if not KeyDiscovery.has_tool("gpg"):
             return ()
@@ -149,6 +165,8 @@ class KeyDiscovery:
         if not github_keys:
             return None
         for info in cls.find_ssh_keys():
+            if not cls.ssh_key_usable(info.path):
+                continue
             local_fp = SSHBackend(private_key_path=info.path).fingerprint()
             if any(" ".join(gk.split()[:2]) == local_fp for gk in github_keys):
                 return SSHBackend(private_key_path=info.path)
@@ -209,7 +227,13 @@ class KeyDiscovery:
         if result.returncode != 0:
             return None
         return next(
-            (cols[0] for line in result.stdout.splitlines() if (cols := line.split("\t")) and len(cols) >= 2 and cols[1] == GIST_DESCRIPTION),
+            (
+                gist_id
+                for line in result.stdout.splitlines()
+                if len(cols := [col.strip() for col in line.split("\t")]) >= 2
+                and (gist_id := cols[0])
+                and cols[1] == GIST_DESCRIPTION
+            ),
             None,
         )
 
