@@ -6,10 +6,13 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from cc_sentiment.models import AppState, ContributorId, SSHConfig
 from tests.tuistory.harness import HarnessResult, HarnessRunner
@@ -231,11 +234,67 @@ HARNESS_PROCESS_PATTERNS = (
     "uv run cc-sentiment setup",
     "tests.tuistory.fake_bin",
 )
+HOME_PATTERN = re.compile(r"(?:^|\s)HOME=(?P<home>\S+)")
 
 
-def process_table() -> list[tuple[int, str]]:
-    return [
-        (int(pid_text), command)
+@dataclass(frozen=True)
+class ProcessEntry:
+    pid: int
+    command: str
+
+
+@dataclass(frozen=True)
+class HarnessScope:
+    session: str
+    scope_root: Path
+    fake_bin_dir: Path
+    output_dir: Path
+    home_dir: Path
+    mitm_pid: int
+    mitm_confdir: Path
+    mitm_scenario_path: Path
+    current_pid: int
+
+    @property
+    def session_port(self) -> str:
+        tail = self.session.rsplit("-", 1)[-1]
+        return tail if tail.isdigit() else ""
+
+    @property
+    def markers(self) -> tuple[str, ...]:
+        return tuple(
+            marker
+            for marker in (
+                self.session,
+                self.session_port,
+                str(self.scope_root),
+                str(self.fake_bin_dir),
+                str(self.output_dir),
+                str(self.home_dir),
+                str(self.mitm_confdir),
+                str(self.mitm_scenario_path),
+            )
+            if marker
+        )
+
+    @classmethod
+    def from_result(cls, result: HarnessResult) -> HarnessScope:
+        return cls(
+            session=str(result.state["session"]),
+            scope_root=Path(result.state["scope_root"]).resolve(),
+            fake_bin_dir=Path(result.state["fake_bin_dir"]).resolve(),
+            output_dir=result.output_dir.resolve(),
+            home_dir=Path(result.state["home_dir"]).resolve(),
+            mitm_pid=int(result.state["mitm_pid"]),
+            mitm_confdir=Path(result.state["mitm_confdir"]).resolve(),
+            mitm_scenario_path=Path(result.state["mitm_scenario_path"]).resolve(),
+            current_pid=os.getpid(),
+        )
+
+
+def process_table() -> tuple[ProcessEntry, ...]:
+    return tuple(
+        ProcessEntry(pid=int(pid_text), command=command)
         for line in subprocess.run(
             ["ps", "-Eww", "-o", "pid=,command="],
             check=True,
@@ -245,29 +304,173 @@ def process_table() -> list[tuple[int, str]]:
         if (stripped := line.strip())
         if (pid_text := stripped.split(" ", 1)[0]).isdigit()
         if (command := stripped.partition(" ")[2])
-    ]
+    )
+
+
+def process_home(entry: ProcessEntry) -> str | None:
+    if sys.platform.startswith("linux"):
+        environ_path = Path("/proc") / str(entry.pid) / "environ"
+        if not environ_path.exists():
+            return None
+        try:
+            return next(
+                item.partition(b"=")[2].decode(errors="ignore")
+                for item in environ_path.read_bytes().split(b"\0")
+                if item.startswith(b"HOME=")
+            )
+        except (OSError, StopIteration):
+            return None
+    return match.group("home") if (match := HOME_PATTERN.search(entry.command)) else None
+
+
+def path_is_inside(root: Path, value: str) -> bool:
+    try:
+        return Path(value).resolve().is_relative_to(root)
+    except OSError:
+        return False
+
+
+def lsof_scope(scope_root: Path) -> str:
+    completed = subprocess.run(
+        ["lsof", "+D", str(scope_root)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode in {0, 1}, completed.stderr or completed.stdout
+    return completed.stdout
+
+
+def named_process_matches(scope: HarnessScope, entries: tuple[ProcessEntry, ...]) -> tuple[str, ...]:
+    return tuple(
+        f"{entry.pid} {entry.command}"
+        for entry in entries
+        if entry.pid != scope.mitm_pid
+        if any(pattern in entry.command for pattern in HARNESS_PROCESS_PATTERNS)
+        if any(marker in entry.command for marker in scope.markers)
+    )
+
+
+def home_descendant_matches(scope: HarnessScope, entries: tuple[ProcessEntry, ...]) -> tuple[str, ...]:
+    return tuple(
+        f"{entry.pid} HOME={home} {entry.command}"
+        for entry in entries
+        if entry.pid not in {scope.current_pid, scope.mitm_pid}
+        if (home := process_home(entry))
+        if path_is_inside(scope.scope_root, home)
+    )
+
+
+def fd_scope_matches(scope: HarnessScope, lsof_output: str) -> tuple[str, ...]:
+    lines = tuple(line for line in lsof_output.splitlines() if line.strip())
+    rows = lines[1:] if lines and lines[0].lstrip().startswith("COMMAND") else lines
+    return tuple(
+        line
+        for line in rows
+        if (parts := line.split())
+        if len(parts) >= 2 and parts[1].isdigit()
+        if int(parts[1]) not in {scope.current_pid, scope.mitm_pid}
+    )
+
+
+def orphan_process_message(label: str, matches: tuple[str, ...]) -> str:
+    return "" if not matches else f"{label}:\n" + "\n".join(f"  - {match}" for match in matches)
+
+
+def assert_scope_clean(
+    scope: HarnessScope,
+    entries: tuple[ProcessEntry, ...],
+    lsof_output: str,
+) -> None:
+    named = named_process_matches(scope, entries)
+    homes = home_descendant_matches(scope, entries)
+    fds = fd_scope_matches(scope, lsof_output)
+    assert not any((named, homes, fds)), "\n".join(
+        section
+        for section in (
+            "Harness-owned processes escaped teardown.",
+            orphan_process_message("Process-name scan", named),
+            orphan_process_message("HOME scan", homes),
+            orphan_process_message("FD scan", fds),
+        )
+        if section
+    )
 
 
 def assert_no_setup_processes(result: HarnessResult) -> None:
-    home_dir = str(Path(result.state["home_dir"]).resolve())
-    scope_root = str(Path(result.state["scope_root"]).resolve())
-    fake_bin_dir = str(Path(result.state["fake_bin_dir"]).resolve())
-    mitm_confdir = str(Path(result.state["mitm_confdir"]).resolve())
-    mitm_scenario_path = str(Path(result.state["mitm_scenario_path"]).resolve())
-    session = str(result.state["session"])
-    mitm_pid = int(result.state["mitm_pid"])
-    output_dir = str(result.output_dir.resolve())
-    markers = (session, scope_root, fake_bin_dir, output_dir, home_dir, mitm_confdir, mitm_scenario_path)
-    matches = [
-        f"{pid} {command}"
-        for pid, command in process_table()
-        if f"HOME={home_dir}" in command or (
-            any(pattern in command for pattern in HARNESS_PROCESS_PATTERNS)
-            and any(marker in command for marker in markers)
-            and pid != mitm_pid
+    scope = HarnessScope.from_result(result)
+    assert_scope_clean(scope, process_table(), lsof_scope(scope.scope_root))
+
+
+def synthetic_scope(tmp_path: Path) -> HarnessScope:
+    scope_root = tmp_path / "scope"
+    return HarnessScope(
+        session="cc-sentiment-synthetic-43210",
+        scope_root=scope_root,
+        fake_bin_dir=scope_root / "fake-bin",
+        output_dir=scope_root / "out",
+        home_dir=scope_root / "home",
+        mitm_pid=42420,
+        mitm_confdir=tmp_path / "mitm",
+        mitm_scenario_path=tmp_path / "scenario.json",
+        current_pid=99999,
+    )
+
+
+def test_assert_no_setup_processes_passes_for_clean_scope(tmp_path: Path) -> None:
+    scope = synthetic_scope(tmp_path)
+    assert_scope_clean(
+        scope,
+        (
+            ProcessEntry(scope.mitm_pid, f"mitmdump --set confdir={scope.mitm_confdir} TUISTORY_PORT={scope.session_port}"),
+            ProcessEntry(77777, "tuistory relay --port 9999"),
+        ),
+        "COMMAND   PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME\n",
+    )
+
+
+def test_assert_no_setup_processes_rejects_named_harness_process(tmp_path: Path) -> None:
+    scope = synthetic_scope(tmp_path)
+    with pytest.raises(AssertionError, match="Process-name scan") as error:
+        assert_scope_clean(
+            scope,
+            (
+                ProcessEntry(77777, f"tuistory relay --session {scope.session} TUISTORY_PORT={scope.session_port}"),
+            ),
+            "",
         )
-    ]
-    assert not matches
+    assert "77777" in str(error.value)
+
+
+def test_assert_no_setup_processes_rejects_home_descendant_process(tmp_path: Path) -> None:
+    scope = synthetic_scope(tmp_path)
+    leaked_home = scope.home_dir / "nested"
+    with pytest.raises(AssertionError, match="HOME scan") as error:
+        assert_scope_clean(
+            scope,
+            (
+                ProcessEntry(88888, f"/usr/bin/python3 worker HOME={leaked_home}"),
+            ),
+            "",
+        )
+    assert str(leaked_home) in str(error.value)
+
+
+def test_assert_no_setup_processes_rejects_tmpdir_fd_leak(tmp_path: Path) -> None:
+    scope = synthetic_scope(tmp_path)
+    leaked_path = scope.scope_root / "home" / ".gnupg" / "S.gpg-agent"
+    with pytest.raises(AssertionError, match="FD scan") as error:
+        assert_scope_clean(
+            scope,
+            (),
+            "\n".join(
+                (
+                    "COMMAND   PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME",
+                    f"python3 99998 yasyf cwd DIR 1,4 96 123 {leaked_path}",
+                )
+            ),
+        )
+    assert str(leaked_path) in str(error.value)
 
 
 def normalize_engine_copy(text: str) -> str:

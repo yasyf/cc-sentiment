@@ -13,6 +13,7 @@ import pytest
 
 from cc_sentiment.models import AppState, ContributorId, SSHConfig
 from tests.tuistory.harness import HarnessResult, HarnessRunner
+from tests.tuistory.runtime_log import RuntimeLog
 
 USERNAME = "alice"
 VERIFY_URL = "https://anetaco--cc-sentiment-api-serve.modal.run/verify"
@@ -23,7 +24,6 @@ KEY_MATERIAL_PATTERN = re.compile("[A-Za-z0-9+/]{12,}")
 ELAPSED_PATTERN = re.compile(r"Waiting for your key to propagate… \d+:\d{2}")
 DISCOVERY_GPG_PATTERN = re.compile(r"GPG · [0-9A-F ]+(?:…|\.\.\.) [0-9A-F ]+ · a@b\.co")
 RADIO_ROW_PATTERN = re.compile(r"([●○])▌\s+(SSH · .*?|GPG · .*?)\s+▎")
-MOUSE_EVENT_PATTERN = re.compile(rb"\x1b\[<(?P<button>\d+);(?P<x>\d+);(?P<y>\d+)(?P<state>[Mm])")
 
 
 def normalize_snapshot(text: str) -> str:
@@ -269,25 +269,22 @@ def radio_rows(snapshot: str) -> list[tuple[bool, str]]:
 def runtime_mouse_events(result: HarnessResult) -> list[dict[str, int | str]]:
     log_path = result.output_dir / "runtime-input.log"
     assert log_path.exists(), f"Missing runtime input log: {log_path}"
-    events = [
-        {
-            "type": "mouse-down" if match.group("state") == b"M" else "mouse-up",
-            "button": int(match.group("button")),
-            "x": int(match.group("x")),
-            "y": int(match.group("y")),
-        }
-        for match in MOUSE_EVENT_PATTERN.finditer(log_path.read_bytes())
-        if int(match.group("button")) == 0
-    ]
-    return events + [
-        {"type": "click", "button": first["button"], "x": first["x"], "y": first["y"]}
-        for first, second in zip(events, events[1:])
-        if first["type"] == "mouse-down"
-        and second["type"] == "mouse-up"
-        and first["button"] == second["button"]
-        and first["x"] == second["x"]
-        and first["y"] == second["y"]
-    ]
+    return RuntimeLog.mouse_events(log_path)
+
+
+@pytest.mark.parametrize(
+    ("source", "label"),
+    (
+        (b"\x1b[<0;12;34M\x1b[<0;12;34m", "raw"),
+        (b"^[[<0;12;34M^[[<0;12;34m", "caret"),
+    ),
+)
+def test_runtime_log_mouse_parser_flags_raw_and_caret_sequences(source: bytes, label: str) -> None:
+    assert RuntimeLog.mouse_events(source) == [
+        {"type": "mouse-down", "button": 0, "x": 12, "y": 34},
+        {"type": "mouse-up", "button": 0, "x": 12, "y": 34},
+        {"type": "click", "button": 0, "x": 12, "y": 34},
+    ], label
 
 
 def test_back_nav_no_duplicate_radios(tmp_path: Path, harness: HarnessRunner) -> None:
