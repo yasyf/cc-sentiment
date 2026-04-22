@@ -73,6 +73,12 @@ NEVER: invoke the `tuistory` Skill, run `uv run cc-sentiment setup` directly fro
 
 5. **Snapshot conventions** — `client/tests/tuistory/setup/__snapshots__/<scenario>/<step>_<WxH>.txt` (plain text, ANSI stripped). 80×24 snapshots always; 180×68 where width-resilience is asserted.
 
+   **Deterministic snapshots only.** Transient states (especially `loading_*`, mid-progress, mid-network-probe) MUST NOT be snapshotted unless the scenario config explicitly holds the state in place until tuistory confirms capture (e.g. by delaying an HTTP response via the mitmproxy addon). If you cannot guarantee a stable capture point, do NOT snapshot that stage — rely on post-transition stable snapshots (discovery / remote / done / failed). Committing a flaky snapshot blocks every subsequent scenario.
+
+   **Stage-history assertions go through state.json, not snapshots.** If a scenario needs to assert "stage X was/wasn't visited", persist `SetupScreen.transition_history` to the wrapper's exit `state.json` and assert on that. Sampled snapshots can miss transient renders.
+
+   **Keyboard-only assertions need event-log evidence.** Asserting "no mouse clicks were used" by inspecting only the scripted tuistory command list is insufficient — it doesn't prove the runtime didn't synthesize a click. Ensure the wrapper/driver writes the tuistory event log and assert there are zero `click` / `mouse-down` / `mouse-up` events.
+
 6. **Dry-run gate for the first M3 feature** — before authoring scenarios, confirm (ALL via the wrapper script; NEVER in the worker's own foreground shell):
    - `uv tool list | grep mitmproxy` → present.
    - `mitmdump --version` → prints (run as `subprocess.run([...], stdin=DEVNULL)` — non-interactive).
@@ -82,7 +88,15 @@ NEVER: invoke the `tuistory` Skill, run `uv run cc-sentiment setup` directly fro
 
 7. **Run the suite** — `cd client && uv run pytest tests/tuistory -xvs -m "not live"`. All green.
 
-8. **Ensure no orphan processes** — After the suite finishes, the harness-owned process check must be empty: `ps aux | grep -E 'mitmdump|tuistory|cc-sentiment setup|uv run cc-sentiment setup|tests.tuistory.fake_bin' | grep -v grep`. Note: the broader `cc-sentiment` grep also matches unrelated pre-existing user processes on this machine (other sessions' pytest runs, `vite preview` for app/, etc.) — those are not harness orphans. Use the narrower pattern. If the narrower check finds harness-owned procs still running, fix the fixture teardown (send SIGTERM, then SIGKILL after 2s).
+8. **Ensure no orphan processes** — After the suite finishes, the harness-owned process check must be empty. The check has TWO components:
+   (a) Process-name match: `ps aux | grep -E 'mitmdump|tuistory|cc-sentiment setup|uv run cc-sentiment setup|tests.tuistory.fake_bin' | grep -v grep` → must be empty.
+   (b) Per-test HOME descendant match: any process whose `HOME` env points into a per-test tmpdir (e.g. `/tmp/pytest-of-*/tuistory-*` or `/private/tmp/...`) is a harness child that escaped teardown. Parse via `ps -Eo pid,command` (or `lsof` on the tmpdir) and assert zero matches.
+   Note: the broader `cc-sentiment` grep without the narrower terms also matches unrelated pre-existing user processes (other sessions' pytest runs, `vite preview` for app/, pre-existing `keyboxd` under unrelated HOMEs) — those are not harness orphans.
+   If either check finds harness-owned procs, fix the fixture teardown (send SIGTERM, then SIGKILL after 2s). The wrapper `run_scenario.sh` should also kill any temp-HOME descendants on exit.
+
+9. **Driver forced-close semantics** — `driver.py` must default to treating a forced-close (subprocess didn't exit cleanly within timeout) as a FAILURE. Scenarios that intentionally exercise forced-close (e.g. "Escape during loading") must explicitly opt in via `allow_forced_close=True` (or equivalent flag). Never quietly treat timeout as success.
+
+10. **Harness teardown must survive startup failures** — Fixture-level cleanup (mitmdump.terminate, tempdir cleanup, process reaping) must be registered BEFORE any health-check that could raise. Use `try/finally`, `ExitStack.callback(...)`, or `pytest.fixture` with yield inside try/finally. A raised health check must never leak mitmdump.
 
 9. **Confirm no regression** — `cd client && uv run pytest -x`. All green.
 
