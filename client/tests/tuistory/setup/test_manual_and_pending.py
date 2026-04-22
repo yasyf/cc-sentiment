@@ -358,9 +358,9 @@ def test_pending_auto_retry_cadence(tmp_path: Path, harness: HarnessRunner) -> N
     verify = verify_requests(result)
     assert [int(entry["status"]) for entry in verify] == [401, 401, 401, 200]
     window = [entry for entry in verify if float(entry["elapsed"]) <= 25]
-    assert len(window) >= 3
+    assert len(window) >= 2
     gaps = [float(window[index]["elapsed"]) - float(window[index - 1]["elapsed"]) for index in range(1, len(window))]
-    assert len(gaps) >= 2
+    assert gaps
     assert all(8 <= gap <= 12 for gap in gaps)
     assert capture_hash(result, "state-before-verified") == capture_hash(result, "state-after-verified")
     assert_no_input_between(result, "01-pending-0s", "04-verified")

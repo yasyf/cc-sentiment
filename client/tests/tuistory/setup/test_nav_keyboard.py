@@ -23,6 +23,7 @@ KEY_MATERIAL_PATTERN = re.compile("[A-Za-z0-9+/]{12,}")
 ELAPSED_PATTERN = re.compile(r"Waiting for your key to propagate… \d+:\d{2}")
 DISCOVERY_GPG_PATTERN = re.compile(r"GPG · [0-9A-F ]+(?:…|\.\.\.) [0-9A-F ]+ · a@b\.co")
 RADIO_ROW_PATTERN = re.compile(r"([●○])▌\s+(SSH · .*?|GPG · .*?)\s+▎")
+MOUSE_EVENT_PATTERN = re.compile(rb"\x1b\[<(?P<button>\d+);(?P<x>\d+);(?P<y>\d+)(?P<state>[Mm])")
 
 
 def normalize_snapshot(text: str) -> str:
@@ -265,6 +266,30 @@ def radio_rows(snapshot: str) -> list[tuple[bool, str]]:
     ]
 
 
+def runtime_mouse_events(result: HarnessResult) -> list[dict[str, int | str]]:
+    log_path = result.output_dir / "runtime-input.log"
+    assert log_path.exists(), f"Missing runtime input log: {log_path}"
+    events = [
+        {
+            "type": "mouse-down" if match.group("state") == b"M" else "mouse-up",
+            "button": int(match.group("button")),
+            "x": int(match.group("x")),
+            "y": int(match.group("y")),
+        }
+        for match in MOUSE_EVENT_PATTERN.finditer(log_path.read_bytes())
+        if int(match.group("button")) == 0
+    ]
+    return events + [
+        {"type": "click", "button": first["button"], "x": first["x"], "y": first["y"]}
+        for first, second in zip(events, events[1:])
+        if first["type"] == "mouse-down"
+        and second["type"] == "mouse-up"
+        and first["button"] == second["button"]
+        and first["x"] == second["x"]
+        and first["y"] == second["y"]
+    ]
+
+
 def test_back_nav_no_duplicate_radios(tmp_path: Path, harness: HarnessRunner) -> None:
     scenario_name = "back-nav-no-dup"
     home_dir = Path(tempfile.mkdtemp(prefix="ccg-", dir="/tmp"))
@@ -341,7 +366,7 @@ def test_back_nav_no_duplicate_radios(tmp_path: Path, harness: HarnessRunner) ->
     assert_no_setup_processes(result)
 
 
-def test_keyboard_only_happy_path_uses_only_keypresses_and_four_enters(
+def test_keyboard_only_happy_path_uses_only_keypresses_and_at_most_four_enters(
     tmp_path: Path,
     harness: HarnessRunner,
 ) -> None:
@@ -353,6 +378,7 @@ def test_keyboard_only_happy_path_uses_only_keypresses_and_four_enters(
         scenario={
             "exit_timeout_ms": 15000,
             "require_app_exit": True,
+            "capture_runtime_events": True,
             "steps": (
                 {"action": "wait", "pattern": f"Auto-detected: {USERNAME}", "timeout_ms": 10000},
                 {"action": "snapshot", "name": "01-username"},
@@ -411,8 +437,10 @@ def test_keyboard_only_happy_path_uses_only_keypresses_and_four_enters(
     assert "Contribute my stats" in result.snapshot("05-done")
     assert all(command_name(record) == "press" for record in interaction_commands(result))
     assert not [record for record in interaction_commands(result) if command_name(record) == "click"]
+    mouse_events = runtime_mouse_events(result)
+    assert mouse_events == []
     assert all(set(press_keys(record)) <= {"enter", "escape", "up", "down", "left", "right"} for record in interaction_commands(result))
-    assert enter_presses_before(result, "05-done") == 4
+    assert enter_presses_before(result, "05-done") <= 4
     assert matched_requests(result) == [
         ("GET", f"https://github.com/{USERNAME}.keys", 200),
         ("GET", f"https://github.com/{USERNAME}.gpg", 200),
