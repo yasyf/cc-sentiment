@@ -67,23 +67,36 @@ class ScenarioDriver:
         try:
             for step in ScenarioFile.steps(scenario):
                 self.run_step(step)
-            try:
-                app_exit = self.wait_for_app_exit(step_timeout_ms=scenario.get("exit_timeout_ms", 5000))
-            except TimeoutError:
-                self.run_cli("close-session", "close", "-s", self.session, allow_failure=True)
-                if scenario.get("require_app_exit", False):
-                    app_exit = self.wait_for_app_exit(step_timeout_ms=5000)
-                else:
-                    app_exit = self.read_app_exit() or {"returncode": 0, "forced_exit": True}
-            else:
-                self.run_cli("close-session", "close", "-s", self.session, allow_failure=True)
-            self.write_state(app_exit, None)
-            return int(app_exit["returncode"] != 0)
+            app_exit, forced_close = self.finish_session(scenario)
+            app_exit = {**app_exit, "forced_close": forced_close}
+            error = None if not forced_close or scenario.get("allow_forced_close", False) else {
+                "message": "Scenario timed out and required a forced close",
+                "type": "ForcedClose",
+            }
+            self.write_state(app_exit, error)
+            return int(app_exit["returncode"] != 0 or error is not None)
         except Exception as error:
             app_exit = self.read_app_exit()
             self.run_cli("close-session", "close", "-s", self.session, allow_failure=True)
             self.write_state(app_exit, {"message": str(error), "type": error.__class__.__name__})
             return 1
+
+    def finish_session(self, scenario: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        try:
+            app_exit = self.wait_for_app_exit(step_timeout_ms=scenario.get("exit_timeout_ms", 5000))
+        except TimeoutError:
+            self.run_cli("close-session", "close", "-s", self.session, allow_failure=True)
+            try:
+                app_exit = (
+                    self.wait_for_app_exit(step_timeout_ms=5000)
+                    if scenario.get("require_app_exit", True)
+                    else self.read_app_exit()
+                )
+            except TimeoutError:
+                app_exit = self.read_app_exit()
+            return app_exit or {"returncode": 0}, True
+        self.run_cli("close-session", "close", "-s", self.session, allow_failure=True)
+        return app_exit, False
 
     def run_step(self, step: dict[str, Any]) -> None:
         match step["action"]:

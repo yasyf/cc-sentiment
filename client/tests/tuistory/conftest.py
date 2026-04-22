@@ -89,24 +89,23 @@ def mitm(tmp_path_factory: pytest.TempPathFactory) -> Iterator[MitmSession]:
     )
     output = MitmOutput(process.stdout, root / "mitmdump.log")
     output.start()
-    port = output.wait_for_port(10)
-    cert_path = confdir / "mitmproxy-ca-cert.pem"
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        if cert_path.exists():
-            break
-        time.sleep(0.05)
-    else:
-        raise TimeoutError(f"Timed out waiting for mitmproxy CA at {cert_path}")
-    session = MitmSession(
-        port=port,
-        confdir=confdir,
-        scenario_path=scenario_path,
-        process=process,
-        output=output,
-    )
     try:
-        yield session
+        port = output.wait_for_port(10)
+        cert_path = confdir / "mitmproxy-ca-cert.pem"
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if cert_path.exists():
+                break
+            time.sleep(0.05)
+        else:
+            raise TimeoutError(f"Timed out waiting for mitmproxy CA at {cert_path}")
+        yield MitmSession(
+            port=port,
+            confdir=confdir,
+            scenario_path=scenario_path,
+            process=process,
+            output=output,
+        )
     finally:
         process.terminate()
         try:
