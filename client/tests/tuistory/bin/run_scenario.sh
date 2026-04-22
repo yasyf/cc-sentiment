@@ -72,10 +72,15 @@ PY
 )"
 
 command_string="$(python3 - "$project_root" "$fake_bin_dir" "$home_dir" "$proxy_port" "$confdir" "$scenario_config_path" "$app_exit_path" "$session_meta_path" "$fake_bin_log" "$real_gpg" "$real_gh" "$PATH" <<'PY'
+import json
 import shlex
 import sys
+from pathlib import Path
 
 project_root, fake_bin_dir, home_dir, proxy_port, confdir, scenario_config_path, app_exit_path, session_meta_path, fake_bin_log, real_gpg, real_gh, original_path = sys.argv[1:13]
+scenario_path = Path(scenario_config_path)
+scenario_text = scenario_path.read_text() if scenario_path.exists() else ""
+scenario = json.loads(scenario_text) if scenario_text.strip() else {}
 env = {
     "PATH": f"{fake_bin_dir}:{original_path}",
     "HOME": home_dir,
@@ -92,6 +97,10 @@ env = {
     "LANG": "en_US.UTF-8",
     "UV_NO_SYNC": "1",
     "UV_OFFLINE": "1",
+}
+env |= {
+    str(key): str(value)
+    for key, value in dict(scenario.get("env", {})).items()
 }
 pairs = " ".join(f"{key}={shlex.quote(value)}" for key, value in env.items())
 print(
@@ -134,6 +143,36 @@ EOF
     done
     kill -9 "$pid" >/dev/null 2>&1 || true
   fi
+  while IFS= read -r orphan_pid; do
+    [ -n "$orphan_pid" ] || continue
+    kill "$orphan_pid" >/dev/null 2>&1 || true
+    for _ in $(seq 1 50); do
+      kill -0 "$orphan_pid" >/dev/null 2>&1 || break
+      sleep 0.1
+    done
+    kill -9 "$orphan_pid" >/dev/null 2>&1 || true
+  done < <(python3 - "$home_dir" "$$" <<'PY'
+from pathlib import Path
+import subprocess
+import sys
+
+home_dir, shell_pid = sys.argv[1], int(sys.argv[2])
+targets = {home_dir, str(Path(home_dir).resolve())}
+for line in subprocess.run(
+    ["ps", "-ax", "-o", "pid=,command="],
+    check=True,
+    capture_output=True,
+    text=True,
+).stdout.splitlines():
+    pid_text, _, command = line.strip().partition(" ")
+    if not pid_text.isdigit():
+        continue
+    pid = int(pid_text)
+    if pid == shell_pid or not any(target in command for target in targets):
+        continue
+    print(pid)
+PY
+)
 }
 trap cleanup EXIT
 
