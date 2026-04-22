@@ -2845,6 +2845,11 @@ async def test_setup_check_remotes_cancel_on_remote_back(no_auto_setup):
     with patch("cc_sentiment.tui.screens.setup.httpx.get", return_value=response), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=(ssh_key,)), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.has_tool", return_value=True), \
+         patch(
+             "cc_sentiment.signing.discovery.subprocess.run",
+             return_value=subprocess.CompletedProcess(["gh", "auth", "status"], 0, "logged in", "warning: update available"),
+         ) as mock_run, \
          patch.object(SetupScreen, "check_remotes", new=Mock(return_value=remote_worker)):
         async with SetupHarness(AppState()).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
@@ -2861,6 +2866,8 @@ async def test_setup_check_remotes_cancel_on_remote_back(no_auto_setup):
             await pilot.pause()
 
             remote_worker.cancel.assert_called_once()
+            assert mock_run.call_args_list
+            assert {tuple(call.args[0]) for call in mock_run.call_args_list} == {("gh", "auth", "status")}
 
 
 async def test_setup_check_remotes_cancel_on_key_selection_change(no_auto_setup):
