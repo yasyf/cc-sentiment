@@ -1,0 +1,21 @@
+{
+  "featureId": "deflake-check-remotes-cancel-on-remote-back-gh-mock",
+  "reviewedAt": "2026-04-22T14:22:29Z",
+  "commitId": "3bfad19",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The change is narrowly scoped to client/tests/test_tui.py and directly addresses the worker-thread subprocess leak by patching cc_sentiment.signing.discovery.subprocess.run in test_setup_check_remotes_cancel_on_remote_back. The updated assertions verify the remote worker cancellation and confirm only gh auth status subprocess calls are intercepted during the exercised path.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The mission/shared docs do not currently note that the remote-back path can execute KeyDiscovery gh auth checks from a Textual worker thread, where stubbing at higher layers may miss the subprocess boundary. Capturing this test pattern would help prevent similar flakes.",
+      "evidence": "client/tests/test_tui.py:2850 patches cc_sentiment.signing.discovery.subprocess.run for this path; handoff verification documents pre-fix TimeoutExpired(['gh', 'auth', 'status'], 10) and post-fix stability across 20 runs."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed handoff, transcript skeleton, skill, and commit 3bfad19. The feature meets its stated intent with a focused test-only fix, no scope creep, and no blocking code issues found."
+}
