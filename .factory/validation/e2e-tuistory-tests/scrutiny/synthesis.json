@@ -1,0 +1,124 @@
+{
+  "milestone": "e2e-tuistory-tests",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "cd client && uv run pytest -xvs",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "cd /Users/yasyf/Code/cc-sentiment && echo \"cc-sentiment has no typecheck baseline (no pyright/mypy config in project); skipping per services.yaml policy\"",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "cd client && uv run --with ruff ruff check cc_sentiment/tui tests/test_tui.py",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 9,
+    "passed": 3,
+    "failed": 6,
+    "failedFeatures": [
+      "tuistory-mitmproxy-harness",
+      "scenario-happy-path",
+      "scenario-manual-and-pending",
+      "scenario-nav-keyboard-escape",
+      "scenario-width-resilience-and-idempotency",
+      "scenario-invariants-and-regression"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "tuistory-mitmproxy-harness",
+      "severity": "blocking",
+      "description": "client/tests/tuistory/conftest.py starts mitmdump before entering fixture teardown protection; if startup checks fail before yield, process cleanup is skipped and mitmdump can leak."
+    },
+    {
+      "featureId": "tuistory-mitmproxy-harness",
+      "severity": "blocking",
+      "description": "client/tests/tuistory/driver.py can treat timeout-forced closes as success by default (fallback app_exit returncode=0 when require_app_exit is false), allowing false-positive harness passes."
+    },
+    {
+      "featureId": "scenario-manual-and-pending",
+      "severity": "blocking",
+      "description": "client/tests/tuistory/setup/test_manual_and_pending.py over-constrains cadence with len(window) >= 3 in 25s, while the contract requires >=2 polls in that window."
+    },
+    {
+      "featureId": "scenario-nav-keyboard-escape",
+      "severity": "blocking",
+      "description": "client/tests/tuistory/setup/test_nav_keyboard.py asserts exactly 4 Enter presses instead of <=4, rejecting contract-compliant faster flows."
+    },
+    {
+      "featureId": "scenario-nav-keyboard-escape",
+      "severity": "blocking",
+      "description": "client/tests/tuistory/setup/test_nav_keyboard.py checks scripted command types, not tuistory event output, so it does not prove that synthesized click events never occurred."
+    },
+    {
+      "featureId": "scenario-width-resilience-and-idempotency",
+      "severity": "blocking",
+      "description": "client/tests/tuistory/setup/test_resilience.py infers remote-elision from sparse snapshots rather than asserting actual stage transition history; transient remote renders could be missed."
+    },
+    {
+      "featureId": "scenario-invariants-and-regression",
+      "severity": "blocking",
+      "description": "client/tests/tuistory/setup/test_invariants.py orphan check only targets setup process patterns and does not assert mitmdump/relay/temp-home child-process cleanup per feature contract."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills",
+      "suggestion": "Update tui-tests-worker guidance to require deterministic handling of loading snapshots: avoid transient loading goldens unless explicitly synchronized to a stable gate.",
+      "evidence": "scenario-happy-path review failed on loading snapshot race; fix-flaky-ssh-via-gh-loading-snapshot passed by removing unstable loading assertions.",
+      "isSystemic": true
+    },
+    {
+      "target": "skills",
+      "suggestion": "Clarify tui-tests-worker keyboard-only verification to require event-level evidence (tuistory log/output) for no-click assertions, not only script-command inspection.",
+      "evidence": "scenario-nav-keyboard-escape review found test coverage checked scenario command list only, which cannot prove no synthesized click events.",
+      "isSystemic": true
+    },
+    {
+      "target": "skills",
+      "suggestion": "Clarify tui-tests-worker dry-run and harness success criteria: intercepted HTTPS evidence source, app-exit requirements, and process-lifecycle cleanup expectations.",
+      "evidence": "tuistory-mitmproxy-harness review found ambiguity around interception proof and timeout/forced-close success handling.",
+      "isSystemic": true
+    },
+    {
+      "target": "services.yaml",
+      "suggestion": "Add dedicated command coverage for `tests/tuistory` linting and non-tuistory regression guard; remove unsupported pytest-timeout flags from shared shortcuts unless plugin availability is guaranteed.",
+      "evidence": "Reviews flagged timeout-flag mismatches and missing explicit non-tuistory regression command in shared validator shortcuts.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Clarify orphan-process verification contract for M3 scenarios to explicitly include harness-owned mitmdump/relay/setup descendants and acceptable path matching on macOS (/private symlink variants).",
+      "evidence": "scenario-invariants-and-regression review identified mismatch between expected orphan-process scope and implemented assertions.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "scenario-happy-path loading-snapshot blocker",
+      "reason": "superseded by completed fix feature fix-flaky-ssh-via-gh-loading-snapshot (review passed); issue already remediated in current milestone state"
+    },
+    {
+      "observation": "tuistory shim fallback knowledge",
+      "reason": "already documented in .factory/library/tuistory-harness.md"
+    },
+    {
+      "observation": "stale feature metadata mention of loading snapshots",
+      "reason": "mission feature metadata is orchestrator-owned and not directly edited by scrutiny validator"
+    },
+    {
+      "observation": "VAL-CROSS-004 method-specific resume-copy gap",
+      "reason": "contract-level semantics change requires orchestrator decision and is outside direct scrutiny artifact updates"
+    }
+  ],
+  "previousRound": null
+}

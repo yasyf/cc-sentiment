@@ -1,0 +1,39 @@
+{
+  "featureId": "scenario-manual-and-pending",
+  "reviewedAt": "2026-04-22T10:13:36Z",
+  "commitId": "cf860b21b3a7ff45fb87beda21cc669cb0e799a2",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The scenarios exercise manual and pending-to-verified transitions thoroughly, but one cadence assertion is stricter than the feature contract and can fail contract-compliant behavior.",
+    "issues": [
+      {
+        "file": "client/tests/tuistory/setup/test_manual_and_pending.py",
+        "line": 361,
+        "severity": "blocking",
+        "description": "The pending cadence assertion requires `len(window) >= 3` (and `len(gaps) >= 2`), which enforces at least three `/verify` polls inside 25s. The feature contract requires >=2 polls in 25s with 8-12s spacing, so a compliant two-poll implementation would fail this test."
+      },
+      {
+        "file": "client/tests/tuistory/setup/test_manual_and_pending.py",
+        "line": 13,
+        "severity": "non_blocking",
+        "description": "`VERIFY_URL` is hardcoded to a specific Modal hostname and `verify_requests` matches full URL equality. Contract expectations are path-based (`/verify`), so this introduces avoidable host coupling."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "Feature verification instructions and skill procedure still include pytest `--timeout` flags even though this environment lacks `pytest-timeout`; workers must deviate to complete verification.",
+      "evidence": "features.json:897 includes `--timeout=90`; handoff.skillFeedback.deviations for this feature records `unrecognized arguments: --timeout=90` and rerunning without the flag."
+    },
+    {
+      "area": "services",
+      "observation": "The shared service shortcut `test-fast` still uses `--timeout=30`, which appears inconsistent with the current test environment and can cause avoidable validator/worker failures.",
+      "evidence": ".factory/services.yaml:4 defines `test-fast: cd client && uv run pytest -x --timeout=30`; the same timeout-plugin mismatch is documented in this feature handoff."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the transcript skeleton and commit diff for manual/pending scenarios. Coverage is strong overall, but the pending poll-window assertion currently over-constrains the contract (blocking), and verify-log matching is unnecessarily host-specific (non-blocking)."
+}

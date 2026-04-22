@@ -1,0 +1,39 @@
+{
+  "featureId": "scenario-invariants-and-regression",
+  "reviewedAt": "2026-04-22T10:13:26Z",
+  "commitId": "b5f75b25bf81618306437fbbf8d130bdb88ac4e1",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Invariant coverage is strong for honest-state, engine parity, addon/PATH isolation, and network-flap behavior, but orphan-process validation does not match the feature contract scope.",
+    "issues": [
+      {
+        "file": "client/tests/tuistory/setup/test_invariants.py",
+        "line": 223,
+        "severity": "blocking",
+        "description": "`assert_no_setup_processes` only filters for `uv run cc-sentiment setup` under the scenario home root. It does not assert that `mitmdump`, relay/tuistory children, or temp-home child processes are gone after each scenario, despite the feature expectedBehavior requiring an empty `ps aux | grep -E 'mitmdump|cc-sentiment' | grep -v grep` result per scenario."
+      },
+      {
+        "file": "client/tests/tuistory/setup/test_invariants.py",
+        "line": 510,
+        "severity": "non_blocking",
+        "description": "The terminal-state config-at-commit invariant is only exercised with SSH branches (`expected_key_type=\"ssh\"` for all cases), so regressions specific to committed GPG/gist config persistence would not be detected by this feature's scenario set."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `tui-tests-worker` orphan-check guidance appears narrower than what this mission actually needed on macOS temp-home GPG runs.",
+      "evidence": "`client/tests/tuistory/bin/run_scenario.sh:154-163` now scans `ps -ax -o pid=,command=` using both raw and resolved home paths; handoff verification broadened orphan grep to include `keyboxd --homedir /private`."
+    },
+    {
+      "area": "services",
+      "observation": "The feature's non-tuistory regression guard is not captured as a dedicated service command.",
+      "evidence": "`features.json:989` expects `uv run pytest tests/ --ignore=tests/tuistory -x`; `.factory/services.yaml` currently has `test` and `test-tuistory` but no explicit non-tuistory guard command."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Review failed due to one blocking gap: per-scenario orphan-process assertions do not cover the full contract scope. A secondary non-blocking gap remains in config-at-commit key-type coverage."
+}

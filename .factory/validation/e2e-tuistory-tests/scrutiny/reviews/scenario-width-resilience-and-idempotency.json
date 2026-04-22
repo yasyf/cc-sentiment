@@ -1,0 +1,34 @@
+{
+  "featureId": "scenario-width-resilience-and-idempotency",
+  "reviewedAt": "2026-04-22T10:14:06.021186+00:00",
+  "commitId": "a45fe4e55b203474ea7cfdcbf1d6d8799b7795e6",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Width/layout and idempotency coverage is substantial, but remote-elision is not validated against actual stage transition history and can miss transient remote renders.",
+    "issues": [
+      {
+        "file": "client/tests/tuistory/setup/test_resilience.py",
+        "line": 540,
+        "severity": "blocking",
+        "description": "`test_remote_elision_skips_remote_history` derives `stage_history` from four sampled snapshots rather than asserting the real `ContentSwitcher.current` transition history required by the feature contract. A brief render of the remote stage between sampling points (0.15s/0.40s) would not be detected, so remote-step elision is not fully proven."
+      },
+      {
+        "file": "client/tests/tuistory/setup/test_resilience.py",
+        "line": 613,
+        "severity": "non_blocking",
+        "description": "`test_resize_mid_pending_preserves_counter_and_retry_cadence` confirms two 401 probes and ~10s cadence, but it does not explicitly assert that at least one probe happened between the t1 and t2 snapshots. Correlating probe elapsed values with snapshot command elapsed values would make the assertion stricter."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "services",
+      "observation": "The mission lint command omits `tests/tuistory`, so validator lint coverage does not include files changed by this feature.",
+      "evidence": ".factory/services.yaml:28 runs `ruff check cc_sentiment/tui tests/test_tui.py` only, while this feature changed `client/tests/tuistory/setup/test_resilience.py`; the handoff had to run an extra ad-hoc lint command covering `tests/tuistory`."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Review failed due to insufficiently robust proof of remote-step elision: the test samples snapshots instead of asserting actual stage transition history, leaving a transient-remote false-negative gap."
+}

@@ -1,0 +1,34 @@
+{
+  "featureId": "scenario-nav-keyboard-escape",
+  "reviewedAt": "2026-04-22T10:13:35Z",
+  "commitId": "048b4bd",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature adds strong scenario coverage for back-nav integrity, keyboard-only traversal, auto-success enter budget, and stage-specific Escape cancellation, but two assertions do not faithfully encode the contract and can produce incorrect outcomes.",
+    "issues": [
+      {
+        "file": "client/tests/tuistory/setup/test_nav_keyboard.py",
+        "line": 415,
+        "severity": "blocking",
+        "description": "The keyboard budget contract is '≤ 4 Enter presses' for the non-auto happy path, but the test hard-codes '== 4'. This will fail valid implementations that reach Done in fewer than 4 Enter presses, turning a compliant optimization into a regression."
+      },
+      {
+        "file": "client/tests/tuistory/setup/test_nav_keyboard.py",
+        "line": 412,
+        "severity": "blocking",
+        "description": "The 'no synthesized click' requirement is not actually verified against tuistory event output. The test only checks recorded driver commands from state['commands'] (see interaction_commands helper), which proves the scenario script issued only press commands, but does not prove tuistory itself never emitted/synthesized click events during execution."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The tui-tests-worker skill does not explicitly distinguish command-level checks from event-level checks for keyboard-only assertions. This made it easy to satisfy 'no click commands issued' while missing the stronger 'no synthesized click events' requirement.",
+      "evidence": "Skill file .factory/skills/tui-tests-worker/SKILL.md emphasizes snapshot/state/fake-bin assertions; reviewed test uses state command records at client/tests/tuistory/setup/test_nav_keyboard.py:81-85 and 412-413, with no launch/event-log assertion."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed handoff, transcript skeleton, skill, and commit 048b4bd. Result is fail due to two blocking contract mismatches: an overly strict Enter budget assertion and missing event-level verification for synthesized click absence."
+}
