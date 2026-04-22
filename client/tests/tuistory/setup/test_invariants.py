@@ -203,7 +203,19 @@ def run_scenario(
         "app_exit": None,
         "error": {"type": "missing-state", "message": "wrapper did not write state.json"},
     }
-    return HarnessResult(completed=completed, output_dir=output_dir, state=state)
+    return HarnessResult(
+        completed=completed,
+        output_dir=output_dir,
+        state={
+            **state,
+            "home_dir": str(home_dir),
+            "scope_root": str(output_dir.parent),
+            "fake_bin_dir": str(fake_bin_dir),
+            "mitm_pid": harness.mitm.process_pid,
+            "mitm_confdir": str(harness.mitm.confdir),
+            "mitm_scenario_path": str(harness.mitm.scenario_path),
+        },
+    )
 
 
 def assert_success(result: HarnessResult) -> None:
@@ -212,15 +224,50 @@ def assert_success(result: HarnessResult) -> None:
     assert result.app_returncode == 0
 
 
+HARNESS_PROCESS_PATTERNS = (
+    "mitmdump",
+    "tuistory",
+    "cc-sentiment setup",
+    "uv run cc-sentiment setup",
+    "tests.tuistory.fake_bin",
+)
+
+
+def process_table() -> list[tuple[int, str]]:
+    return [
+        (int(pid_text), command)
+        for line in subprocess.run(
+            ["ps", "-Eww", "-o", "pid=,command="],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        if (stripped := line.strip())
+        if (pid_text := stripped.split(" ", 1)[0]).isdigit()
+        if (command := stripped.partition(" ")[2])
+    ]
+
+
 def assert_no_setup_processes(result: HarnessResult) -> None:
-    commands = subprocess.run(
-        ["ps", "-ax", "-o", "command="],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.splitlines()
-    home_root = str(result.output_dir.parent)
-    assert not [line for line in commands if "uv run cc-sentiment setup" in line and home_root in line]
+    home_dir = str(Path(result.state["home_dir"]).resolve())
+    scope_root = str(Path(result.state["scope_root"]).resolve())
+    fake_bin_dir = str(Path(result.state["fake_bin_dir"]).resolve())
+    mitm_confdir = str(Path(result.state["mitm_confdir"]).resolve())
+    mitm_scenario_path = str(Path(result.state["mitm_scenario_path"]).resolve())
+    session = str(result.state["session"])
+    mitm_pid = int(result.state["mitm_pid"])
+    output_dir = str(result.output_dir.resolve())
+    markers = (session, scope_root, fake_bin_dir, output_dir, home_dir, mitm_confdir, mitm_scenario_path)
+    matches = [
+        f"{pid} {command}"
+        for pid, command in process_table()
+        if f"HOME={home_dir}" in command or (
+            any(pattern in command for pattern in HARNESS_PROCESS_PATTERNS)
+            and any(marker in command for marker in markers)
+            and pid != mitm_pid
+        )
+    ]
+    assert not matches
 
 
 def normalize_engine_copy(text: str) -> str:

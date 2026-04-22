@@ -3,6 +3,8 @@ from __future__ import annotations
 from contextlib import suppress
 from dataclasses import dataclass
 from enum import StrEnum
+import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -313,6 +315,10 @@ class SetupScreen(Dialog[bool]):
     @property
     def current_stage(self) -> SetupStage:
         return SetupStage(self.query_one(ContentSwitcher).current)
+
+    @property
+    def transition_history_names(self) -> list[str]:
+        return [stage.name.lower() for stage in self.transition_history]
 
     def transition_to(self, stage: SetupStage, preserve_remote: bool = False) -> None:
         previous = self.current_stage
@@ -902,6 +908,14 @@ class SetupScreen(Dialog[bool]):
     def on_unmount(self) -> None:
         self._cancel_remote_check()
         self._cancel_verify_worker()
+        self._persist_transition_history()
+
+    def _persist_transition_history(self) -> None:
+        if "CC_SENTIMENT_TRANSITION_HISTORY_PATH" not in os.environ:
+            return
+        Path(os.environ["CC_SENTIMENT_TRANSITION_HISTORY_PATH"]).write_text(
+            json.dumps(self.transition_history_names)
+        )
 
     def action_activate_primary(self) -> None:
         if button := self._current_primary_button():

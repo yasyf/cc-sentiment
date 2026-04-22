@@ -14,6 +14,7 @@ class MitmConfig:
     port: int
     confdir: Path
     scenario_path: Path
+    process_pid: int
 
 
 @dataclass(frozen=True)

@@ -497,10 +497,6 @@ def test_remote_elision_skips_remote_history(tmp_path: Path, harness: HarnessRun
                 {"action": "wait", "pattern": "SSH · id_ed25519 · ssh-ed25519", "timeout_ms": 10000},
                 {"action": "snapshot", "name": "01-discovery"},
                 {"action": "press", "keys": ("enter",)},
-                {"action": "sleep", "seconds": 0.15},
-                {"action": "snapshot", "name": "02-after-enter-015"},
-                {"action": "sleep", "seconds": 0.25},
-                {"action": "snapshot", "name": "03-after-enter-040"},
                 {"action": "wait", "pattern": "You're set up. Ready to upload.", "timeout_ms": 10000},
                 {"action": "snapshot", "name": "04-done"},
                 {"action": "press", "keys": ("escape",)},
@@ -534,13 +530,12 @@ def test_remote_elision_skips_remote_history(tmp_path: Path, harness: HarnessRun
     )
 
     assert_success(result)
-    assert_steps(result, ("01-discovery", "02-after-enter-015", "03-after-enter-040", "04-done"))
+    assert_steps(result, ("01-discovery", "04-done"))
     for step in ("01-discovery", "04-done"):
         assert_snapshot(result, scenario_name, step, "80x24")
-    stage_history = [classify_stage(result.snapshot(step)) for step in result.state["snapshots"]]
-    assert stage_history[0] == "step-discovery"
-    assert stage_history[-1] == "step-done"
-    assert "step-remote" not in stage_history
+    assert result.state["transition_history"][0] == "loading"
+    assert result.state["transition_history"][-1] == "done"
+    assert "remote" not in result.state["transition_history"]
     assert all(
         marker not in result.snapshot(step)
         for step in result.state["snapshots"]

@@ -118,7 +118,12 @@ def mitm(tmp_path_factory: pytest.TempPathFactory) -> Iterator[MitmSession]:
 @pytest.fixture
 def harness(mitm: MitmSession) -> HarnessRunner:
     return HarnessRunner(
-        mitm=MitmConfig(port=mitm.port, confdir=mitm.confdir, scenario_path=mitm.scenario_path),
+        mitm=MitmConfig(
+            port=mitm.port,
+            confdir=mitm.confdir,
+            scenario_path=mitm.scenario_path,
+            process_pid=mitm.process.pid,
+        ),
         wrapper_path=WRAPPER_PATH,
         fake_bin_dir=FAKE_BIN_DIR,
     )

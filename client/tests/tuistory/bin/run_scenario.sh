@@ -31,6 +31,7 @@ session_meta_path="${output_dir}/.session-meta.json"
 state_path="${output_dir}/state.json"
 fake_bin_log="${output_dir}/fake-bin.jsonl"
 event_log_path="${output_dir}/runtime-input.log"
+transition_history_path="${output_dir}/.transition-history.json"
 pid_file="/tmp/tuistory/relay-${daemon_port}.pid"
 real_gpg="$(command -v gpg || true)"
 real_gh="$(command -v gh || true)"
@@ -72,13 +73,13 @@ print(f"cc-sentiment-{re.sub(r'[^a-z0-9_-]+', '-', name.lower())}-{port}")
 PY
 )"
 
-command_string="$(python3 - "$project_root" "$fake_bin_dir" "$home_dir" "$proxy_port" "$confdir" "$scenario_config_path" "$app_exit_path" "$session_meta_path" "$fake_bin_log" "$event_log_path" "$real_gpg" "$real_gh" "$PATH" <<'PY'
+command_string="$(python3 - "$project_root" "$fake_bin_dir" "$home_dir" "$proxy_port" "$confdir" "$scenario_config_path" "$app_exit_path" "$session_meta_path" "$fake_bin_log" "$event_log_path" "$transition_history_path" "$real_gpg" "$real_gh" "$PATH" <<'PY'
 import json
 import shlex
 import sys
 from pathlib import Path
 
-project_root, fake_bin_dir, home_dir, proxy_port, confdir, scenario_config_path, app_exit_path, session_meta_path, fake_bin_log, event_log_path, real_gpg, real_gh, original_path = sys.argv[1:14]
+project_root, fake_bin_dir, home_dir, proxy_port, confdir, scenario_config_path, app_exit_path, session_meta_path, fake_bin_log, event_log_path, transition_history_path, real_gpg, real_gh, original_path = sys.argv[1:15]
 scenario_path = Path(scenario_config_path)
 scenario_text = scenario_path.read_text() if scenario_path.exists() else ""
 scenario = json.loads(scenario_text) if scenario_text.strip() else {}
@@ -91,6 +92,7 @@ env = {
     "NO_PROXY": "localhost,127.0.0.1,::1",
     "CC_SENTIMENT_SCENARIO": scenario_config_path,
     "CC_SENTIMENT_FAKE_BIN_LOG": fake_bin_log,
+    "CC_SENTIMENT_TRANSITION_HISTORY_PATH": transition_history_path,
     "CC_SENTIMENT_REAL_GPG": real_gpg,
     "CC_SENTIMENT_REAL_GH": real_gh,
     "TERM": "xterm-truecolor",
@@ -183,7 +185,7 @@ PY
 trap cleanup EXIT
 
 if ! TUISTORY_PORT="$daemon_port" script -q /dev/null "$bun_path" "$tuistory_cli" launch "$command_string" -s "$session_name" --cols "$cols" --rows "$rows" --cwd "$project_root" >"${output_dir}/launch.log" 2>&1; then
-  printf '{"session":"%s","size":"%s","snapshots":{},"commands":[],"app_exit":null,"error":{"type":"launch","message":"launch failed"}}\n' "$session_name" "$size" >"$state_path"
+  printf '{"session":"%s","size":"%s","snapshots":{},"commands":[],"transition_history":[],"app_exit":null,"error":{"type":"launch","message":"launch failed"}}\n' "$session_name" "$size" >"$state_path"
   exit 1
 fi
 

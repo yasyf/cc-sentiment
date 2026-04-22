@@ -57,6 +57,7 @@ class ScenarioDriver:
         self.cli_path = cli_path
         self.daemon_port = daemon_port
         self.app_exit_path = app_exit_path
+        self.transition_history_path = self.output_dir / ".transition-history.json"
         self.started_at = started_at
         self.records: list[CommandRecord] = []
         self.snapshots: dict[str, str] = {}
@@ -258,6 +259,11 @@ class ScenarioDriver:
             return None
         return json.loads(self.app_exit_path.read_text())
 
+    def read_transition_history(self) -> list[str]:
+        if not self.transition_history_path.exists():
+            return []
+        return [str(stage) for stage in json.loads(self.transition_history_path.read_text())]
+
     def write_state(self, app_exit: dict[str, Any] | None, error: dict[str, Any] | None) -> None:
         state_path = self.output_dir / "state.json"
         state_path.write_text(json.dumps({
@@ -267,6 +273,7 @@ class ScenarioDriver:
             "snapshots": self.snapshots,
             "captures": self.captures,
             "commands": [record.as_dict() for record in self.records],
+            "transition_history": self.read_transition_history(),
             "app_exit": app_exit,
             "error": error,
         }))
