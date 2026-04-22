@@ -58,7 +58,7 @@ Conversation text, file contents, file paths, tool inputs, and tool outputs neve
 | Command | Description |
 |---------|-------------|
 | `cc-sentiment` | Interactive TUI. Sets up if needed, then scores and uploads. |
-| `cc-sentiment setup` | Re-run the setup wizard. Links GitHub and picks a signing key. |
+| `cc-sentiment setup` | Re-run the setup wizard. Auto-detects and links an existing key when possible, otherwise walks through picking or generating a signing key with honest verified / pending / failed end-states. |
 | `cc-sentiment run` | Score new transcripts and upload. Non-interactive; safe for cron, SSH, and launchd. |
 | `cc-sentiment install` | Schedule a daily background run via launchd. |
 | `cc-sentiment uninstall` | Stop and remove the scheduled run. |
