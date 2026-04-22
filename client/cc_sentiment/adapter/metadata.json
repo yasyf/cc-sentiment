@@ -1,0 +1,26 @@
+{
+  "adapter_dtype": "F32",
+  "dataset_digest": "5c84b0392d6d7daa",
+  "cc_sentiment_git_sha": "921c220958b7edfb48d346487180252de2e0f518",
+  "experiment_id": "d3_lora_long__iter500",
+  "mean_exact_acc": 0.6891,
+  "pm1_acc": 0.9412,
+  "std_exact_acc": 0.0,
+  "seeds": [
+    1729
+  ],
+  "mcnemar_p_vs_baseline": 0.774414,
+  "session_resume_tag_acc": 1.0,
+  "per_class_f1": {
+    "1": 0.6087,
+    "2": 0.0,
+    "3": 0.9091,
+    "4": 1.0,
+    "5": 0.9355
+  },
+  "adapter_sha256": "f101c02d91b469708fbd016842436bf3cc15ce916d1a6bd33929ef0b2afc9584",
+  "smoke_eval_sha256": "bd75363b40915391d17c6194f1fe813c72cfaaa1f9b746c72fad2537611c08d3",
+  "mlx_lm_version": "0.31.2",
+  "train_command": "python -m harness.run_lora --experiment-id d3_lora_long --seed 1729 --config configs/d3_lora_long.json (iter 500 checkpoint selected)",
+  "notes": "Single-seed d-series. Class-2 F1 collapses to 0 (predicted as class 1, within \u00b11). Session-resume tag_acc 1.000 (campaign goal)."
+}

@@ -54,7 +54,7 @@ include = ["cc_sentiment*"]
 [tool.setuptools.package-data]
 cc_sentiment = ["*.pyi", "py.typed"]
 "cc_sentiment.patches" = ["*.patch"]
-"cc_sentiment.adapter" = ["adapters.safetensors.zst", "adapter_config.json"]
+"cc_sentiment.adapter" = ["adapters.safetensors.zst", "adapter_config.json", "metadata.json"]
 
 [[tool.setuptools-rust.ext-modules]]
 target = "cc_sentiment._transcripts_rs"
