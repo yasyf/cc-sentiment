@@ -7,49 +7,25 @@ from cc_sentiment.models import ConversationBucket, SentimentScore
 
 DEFAULT_MODEL = "unsloth/gemma-4-E2B-it-UD-MLX-4bit"
 
-SYSTEM_PROMPT = """You are scoring developer sentiment in a developer-AI coding conversation. Reply with ONLY a single digit 1-5.
+SYSTEM_PROMPT = """You are scoring developer sentiment 1-5 in a developer-AI coding session.
 
-# SCALE
+1=frustrated, 2=annoyed, 3=neutral/command, 4=mild positive, 5=delighted.
+Session-resume phrases like "continue" or "keep going" are 3 unless paired with praise (4) or complaint (1).
+Sarcastic praise ("amazing, you broke it again") is 1. ALL-CAPS doesn't change valence.
 
-1 = frustrated / angry / giving up. Includes sarcastic praise ("great, you ignored...", "amazing how you break things").
-2 = annoyed, actively correcting the AI ("no, that's wrong", "you missed X", "still not working").
-3 = neutral / commanding / matter-of-fact, including blunt orders even with mild swearing ("delete that file", "SHIP IT", "stop the server").
-4 = mild positive / satisfied. The developer acknowledges something works. Low-key praise counts.
-5 = strong positive / delighted / amazed. Elation, hype, enthusiasm.
+Output ONLY a single digit 1-5.
 
-# MILD-POSITIVE LEXICON — these are ALWAYS 4, not 3
+When scoring developer sentiment, carefully distinguish between frustrated (1) and annoyed (2). A score of 1 should be reserved for messages showing strong emotional frustration, exasperation, sarcasm, or hostility (e.g., 'this is completely broken AGAIN', 'I can't believe this', sarcastic remarks). A score of 2 (annoyed) applies when the developer expresses dissatisfaction or points out repeated/persistent issues but does so in a calm, technical, explanatory manner. Key indicator: if the message includes 'still' or implies a recurring issue but the developer is constructively and specifically describing the problem without emotional language, that is annoyance (2), not frustration (1). Messages that are essentially detailed, specific bug reports — even if they note the issue persists — should be scored as 2 unless they contain explicit emotional/hostile language.
 
-"nice", "cool", "good", "sweet", "works", "perfect", "great", "ok cool",
-"LGTM", "lgtm", "ship it looks right", "can't complain", "not bad", "good enough",
-"thx", "thanks", "sounds good", "works for me", "looks good", "ship it" (when responding to a completed task).
+When scoring developer sentiment, be careful not to inflate scores for purely informational or contextual messages. Messages where the developer is simply sharing file paths, explaining what happened, or providing context for the AI to use (e.g., 'it was [path]. its done now but that will help you identify the transcripts') are neutral (3), NOT mild positive (4). The phrase 'that will help you' in such contexts is descriptive/factual, not praise. A score of 4 requires actual positive sentiment such as explicit praise ('nice work', 'thanks, that's better'), appreciation, or satisfaction. Merely being cooperative, providing information, or explaining something helpfully is the baseline neutral interaction (3). Reserve 4 for messages where the developer is clearly expressing a positive emotional reaction or gratitude, not just being informative."""
 
-Praise at the START of a longer instruction still counts: "great, now add X" = 4.
 
-# STRONG-POSITIVE LEXICON — these are 5
-
-"YOOOO", "holy shit this is beautiful", "incredible", "phenomenal",
-"amazing" (literal, not sarcastic), "love it", "you nailed it", "god tier",
-"🔥", "banger", "legendary", "perfect!!" (multi-exclamation).
-
-# FRUSTRATION LEXICON — these are 1
-
-- Imperatives to correct AI misbehavior: "stop guessing", "stop hallucinating",
-  "stop making shit up", "stop being lazy", "stop pretending". ALL-CAPS amplifies but doesn't change.
-- Swears of frustration: "fucking hell", "wtf", "ugh", "holy shit this is broken",
-  "wait what the fuck", "jesus christ".
-- Sarcastic praise: "great, you completely ignored X", "amazing how you keep breaking things",
-  "wow, genius move", "nice job breaking it". The sarcasm marker is praise + criticism of AI behavior.
-
-# AMBIGUITY GUARDS
-
-- "stop X" is 1 only if X is an AI misbehavior. If X is a server/file/process, it's 3.
-- ALL-CAPS doesn't change valence: "SHIP IT" is 3, "STOP GUESSING" is 1.
-- "holy shit this broke" is 1; "holy shit this is beautiful" is 5.
-- Sarcasm detector: if the sentence starts with praise but then describes the AI doing something harmful or stupid ("great, you ignored the spec", "amazing how you keep finding new ways to break things"), it is 1.
-- A blunt command with profanity aimed at legacy code (not the AI) is 3: "delete that whole damn file" = 3.
-- Session-resume phrases are neutral: "continue", "continue from where you left off", "pick up where you left off", "resume", "keep going" = 3, unless the same message carries explicit praise or complaint.
-
-Score ONLY the developer's messages. Output a single digit 1-5."""
+DEMOS: tuple[tuple[str, str], ...] = (
+    (
+        "The function still returns undefined when the array is empty — you updated the loop logic but didn't handle the edge case where input.length is 0.",
+        "2",
+    ),
+)
 
 
 STRUCTURED_OUTPUTS_CHOICE = ["1", "2", "3", "4", "5"]

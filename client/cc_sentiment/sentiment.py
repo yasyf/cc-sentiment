@@ -11,6 +11,7 @@ from anyio import to_thread
 
 from cc_sentiment.adapter import AdapterCodec
 from cc_sentiment.engines import DEFAULT_MODEL, NOOP_PROGRESS, SYSTEM_PROMPT
+from cc_sentiment.engines.protocol import DEMOS
 from cc_sentiment.models import ConversationBucket, SentimentScore
 from cc_sentiment.patches import apply_kv_cache_patch
 from cc_sentiment.text import extract_score, format_conversation
@@ -87,15 +88,23 @@ class SentimentClassifier:
         self.score_token_ids = self.compute_score_token_ids(self.tokenizer)
         self.logit_processor = self.make_score_logit_processor(self.score_token_ids)
 
-        self.system_tokens = self.tokenizer.apply_chat_template(
-            [{"role": "system", "content": self.system_prompt}],
+        self.prefix_messages: list[dict[str, str]] = [
+            {"role": "system", "content": self.system_prompt}
+        ]
+        for demo_msg, demo_score in DEMOS:
+            self.prefix_messages.append(
+                {"role": "user", "content": f"CONVERSATION:\nDEVELOPER: {demo_msg}"}
+            )
+            self.prefix_messages.append({"role": "assistant", "content": demo_score})
+        self.prefix_tokens = self.tokenizer.apply_chat_template(
+            self.prefix_messages,
             tokenize=True,
             add_generation_prompt=False,
         )
         self.base_cache = batch_generate(
             self.model,
             self.tokenizer,
-            [self.system_tokens],
+            [self.prefix_tokens],
             max_tokens=1,
             logits_processors=[self.logit_processor],
             return_prompt_caches=True,
@@ -107,12 +116,12 @@ class SentimentClassifier:
         suffixes = [
             self.tokenizer.apply_chat_template(
                 [
-                    {"role": "system", "content": self.system_prompt},
+                    *self.prefix_messages,
                     {"role": "user", "content": f"CONVERSATION:\n{format_conversation(b)}"},
                 ],
                 tokenize=True,
                 add_generation_prompt=True,
-            )[len(self.system_tokens):]
+            )[len(self.prefix_tokens):]
             for b in buckets
         ]
         result = batch_generate(

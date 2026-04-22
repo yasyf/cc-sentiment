@@ -1,26 +1,29 @@
 {
   "adapter_dtype": "F32",
-  "dataset_digest": "5c84b0392d6d7daa",
-  "cc_sentiment_git_sha": "921c220958b7edfb48d346487180252de2e0f518",
-  "experiment_id": "d3_lora_long__iter500",
-  "mean_exact_acc": 0.6891,
-  "pm1_acc": 0.9412,
+  "dataset_digest": "a901a9fb60a98122",
+  "cc_sentiment_git_sha": "8b0acb31b7fd8b6cab1b0a9be47e8d9d526a04b2",
+  "experiment_id": "e5_lora_simba",
+  "mean_exact_acc": 0.9767,
+  "pm1_acc": 0.9845,
   "std_exact_acc": 0.0,
   "seeds": [
     1729
   ],
-  "mcnemar_p_vs_baseline": 0.774414,
+  "mcnemar_p_vs_baseline": 0.0,
   "session_resume_tag_acc": 1.0,
   "per_class_f1": {
-    "1": 0.6087,
-    "2": 0.0,
-    "3": 0.9091,
+    "1": 0.9677,
+    "2": 0.9836,
+    "3": 0.9677,
     "4": 1.0,
-    "5": 0.9355
+    "5": 0.9831
   },
-  "adapter_sha256": "f101c02d91b469708fbd016842436bf3cc15ce916d1a6bd33929ef0b2afc9584",
-  "smoke_eval_sha256": "bd75363b40915391d17c6194f1fe813c72cfaaa1f9b746c72fad2537611c08d3",
+  "adapter_sha256": "564f849354984779d7f1b8f7158a3bf0b7cc1a15a752c7b758bc4449ef287233",
+  "smoke_eval_sha256": "7e737ef74f51992ec73e07c7414b750602d790ad03b2532170123a332a4f8f1b",
   "mlx_lm_version": "0.31.2",
-  "train_command": "python -m harness.run_lora --experiment-id d3_lora_long --seed 1729 --config configs/d3_lora_long.json (iter 500 checkpoint selected)",
-  "notes": "Single-seed d-series. Class-2 F1 collapses to 0 (predicted as class 1, within \u00b11). Session-resume tag_acc 1.000 (campaign goal)."
+  "train_command": "python -m harness.run_lora --experiment-id e5_lora_simba --seed 1729 --config configs/e5_lora_simba.json (iter 500 final checkpoint)",
+  "notes": "e-campaign winner: SIMBA-optimized prompt (instruction + 1 demo as chat turn) + LoRA trained on that format. CONVERSATION: prefix used in training/eval/production for consistency.",
+  "prompt_campaign": "SIMBA (dspy.teleprompt.SIMBA)",
+  "teacher_model": "anthropic/claude-opus-4-6",
+  "student_model": "unsloth/gemma-4-E2B-it-UD-MLX-4bit"
 }

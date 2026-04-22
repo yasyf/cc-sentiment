@@ -90,7 +90,7 @@ class TestShippedMetadata:
 @pytest.mark.slow
 @pytest.mark.skipif(not MLX_AVAILABLE, reason="requires mlx-lm extra")
 class TestSmokeEvalAccuracy:
-    EXACT_ACC_FLOOR: float = 0.65
+    EXACT_ACC_FLOOR: float = 0.90
     SESSION_RESUME_FLOOR: float = 1.0
 
     def _skip_if_incomplete(self) -> None:
@@ -102,7 +102,7 @@ class TestSmokeEvalAccuracy:
     def _predict_all(self) -> list[tuple[int, int, str]]:
         from cc_sentiment.adapter import AdapterCodec as _Codec
         from cc_sentiment.engines.filter import FRUSTRATION_PATTERN
-        from cc_sentiment.engines.protocol import SYSTEM_PROMPT
+        from cc_sentiment.engines.protocol import DEMOS, SYSTEM_PROMPT
         from cc_sentiment.text import extract_score
         from mlx_lm import generate, load
 
@@ -112,9 +112,8 @@ class TestSmokeEvalAccuracy:
         _Codec.decode(tmp / "adapters.safetensors")
         (tmp / "adapter_config.json").write_bytes(_Codec.CONFIG.read_bytes())
 
-        model, tokenizer = load(
-            "unsloth/gemma-4-E2B-it-UD-MLX-4bit", adapter_path=str(tmp)
-        )
+        model, tokenizer = load("unsloth/gemma-4-E2B-it-UD-MLX-4bit", adapter_path=str(tmp))
+
         results: list[tuple[int, int, str]] = []
         for line in SMOKE_EVAL.read_text().splitlines():
             if not line.strip():
@@ -126,13 +125,19 @@ class TestSmokeEvalAccuracy:
             if FRUSTRATION_PATTERN.search(text):
                 pred = 1
             else:
-                out = generate(
-                    model,
-                    tokenizer,
-                    prompt=f"{SYSTEM_PROMPT}\n\nDEVELOPER: {text.strip()}\n\nScore: ",
-                    max_tokens=4,
-                    verbose=False,
+                messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+                for demo_msg, demo_score in DEMOS:
+                    messages.append(
+                        {"role": "user", "content": f"CONVERSATION:\nDEVELOPER: {demo_msg}"}
+                    )
+                    messages.append({"role": "assistant", "content": demo_score})
+                messages.append(
+                    {"role": "user", "content": f"CONVERSATION:\nDEVELOPER: {text.strip()}"}
                 )
+                prompt = tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
+                out = generate(model, tokenizer, prompt=prompt, max_tokens=4, verbose=False)
                 try:
                     pred = int(extract_score(out))
                 except ValueError:
