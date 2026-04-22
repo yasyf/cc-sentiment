@@ -54,6 +54,7 @@ The mission uses **exactly two** TUI testing layers. Do not mix them:
   exec script -q /dev/null tuistory --scenario "$scenario" --size "$size" --out "$out" -- uv run cc-sentiment setup
   ```
   (Exact flags depend on tuistory's CLI; the shape is: `script -q /dev/null tuistory <opts> -- uv run cc-sentiment setup`. The `script -q /dev/null` invocation is the critical pty-isolation step.)
+- Runtime-input capture note: when wrappers use `script -k` to record keyboard/input logs, escape bytes are written in caret notation (`^[` for ESC, `^[[` prefixes for control sequences) rather than raw `\x1b` bytes. Validators must decode caret notation before parsing mouse/key events.
 - Session-scoped `mitmdump` fixture binds to an ephemeral port with `--set confdir=<tmp>` so the CA is per-session (never touches `~/.mitmproxy/`). Mitmdump is spawned via `subprocess.Popen([...], stdin=DEVNULL, start_new_session=True)` — no pty needed (non-interactive).
 - Per-test scenario registration: the mitmproxy addon reads scenario config from `CC_SENTIMENT_SCENARIO` (a file path) and supports stateful scripted responses (counter + `time.monotonic()`).
 - `httpx` already honors `trust_env=True` (default on `httpx.AsyncClient()` in this codebase), so the proxy + CA are picked up without client code changes.
