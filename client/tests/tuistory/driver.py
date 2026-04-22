@@ -21,6 +21,7 @@ class CommandRecord:
     returncode: int
     stdout: str
     stderr: str
+    elapsed: float
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -29,6 +30,7 @@ class CommandRecord:
             "returncode": self.returncode,
             "stdout": self.stdout,
             "stderr": self.stderr,
+            "elapsed": self.elapsed,
         }
 
 
@@ -45,6 +47,7 @@ class ScenarioDriver:
         cli_path: str,
         daemon_port: int,
         app_exit_path: Path,
+        started_at: float,
     ) -> None:
         self.session = session
         self.output_dir = output_dir
@@ -54,6 +57,7 @@ class ScenarioDriver:
         self.cli_path = cli_path
         self.daemon_port = daemon_port
         self.app_exit_path = app_exit_path
+        self.started_at = started_at
         self.records: list[CommandRecord] = []
         self.snapshots: dict[str, str] = {}
         self.captures: dict[str, dict[str, Any]] = {}
@@ -158,6 +162,7 @@ class ScenarioDriver:
                 )
             case "resize":
                 cols, rows = self.parse_size(step.get("size") or step["value"])
+                self.size = f"{cols}x{rows}"
                 self.ensure_success(
                     self.run_cli(
                         step.get("name", "resize"),
@@ -204,6 +209,7 @@ class ScenarioDriver:
             returncode=completed.returncode,
             stdout=completed.stdout,
             stderr=completed.stderr,
+            elapsed=time.monotonic() - self.started_at,
         )
         self.records.append(record)
         if completed.returncode != 0 and not allow_failure:
@@ -254,7 +260,7 @@ class ScenarioDriver:
 
     @classmethod
     def main(cls) -> int:
-        session, output_dir, size, scenario_path, bun_path, cli_path, daemon_port, app_exit_path = sys.argv[1:9]
+        session, output_dir, size, scenario_path, bun_path, cli_path, daemon_port, app_exit_path, started_at = sys.argv[1:10]
         return cls(
             session=session,
             output_dir=Path(output_dir),
@@ -264,6 +270,7 @@ class ScenarioDriver:
             cli_path=cli_path,
             daemon_port=int(daemon_port),
             app_exit_path=Path(app_exit_path),
+            started_at=float(started_at),
         ).run()
 
 

@@ -12,8 +12,8 @@
         ┃                                                              ┃
         ┃   ╭──────────────────────────────────────────────────────╮   ┃
         ┃   │ ssh-ed25519                                          │   ┃
-        ┃   │ AAAAC3NzaC1lZDI1NTE5AAAAIGBDZ1uc1mniCFQUk537FXeo+j3I │   ┃
-        ┃   │ 7uNq9r5a2Xkm8w3U cc-sentiment                        │   ┃
+        ┃   │ AAAAC3NzaC1lZDI1NTE5AAAAIBXG1+waiS58pXa5PRrazqRTMQlL │   ┃
+        ┃   │ F00Ukjy688pX+RkZ cc-sentiment                        │   ┃
         ┃   ╰──────────────────────────────────────────────────────╯   ┃
         ┃                                                              ┃
         ┃                                                              ┃

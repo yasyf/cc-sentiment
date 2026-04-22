@@ -12,12 +12,12 @@
         ┃                                                              ┃
         ┃   ╭──────────────────────────────────────────────────────╮   ┃
         ┃   │ ssh-ed25519                                          │   ┃
-        ┃   │ AAAAC3NzaC1lZDI1NTE5AAAAINzJ2qNMtBYmtd9jUEhxSlLtWxoc │   ┃
-        ┃   │ J9AyvTu/0u9NSFQC cc-sentiment                        │   ┃
+        ┃   │ AAAAC3NzaC1lZDI1NTE5AAAAIFVjm+zjWRvCIm21LlIae+2b9Q▅▅ │   ┃
         ┃   ╰──────────────────────────────────────────────────────╯   ┃
         ┃                                                              ┃
         ┃                                                              ┃
         ┃                                                              ┃
         ┃                         ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔    ┃
+        ┃                               Back         Link my key       ┃
         ┃                                                              ┃
         ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛

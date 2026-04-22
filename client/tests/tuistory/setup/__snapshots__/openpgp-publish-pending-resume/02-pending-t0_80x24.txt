@@ -11,7 +11,7 @@
         ┃   │ The dashboard still can't verify this public key.    │   ┃
         ┃   ╰──────────────────────────────────────────────────────╯   ┃
         ┃                                                              ┃
-        ┃   ⠙Waiting for your key to propagate… 0:00                   ┃
+        ┃   ⠹Waiting for your key to propagate… 0:00                   ┃
         ┃   ╭─ Next steps ─────────────────────────────────────────╮   ┃
         ┃   │ Check your email for the keys.openpgp.org            │   ┃
         ┃   │ verification link, finish publishing the key, then   │   ┃

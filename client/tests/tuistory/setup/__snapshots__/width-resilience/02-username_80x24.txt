@@ -2,22 +2,22 @@
 
         ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
         ┃                                                              ┃
-        ┃   Link your key                                              ┃
-        ┃   Choose how the dashboard can look up your public key.      ┃
+        ┃   Who are you?                                               ┃
+        ┃   Add your GitHub username so we can match the public key    ┃
+        ┃   you already use.                                           ┃
         ┃                                                              ┃
         ┃   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ┃
-        ┃   ▊ ▐●▌ Link via GitHub (gh)                             ▎   ┃
-        ┃   ▊ ▐●▌ Show me the key; I'll add it myself              ▎   ┃
+        ┃   ▊  alice                                               ▎   ┃
         ┃   ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ┃
         ┃                                                              ┃
-        ┃   ╭──────────────────────────────────────────────────────╮   ┃
-        ┃   │ ssh-ed25519                                          │   ┃
-        ┃   │ AAAAC3NzaC1lZDI1NTE5AAAAIHBR32TbhI0nCWgY3pm7xuCi44▅▅ │   ┃
-        ┃   ╰──────────────────────────────────────────────────────╯   ┃
+        ┃   Auto-detected: alice                                       ┃
+        ┃                                                              ┃
+        ┃                                                              ┃
+        ┃                     ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔    ┃
+        ┃                      I don't use GitHub        Next          ┃
+        ┃                     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁    ┃
         ┃                                                              ┃
         ┃                                                              ┃
         ┃                                                              ┃
-        ┃                         ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔    ┃
-        ┃                               Back         Link my key       ┃
         ┃                                                              ┃
         ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛

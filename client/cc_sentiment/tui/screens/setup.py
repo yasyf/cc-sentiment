@@ -1390,6 +1390,7 @@ Expire-Date: 0
                 pub_text = await anyio.to_thread.run_sync(GPGBackend(fpr=f).public_key_text)
 
         self.query_one("#upload-key-text", KeyPreview).text = pub_text
+        self._sync_upload_preview_height()
         self.query_one("#upload-go", Button).disabled = False
         if self.current_stage is SetupStage.UPLOAD:
             self._focus_step_target(SetupStage.UPLOAD)
@@ -1418,6 +1419,15 @@ Expire-Date: 0
         radio = self.query_one("#upload-options", RadioSet)
         idx = radio.pressed_index if radio.display and radio.pressed_index >= 0 else 0
         return self._upload_actions[idx]
+
+    def _sync_upload_preview_height(self) -> None:
+        self.query_one("#upload-key-text", KeyPreview).styles.max_height = (
+            5 if self._selected_upload_action() == "manual" else 4
+        )
+
+    @on(RadioSet.Changed, "#upload-options")
+    def on_upload_option_changed(self) -> None:
+        self._sync_upload_preview_height()
 
     def _apply_selected_config(self) -> None:
         identity = self.username

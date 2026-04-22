@@ -5,19 +5,19 @@
         ┃   Link your key                                              ┃
         ┃   Choose how the dashboard can look up your public key.      ┃
         ┃                                                              ┃
-        ┃   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ┃
-        ┃   ▊ ▐●▌ Link via GitHub (gh)                             ▎   ┃
-        ┃   ▊ ▐●▌ Show me the key; I'll add it myself              ▎   ┃
-        ┃   ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ┃
-        ┃                                                              ┃
         ┃   ╭──────────────────────────────────────────────────────╮   ┃
         ┃   │ ssh-ed25519                                          │   ┃
-        ┃   │ AAAAC3NzaC1lZDI1NTE5AAAAIHBR32TbhI0nCWgY3pm7xuCi44▅▅ │   ┃
+        ┃   │ AAAAC3NzaC1lZDI1NTE5AAAAILYTdpnc/38SY9Pl4SyMAxmh1ONk │   ┃
+        ┃   │ rWXC1tvbrkjZhNDW cc-sentiment                        │   ┃
         ┃   ╰──────────────────────────────────────────────────────╯   ┃
         ┃                                                              ┃
         ┃                                                              ┃
         ┃                                                              ┃
-        ┃                         ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔    ┃
-        ┃                               Back         Link my key       ┃
+        ┃                        ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔    ┃
+        ┃                              Back        Show me the key     ┃
+        ┃                        ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁    ┃
+        ┃                                                              ┃
+        ┃                                                              ┃
+        ┃                                                              ┃
         ┃                                                              ┃
         ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛

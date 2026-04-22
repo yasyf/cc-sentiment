@@ -12,7 +12,7 @@
         ┃                                                              ┃
         ┃   ╭──────────────────────────────────────────────────────╮   ┃
         ┃   │ ssh-ed25519                                          │   ┃
-        ┃   │ AAAAC3NzaC1lZDI1NTE5AAAAIHBR32TbhI0nCWgY3pm7xuCi44▅▅ │   ┃
+        ┃   │ AAAAC3NzaC1lZDI1NTE5AAAAIFNdv7iCUIfzQ8Z+gU39I+ypuG▅▅ │   ┃
         ┃   ╰──────────────────────────────────────────────────────╯   ┃
         ┃                                                              ┃
         ┃                                                              ┃

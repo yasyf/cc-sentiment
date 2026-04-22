@@ -33,6 +33,12 @@ fake_bin_log="${output_dir}/fake-bin.jsonl"
 pid_file="/tmp/tuistory/relay-${daemon_port}.pid"
 real_gpg="$(command -v gpg || true)"
 real_gh="$(command -v gh || true)"
+launch_started="$(python3 - <<'PY'
+import time
+
+print(time.monotonic())
+PY
+)"
 probe_url="$(python3 - "$scenario_config_path" <<'PY'
 import json
 import sys
@@ -166,4 +172,5 @@ python3 -m tests.tuistory.driver \
   "$bun_path" \
   "$tuistory_cli" \
   "$daemon_port" \
-  "$app_exit_path"
+  "$app_exit_path" \
+  "$launch_started"

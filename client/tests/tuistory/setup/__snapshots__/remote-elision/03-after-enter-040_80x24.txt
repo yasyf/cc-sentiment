@@ -7,15 +7,15 @@
         ┃   this key yet.                                              ┃
         ┃                                                              ┃
         ┃   ╭─ pending ────────────────────────────────────────────╮   ┃
-        ┃   │ Signed in as alice.                                  │   ┃
+        ┃   │ Signed in as alice using SSH key id_ed25519.         │   ┃
         ┃   │ The dashboard still can't verify this public key.    │   ┃
         ┃   ╰──────────────────────────────────────────────────────╯   ┃
         ┃                                                              ┃
-        ┃   ⠋Waiting for your key to propagate… 0:02                   ┃
+        ┃   ⠙Waiting for your key to propagate… 0:00                   ┃
         ┃   ╭─ Next steps ─────────────────────────────────────────╮   ┃
-        ┃   │ Check your email for the keys.openpgp.org            │   ┃
-        ┃   │ verification link, finish publishing the key, then   │   ┃
-        ┃   │ retry.                                               │   ┃
+        ┃   │ Paste your public key at                             │   ┃
+        ┃   │ https://github.com/settings/ssh/new, then retry once │   ┃
+        ┃   │ GitHub shows it.                                     │   ┃
         ┃   ╰──────────────────────────────────────────────────────╯   ┃
         ┃                                                              ┃
         ┃                                                              ┃
