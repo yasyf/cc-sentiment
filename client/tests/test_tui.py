@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from html import unescape
 from pathlib import Path
+import re
 import subprocess
 from time import monotonic as wall_monotonic, sleep
 from unittest.mock import AsyncMock, Mock, patch
@@ -232,6 +233,47 @@ async def test_setup_starts_on_loading_then_falls_to_username(no_auto_setup):
         assert pilot.app.screen.query_one(ContentSwitcher).current == "step-username"
 
 
+async def test_setup_screen_state_is_encapsulated_in_dataclasses(no_auto_setup):
+    class BaselineDialog(Dialog[bool]):
+        def compose(self):
+            yield Static("baseline")
+
+    class BaselineHarness(App[None]):
+        def on_mount(self) -> None:
+            self.push_screen(BaselineDialog())
+
+    async with BaselineHarness().run_test() as baseline_pilot:
+        await baseline_pilot.pause()
+        baseline_private = {
+            name
+            for name in vars(baseline_pilot.app.screen)
+            if re.match(r"^_[a-z]+(_[a-z]+)*$", name)
+        }
+
+    async with SetupHarness(AppState()).run_test() as pilot:
+        await pilot.pause(delay=0.3)
+        screen = pilot.app.screen
+        private_attrs = {
+            name
+            for name in vars(screen)
+            if re.match(r"^_[a-z]+(_[a-z]+)*$", name)
+        }
+        reactive_attrs = {name for name in private_attrs if name.startswith("_reactive_")}
+        screen_private = private_attrs - baseline_private - reactive_attrs
+        dir_private = {
+            name
+            for name in dir(screen)
+            if (
+                re.match(r"^_[a-z]+(_[a-z]+)*$", name)
+                and name in vars(screen)
+                and not callable(getattr(screen, name))
+            )
+        } - baseline_private - reactive_attrs
+
+        assert screen_private == set()
+        assert dir_private == set()
+
+
 async def test_setup_empty_username_blocked(no_auto_setup):
     async with SetupHarness(AppState()).run_test() as pilot:
         await pilot.pause(delay=0.3)
@@ -391,7 +433,7 @@ async def test_setup_no_keys_without_gpg_disables_next(no_auto_setup):
 
             assert list(screen.query("#step-discovery DataTable")) == []
             assert radio_labels(screen.query_one("#key-select", RadioSet)) == []
-            assert getattr(screen, "_generation_mode", "unset") is None
+            assert screen.discovery.generation_mode is None
 
 
 async def test_setup_discovery_no_gh_username_hides_ssh_keys(no_auto_setup):
@@ -445,7 +487,7 @@ async def test_setup_remote_check_ssh_found(no_auto_setup):
             screen.check_remotes()
             await pilot.pause(delay=0.5)
 
-            assert screen._key_on_remote is True
+            assert screen.remote_check.key_on_remote is True
             assert screen.query_one("#remote-next", Button).disabled is False
 
 
@@ -463,7 +505,7 @@ async def test_setup_remote_check_ssh_not_found(no_auto_setup):
             screen.check_remotes()
             await pilot.pause(delay=0.5)
 
-            assert screen._key_on_remote is False
+            assert screen.remote_check.key_on_remote is False
 
 
 async def test_setup_remote_elision_skips_visible_remote_step(no_auto_setup):
@@ -863,7 +905,7 @@ async def test_setup_honest_end_state_verified_branch_uses_payload_card_and_cont
                 contributor_id=ContributorId("testuser"),
                 key_path=ssh_key.path,
             )
-            screen._done_summary_text = "Signed in as testuser using SSH key id_ed25519."
+            screen.done_display.summary_text = "Signed in as testuser using SSH key id_ed25519."
             screen.transition_to(screen.current_stage.__class__.DONE)
             screen._set_verification_branch(VerificationState.VERIFIED)
             await pilot.pause(delay=0.2)
@@ -956,7 +998,7 @@ async def test_setup_honest_end_state_failed_branch_retry_button_contract(tmp_pa
                 contributor_id=ContributorId("testuser"),
                 key_path=ssh_key.path,
             )
-            screen._done_summary_text = "Signed in as testuser using SSH key id_ed25519."
+            screen.done_display.summary_text = "Signed in as testuser using SSH key id_ed25519."
             screen.transition_to(screen.current_stage.__class__.DONE)
             screen._set_verification_branch(VerificationState.FAILED)
             await pilot.pause(delay=0.2)
@@ -990,7 +1032,7 @@ async def test_setup_verification_ok_reactive_contribute_visibility(
                 contributor_id=ContributorId("testuser"),
                 key_path=ssh_key.path,
             )
-            screen._done_summary_text = "Signed in as testuser using SSH key id_ed25519."
+            screen.done_display.summary_text = "Signed in as testuser using SSH key id_ed25519."
             screen.transition_to(screen.current_stage.__class__.DONE)
             screen._set_verification_branch(VerificationState.VERIFIED)
             await pilot.pause(delay=0.2)
@@ -1029,7 +1071,7 @@ async def test_setup_rapid_toggle_cta_never_visible_on_non_verified_branch(
                 contributor_id=ContributorId("testuser"),
                 key_path=ssh_key.path,
             )
-            screen._done_summary_text = "Signed in as testuser using SSH key id_ed25519."
+            screen.done_display.summary_text = "Signed in as testuser using SSH key id_ed25519."
             screen.transition_to(screen.current_stage.__class__.DONE)
             screen._set_verification_branch(VerificationState.VERIFIED)
             await pilot.pause(delay=0.2)
@@ -1167,7 +1209,7 @@ async def test_setup_pending_verification_action_instructions_cover_surviving_ac
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.selected_key = selected_key
-            screen._verification_action = action
+            screen.done_display.verification_action = action
             screen.transition_to(screen.current_stage.__class__.DONE)
             screen._set_verification_branch(VerificationState.PENDING)
             await pilot.pause(delay=0.2)
@@ -1335,8 +1377,8 @@ async def test_setup_verify_result_maps_five_xx_and_network_drop_to_identical_pe
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.transition_to(SetupStage.DONE)
-            screen._done_summary_text = "Signed in as testuser using SSH key id_ed25519."
-            screen._verification_action = "github-ssh"
+            screen.done_display.summary_text = "Signed in as testuser using SSH key id_ed25519."
+            screen.done_display.verification_action = "github-ssh"
             screen.verification_poll.restart(fake_clock())
 
             screen._on_verify_result(AuthServerError(status=502))
@@ -1475,14 +1517,14 @@ async def test_setup_link_my_key_collapses_to_one_radioset_and_no_manual_button(
             screen = pilot.app.screen
             screen.username = "testuser"
             screen.selected_key = ssh_key
-            screen._discovered_keys = [ssh_key]
+            screen.discovery.discovered_keys = [ssh_key]
             screen.query_one(ContentSwitcher).current = "step-upload"
             await screen._populate_upload_options()
             await pilot.pause()
 
             assert len(list(screen.query("#step-upload RadioSet"))) == 1
             assert list(screen.query("#upload-skip Button")) == []
-            assert screen._upload_actions == ["github-ssh", "manual"]
+            assert screen.upload_plan.actions == ["github-ssh", "manual"]
             assert radio_labels(screen.query_one("#upload-options", RadioSet)) == [
                 "Link via GitHub (gh)",
                 "Show me the key; I'll add it myself",
@@ -1507,7 +1549,7 @@ async def test_setup_hide_gh_link_option_when_cli_missing(no_auto_setup):
 
             radio = screen.query_one("#upload-options", RadioSet)
 
-            assert screen._upload_actions == ["manual"]
+            assert screen.upload_plan.actions == ["manual"]
             assert radio.display is False
             assert radio_labels(radio) == ["Show me the key; I'll add it myself"]
             assert all("GitHub" not in label for label in radio_labels(radio))
@@ -1532,7 +1574,7 @@ async def test_setup_hide_gh_link_option_when_unauthed(no_auto_setup):
 
             radio = screen.query_one("#upload-options", RadioSet)
 
-            assert screen._upload_actions == ["manual"]
+            assert screen.upload_plan.actions == ["manual"]
             assert radio.display is False
             assert radio_labels(radio) == ["Show me the key; I'll add it myself"]
             assert all("GitHub" not in label for label in radio_labels(radio))
@@ -1556,7 +1598,7 @@ async def test_setup_pre_selected_best_link_option(no_auto_setup):
 
             radio = screen.query_one("#upload-options", RadioSet)
 
-            assert screen._upload_actions == ["github-gpg", "openpgp", "manual"]
+            assert screen.upload_plan.actions == ["github-gpg", "openpgp", "manual"]
             assert radio.pressed_index == 0
             assert radio_labels(radio) == [
                 "Link via GitHub (gh)",
@@ -1581,7 +1623,7 @@ async def test_setup_pre_selected_best_link_option_without_gh_uses_openpgp(no_au
 
             radio = screen.query_one("#upload-options", RadioSet)
 
-            assert screen._upload_actions == ["openpgp", "manual"]
+            assert screen.upload_plan.actions == ["openpgp", "manual"]
             assert radio.pressed_index == 0
             assert radio_labels(radio) == [
                 "Publish to keys.openpgp.org",
@@ -1879,7 +1921,7 @@ async def test_setup_no_keys_with_gh_auth_uses_gist_mode_generation_gist(no_auto
             screen._switch_to_discovery()
             await pilot.pause(delay=0.5)
 
-            assert screen._generation_mode == "gist"
+            assert screen.discovery.generation_mode == "gist"
             assert screen.query_one("#discovery-next", Button).disabled is False
 
 
@@ -1898,7 +1940,7 @@ async def test_setup_no_gh_auth_with_ssh_keygen_picks_ssh_mode_generation_ssh(no
             screen._switch_to_discovery()
             await pilot.pause(delay=0.5)
 
-            assert screen._generation_mode == "ssh"
+            assert screen.discovery.generation_mode == "ssh"
             assert screen.query_one("#discovery-next", Button).disabled is False
 
 
@@ -1915,9 +1957,9 @@ async def test_setup_existing_keys_hide_create_new_option_generation_gist(no_aut
             screen._switch_to_discovery()
             await pilot.pause(delay=0.5)
 
-            assert screen._generation_mode == "gist"
+            assert screen.discovery.generation_mode == "gist"
             labels = [str(rb.label) for rb in screen.query("#key-select RadioButton").results(RadioButton)]
-            assert screen._generation_radio_index is None
+            assert screen.discovery.generation_radio_index is None
             assert "Create a new cc-sentiment key" not in labels
 
 
@@ -2012,10 +2054,10 @@ async def test_setup_generation_gpg_routes_to_remote(tmp_path: Path, no_auto_set
             screen._switch_to_discovery()
             await wait_for_condition(
                 pilot,
-                lambda: screen._generation_mode == "gpg" and screen.query_one("#discovery-next", Button).disabled is False,
+                lambda: screen.discovery.generation_mode == "gpg" and screen.query_one("#discovery-next", Button).disabled is False,
                 lambda: (
                     "Timed out waiting for discovery generation mode to become ready "
-                    f"(stage={screen.current_stage.value}, mode={screen._generation_mode!r}, "
+                    f"(stage={screen.current_stage.value}, mode={screen.discovery.generation_mode!r}, "
                     f"disabled={screen.query_one('#discovery-next', Button).disabled})"
                 ),
             )
@@ -2046,13 +2088,13 @@ async def test_setup_upload_options_gpg_shows_openpgp(no_auto_setup):
             screen = pilot.app.screen
             screen.username = "testuser"
             screen.selected_key = gpg_key
-            screen._discovered_keys = [gpg_key]
+            screen.discovery.discovered_keys = [gpg_key]
             screen.query_one(ContentSwitcher).current = "step-upload"
             await screen._populate_upload_options()
             await pilot.pause()
 
-            assert "github-gpg" in screen._upload_actions
-            assert "openpgp" in screen._upload_actions
+            assert "github-gpg" in screen.upload_plan.actions
+            assert "openpgp" in screen.upload_plan.actions
             assert radio_labels(screen.query_one("#upload-options", RadioSet)) == [
                 "Link via GitHub (gh)",
                 "Publish to keys.openpgp.org",
@@ -2105,10 +2147,10 @@ async def test_setup_failed_retry_for_upload_returns_to_upload(no_auto_setup):
             screen = pilot.app.screen
             screen.username = "testuser"
             screen.selected_key = ssh_key
-            screen._verification_action = "github-ssh"
-            screen._upload_failure_text = "Something went wrong: boom"
-            screen._failed_retry_target = "upload"
-            screen._done_summary_text = "Signed in as testuser using SSH key id_ed25519."
+            screen.done_display.verification_action = "github-ssh"
+            screen.done_display.upload_failure_text = "Something went wrong: boom"
+            screen.done_display.failed_retry_target = "upload"
+            screen.done_display.summary_text = "Signed in as testuser using SSH key id_ed25519."
             screen.transition_to(SetupStage.DONE)
             screen._set_verification_branch(VerificationState.FAILED)
             await pilot.pause(delay=0.2)
@@ -2238,7 +2280,7 @@ async def test_setup_gh_version_drift_keeps_github_option_available(no_auto_setu
             await screen._populate_upload_options()
             await pilot.pause()
 
-            assert screen._upload_actions == ["github-ssh", "manual"]
+            assert screen.upload_plan.actions == ["github-ssh", "manual"]
             assert "Link via GitHub (gh)" in radio_labels(screen.query_one("#upload-options", RadioSet))
 
 
@@ -2377,7 +2419,7 @@ async def test_setup_enter_advances_remote_to_upload(no_auto_setup):
             screen.selected_key = ssh_key
             screen.query_one(ContentSwitcher).current = "step-remote"
             screen.query_one("#remote-next", Button).disabled = False
-            screen._key_on_remote = False
+            screen.remote_check.key_on_remote = False
 
             await pilot.press("enter")
             await pilot.pause()
@@ -2566,7 +2608,7 @@ async def test_setup_double_enter_remote_starts_one_upload_population(no_auto_se
             screen.selected_key = ssh_key
             screen.query_one(ContentSwitcher).current = "step-remote"
             screen.query_one("#remote-next", Button).disabled = False
-            screen._key_on_remote = False
+            screen.remote_check.key_on_remote = False
 
             await pilot.press("enter")
             await pilot.press("enter")
@@ -2676,10 +2718,10 @@ async def test_setup_discovery_reset_on_remote_back_no_duplicate(no_auto_setup):
             await pilot.pause(delay=0.3)
 
             radio = screen.query_one("#key-select", RadioSet)
-            expected_keys = screen._discovered_keys
+            expected_keys = screen.discovery.discovered_keys
             expected_labels = radio_labels(radio)
-            expected_generation_mode = screen._generation_mode
-            expected_generation_index = screen._generation_radio_index
+            expected_generation_mode = screen.discovery.generation_mode
+            expected_generation_index = screen.discovery.generation_radio_index
 
             await pilot.click(list(screen.query("#key-select RadioButton").results(RadioButton))[1])
             await pilot.pause()
@@ -2691,10 +2733,10 @@ async def test_setup_discovery_reset_on_remote_back_no_duplicate(no_auto_setup):
             await pilot.pause(delay=0.3)
 
             assert screen.current_stage.value == "step-discovery"
-            assert screen._discovered_keys is not expected_keys
-            assert screen._discovered_keys == expected_keys
-            assert screen._generation_mode == expected_generation_mode
-            assert screen._generation_radio_index == expected_generation_index
+            assert screen.discovery.discovered_keys is not expected_keys
+            assert screen.discovery.discovered_keys == expected_keys
+            assert screen.discovery.generation_mode == expected_generation_mode
+            assert screen.discovery.generation_radio_index == expected_generation_index
             assert radio_labels(radio) == expected_labels
             assert list(screen.query("#step-discovery DataTable")) == []
             assert find_ssh_keys.call_count == 2
@@ -2781,13 +2823,13 @@ async def test_setup_back_nav_key_change_resets_downstream_upload_state(no_auto_
             await pilot.pause(delay=0.3)
 
             assert screen.current_stage.value == "step-upload"
-            assert screen._upload_actions == ["github-gpg", "openpgp", "manual"]
+            assert screen.upload_plan.actions == ["github-gpg", "openpgp", "manual"]
             assert radio_labels(screen.query_one("#upload-options", RadioSet)) == [
                 "Link via GitHub (gh)",
                 "Publish to keys.openpgp.org",
                 "Show me the key; I'll add it myself",
             ]
-            assert "github-ssh" not in screen._upload_actions
+            assert "github-ssh" not in screen.upload_plan.actions
             assert "PGP PUBLIC KEY BLOCK" in screen.query_one("#upload-key-text", KeyPreview).text
             assert str(screen.query_one("#upload-result", Static).render()) == ""
 
@@ -2835,7 +2877,7 @@ async def test_setup_check_remotes_cancel_on_key_selection_change(no_auto_setup)
             screen._switch_to_discovery()
             await pilot.pause(delay=0.3)
 
-            screen._remote_check_worker = remote_worker
+            screen.remote_check.worker = remote_worker
             await pilot.click(list(screen.query("#key-select RadioButton").results(RadioButton))[1])
             await pilot.pause()
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 import json
 import os
@@ -107,6 +107,62 @@ class VerificationPollState:
 
     def due(self, now: float) -> bool:
         return self.next_retry_at is not None and now >= self.next_retry_at
+
+
+@dataclass(slots=True)
+class DiscoveryState:
+    username_status_snapshot: str = ""
+    discovered_keys: list[SSHKeyInfo | GPGKeyInfo] = field(default_factory=list)
+    generation_mode: str | None = None
+    generation_radio_index: int | None = None
+
+    def reset(self) -> DiscoveryState:
+        return type(self)(username_status_snapshot=self.username_status_snapshot)
+
+
+@dataclass(slots=True)
+class RemoteCheckState:
+    key_on_remote: bool = False
+    key_on_openpgp: bool = False
+    generation: int = 0
+    worker: Worker[None] | None = None
+
+    def cancel(self) -> RemoteCheckState:
+        if self.worker is not None:
+            self.worker.cancel()
+        return type(self)(
+            key_on_remote=self.key_on_remote,
+            key_on_openpgp=self.key_on_openpgp,
+            generation=self.generation + 1,
+        )
+
+    def reset(self) -> RemoteCheckState:
+        if self.worker is not None:
+            self.worker.cancel()
+        return type(self)(generation=self.generation + 1)
+
+
+@dataclass(slots=True)
+class UploadPlanState:
+    actions: list[str] = field(default_factory=list)
+
+    def reset(self) -> UploadPlanState:
+        return type(self)()
+
+
+@dataclass(slots=True)
+class DoneDisplayState:
+    summary_text: str = ""
+    identify_text: str = ""
+    process_text: str = ""
+    eta_text: str = ""
+    verification_detail: str = ""
+    verification_action: str = ""
+    upload_failure_text: str = ""
+    failed_retry_target: str = ""
+
+    def reset(self) -> DoneDisplayState:
+        return type(self)()
 
 
 class SetupStage(StrEnum):
@@ -282,25 +338,12 @@ class SetupScreen(Dialog[bool]):
         self.state = state
         self.actions = SetupActionState()
         self.transition_history = [SetupStage.LOADING]
-        self._username_status_snapshot = ""
-        self._discovered_keys: list[SSHKeyInfo | GPGKeyInfo] = []
-        self._generation_mode: str | None = None
-        self._generation_radio_index: int | None = None
-        self._upload_actions: list[str] = []
-        self._key_on_remote = False
-        self._key_on_openpgp = False
-        self._remote_check_generation = 0
-        self._remote_check_worker: Worker[None] | None = None
+        self.discovery = DiscoveryState()
+        self.remote_check = RemoteCheckState()
+        self.upload_plan = UploadPlanState()
+        self.done_display = DoneDisplayState()
         self.verification_poll = VerificationPollState(started_at=monotonic())
-        self._verify_worker: Worker[None] | None = None
-        self._done_summary_text = ""
-        self._done_identify_text = ""
-        self._done_process_text = ""
-        self._done_eta_text = ""
-        self._verification_detail = ""
-        self._verification_action = ""
-        self._upload_failure_text = ""
-        self._failed_retry_target = ""
+        self.verify_worker: Worker[None] | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog-box"):
@@ -448,9 +491,7 @@ class SetupScreen(Dialog[bool]):
 
     def _reset_discovery_stage(self) -> None:
         radio = self.query_one("#key-select", RadioSet)
-        self._discovered_keys = []
-        self._generation_mode = None
-        self._generation_radio_index = None
+        self.discovery = self.discovery.reset()
         self.selected_key = None
         self._clear_radio_set(radio)
         self._set_tone(
@@ -461,9 +502,7 @@ class SetupScreen(Dialog[bool]):
         self.query_one("#discovery-next", Button).disabled = True
 
     def _reset_remote_stage(self) -> None:
-        self._cancel_remote_check()
-        self._key_on_remote = False
-        self._key_on_openpgp = False
+        self.remote_check = self.remote_check.reset()
         self._set_remote_header(
             "Verifying your key",
             "Checking where the dashboard can read your public key.",
@@ -477,7 +516,7 @@ class SetupScreen(Dialog[bool]):
 
     def _reset_upload_stage(self) -> None:
         radio = self.query_one("#upload-options", RadioSet)
-        self._upload_actions = []
+        self.upload_plan = self.upload_plan.reset()
         self._clear_radio_set(radio)
         self.query_one("#upload-key-text", KeyPreview).text = ""
         self._set_tone(self.query_one("#upload-result", Static), "")
@@ -486,14 +525,7 @@ class SetupScreen(Dialog[bool]):
         go_button.disabled = True
 
     def _reset_done_stage(self) -> None:
-        self._done_summary_text = ""
-        self._done_identify_text = ""
-        self._done_process_text = ""
-        self._done_eta_text = ""
-        self._verification_detail = ""
-        self._verification_action = ""
-        self._upload_failure_text = ""
-        self._failed_retry_target = ""
+        self.done_display = self.done_display.reset()
         self.verification_poll.restart(monotonic())
         self._cancel_verify_worker()
         self._render_done_branch()
@@ -523,16 +555,16 @@ class SetupScreen(Dialog[bool]):
 
     def _instructions_text(self) -> str:
         failure_prefix = (
-            f"{self._upload_failure_text}\n\n"
-            if self.verification_state is VerificationState.FAILED and self._upload_failure_text
+            f"{self.done_display.upload_failure_text}\n\n"
+            if self.verification_state is VerificationState.FAILED and self.done_display.upload_failure_text
             else ""
         )
         prefix = (
             "sentiments.cc is temporarily unreachable right now. "
-            if self._verification_detail == "temporarily unreachable"
+            if self.done_display.verification_detail == "temporarily unreachable"
             else ""
         )
-        match self._verification_action:
+        match self.done_display.verification_action:
             case "manual":
                 return failure_prefix + prefix + f"Paste your public key at {self._manual_destination_url()}, then retry once GitHub shows it."
             case "openpgp":
@@ -552,31 +584,32 @@ class SetupScreen(Dialog[bool]):
         )
 
     def _render_done_branch(self) -> None:
-        match self._visible_verification_state():
-            case VerificationState.VERIFIED:
-                self._set_done_header(
-                    "You're all set",
-                    "Review how uploads are signed and what the dashboard receives.",
-                    "success",
-                )
-            case VerificationState.PENDING:
-                self._set_done_header(
-                    "Waiting for your key",
-                    "The dashboard can see your setup, but it can't verify this key yet.",
-                    "warning",
-                )
-            case VerificationState.FAILED:
-                self._set_done_header(
-                    "We couldn't verify your key",
-                    "The dashboard still can't read this public key. Check the instructions, then retry.",
-                    "error",
-                )
+        with suppress(NoMatches):
+            match self._visible_verification_state():
+                case VerificationState.VERIFIED:
+                    self._set_done_header(
+                        "You're all set",
+                        "Review how uploads are signed and what the dashboard receives.",
+                        "success",
+                    )
+                case VerificationState.PENDING:
+                    self._set_done_header(
+                        "Waiting for your key",
+                        "The dashboard can see your setup, but it can't verify this key yet.",
+                        "warning",
+                    )
+                case VerificationState.FAILED:
+                    self._set_done_header(
+                        "We couldn't verify your key",
+                        "The dashboard still can't read this public key. Check the instructions, then retry.",
+                        "error",
+                    )
         with suppress(NoMatches):
             branch = self.query_one("#done-branch", DoneBranch)
-            branch.summary_text = self._done_summary_text
-            branch.identify_text = self._done_identify_text
-            branch.process_text = self._done_process_text
-            branch.eta_text = self._done_eta_text
+            branch.summary_text = self.done_display.summary_text
+            branch.identify_text = self.done_display.identify_text
+            branch.process_text = self.done_display.process_text
+            branch.eta_text = self.done_display.eta_text
             branch.instructions_text = self._instructions_text()
             branch.pending_label = self._pending_label()
             branch.verification_state = self.verification_state
@@ -590,7 +623,7 @@ class SetupScreen(Dialog[bool]):
         detail: str | None = None,
     ) -> None:
         if detail is not None:
-            self._verification_detail = detail
+            self.done_display.verification_detail = detail
         self.verification_state = state
         self.verification_ok = state is VerificationState.VERIFIED
         self._render_done_branch()
@@ -598,15 +631,15 @@ class SetupScreen(Dialog[bool]):
     def _on_verify_result(self, result: AuthResult) -> None:
         match result:
             case AuthOk():
-                self._upload_failure_text = ""
-                self._failed_retry_target = ""
-                self._verification_detail = ""
+                self.done_display.upload_failure_text = ""
+                self.done_display.failed_retry_target = ""
+                self.done_display.verification_detail = ""
                 self.verification_poll.clear()
                 self._set_verification_branch(VerificationState.VERIFIED)
             case AuthUnauthorized():
-                self._upload_failure_text = ""
-                self._failed_retry_target = ""
-                self._verification_detail = ""
+                self.done_display.upload_failure_text = ""
+                self.done_display.failed_retry_target = ""
+                self.done_display.verification_detail = ""
                 if monotonic() - self.verification_poll.started_at < PENDING_PROPAGATION_WINDOW_SECONDS:
                     self.verification_poll.schedule_next(monotonic())
                     self._set_verification_branch(VerificationState.PENDING)
@@ -614,10 +647,10 @@ class SetupScreen(Dialog[bool]):
                     self.verification_poll.clear()
                     self._set_verification_branch(VerificationState.FAILED)
             case AuthUnreachable() | AuthServerError():
-                self._upload_failure_text = ""
-                self._failed_retry_target = ""
+                self.done_display.upload_failure_text = ""
+                self.done_display.failed_retry_target = ""
                 # VAL-FLOW-038: 5xx probes share the same pending-unreachable branch as network drops.
-                self._verification_detail = "temporarily unreachable"
+                self.done_display.verification_detail = "temporarily unreachable"
                 self.verification_poll.schedule_next(monotonic())
                 self._set_verification_branch(VerificationState.PENDING)
 
@@ -628,16 +661,16 @@ class SetupScreen(Dialog[bool]):
             self.query_one("#done-branch", DoneBranch).pending_label = self._pending_label()
 
     def _cancel_verify_worker(self) -> None:
-        if self._verify_worker is not None:
-            self._verify_worker.cancel()
-        self._verify_worker = None
+        if self.verify_worker is not None:
+            self.verify_worker.cancel()
+        self.verify_worker = None
 
     def _poll_verification_if_due(self) -> None:
         if self.current_stage is not SetupStage.DONE:
             return
         if self._visible_verification_state() is not VerificationState.PENDING:
             return
-        if self._verify_worker is not None and self._verify_worker.is_running:
+        if self.verify_worker is not None and self.verify_worker.is_running:
             return
         if not self.verification_poll.due(monotonic()):
             return
@@ -650,17 +683,14 @@ class SetupScreen(Dialog[bool]):
         radio.display = True
 
     def _cancel_remote_check(self) -> None:
-        self._remote_check_generation += 1
-        if self._remote_check_worker is not None:
-            self._remote_check_worker.cancel()
-        self._remote_check_worker = None
+        self.remote_check = self.remote_check.cancel()
 
     def _remote_check_is_current(
         self,
         generation: int,
         key: SSHKeyInfo | GPGKeyInfo | None,
     ) -> bool:
-        return generation == self._remote_check_generation and key == self.selected_key
+        return generation == self.remote_check.generation and key == self.selected_key
 
     def _configure_remote_checks_table(self) -> DataTable:
         table = self.query_one("#remote-checks", DataTable)
@@ -730,10 +760,10 @@ class SetupScreen(Dialog[bool]):
     ) -> None:
         if not self._remote_check_is_current(generation, key):
             return
-        self._remote_check_worker = None
-        self._key_on_openpgp = key_on_openpgp
+        self.remote_check.worker = None
+        self.remote_check.key_on_openpgp = key_on_openpgp
         self._render_remote_checks(results)
-        self._key_on_remote = found
+        self.remote_check.key_on_remote = found
         if found:
             self._set_remote_header(
                 "Your key is ready",
@@ -852,20 +882,20 @@ class SetupScreen(Dialog[bool]):
     def _populate_done_info(self) -> None:
         match self.state.config:
             case GistConfig(gist_id=g):
-                self._done_identify_text = (
+                self.done_display.identify_text = (
                     f"How we know it's you: uploads are signed on this Mac, and gist {g[:7]} holds the public key."
                 )
             case _:
-                self._done_identify_text = (
+                self.done_display.identify_text = (
                     "How we know it's you: uploads are signed on this Mac, and the dashboard checks your public key."
                 )
         match EngineFactory.default():
             case "omlx":
-                self._done_process_text = (
+                self.done_display.process_text = (
                     "Where scoring happens: entirely on your Mac with a local Gemma model."
                 )
             case "claude":
-                self._done_process_text = (
+                self.done_display.process_text = (
                     "Where scoring happens: through the claude CLI on this Mac, never through the dashboard."
                 )
         self._render_done_branch()
@@ -876,7 +906,7 @@ class SetupScreen(Dialog[bool]):
         transcripts = await anyio.to_thread.run_sync(TranscriptDiscovery.find_transcripts)
         files = len(transcripts)
         rate = Hardware.estimate_buckets_per_sec(EngineFactory.default())
-        self._done_eta_text = (
+        self.done_display.eta_text = (
             f"Found {files:,} transcripts. About {TimeFormat.format_duration(files * self.ROUGH_BUCKETS_PER_FILE / rate)} to score here."
             if rate and files else ""
         )
@@ -938,8 +968,8 @@ class SetupScreen(Dialog[bool]):
                 if not await anyio.to_thread.run_sync(path.exists):
                     return False
                 self.username = cid
-                self._done_summary_text = f"Signed in as {cid} using SSH key {path.name}."
-                self._verification_action = "github-ssh"
+                self.done_display.summary_text = f"Signed in as {cid} using SSH key {path.name}."
+                self.done_display.verification_action = "github-ssh"
             case GPGConfig(contributor_type=contributor_type, contributor_id=cid, fpr=fpr):
                 gpg_keys = await anyio.to_thread.run_sync(KeyDiscovery.find_gpg_keys)
                 if not (info := next((key for key in gpg_keys if key.fpr == fpr), None)):
@@ -947,20 +977,20 @@ class SetupScreen(Dialog[bool]):
                 self.username = cid if contributor_type == "github" else ""
                 self.selected_key = info
                 label = cid if contributor_type == "github" else f"GPG {fpr[-8:]}"
-                self._done_summary_text = (
+                self.done_display.summary_text = (
                     f"Signed in as {label} using GPG {self._display_fingerprint(fpr)}."
                 )
-                self._verification_action = "github-gpg" if contributor_type == "github" else "openpgp"
+                self.done_display.verification_action = "github-gpg" if contributor_type == "github" else "openpgp"
             case GistConfig(contributor_id=cid, key_path=path, gist_id=gist_id):
                 if not await anyio.to_thread.run_sync(path.exists):
                     return False
                 self.username = cid
-                self._done_summary_text = f"Signed in as {cid} using cc-sentiment gist {gist_id[:7]}."
-                self._verification_action = "gist"
+                self.done_display.summary_text = f"Signed in as {cid} using cc-sentiment gist {gist_id[:7]}."
+                self.done_display.verification_action = "gist"
             case _:
                 return False
         self.verification_poll.restart(monotonic())
-        self._verification_detail = ""
+        self.done_display.verification_detail = ""
         self._set_verification_branch(VerificationState.PENDING)
         self._populate_done_info()
         self.transition_to(SetupStage.DONE)
@@ -973,14 +1003,14 @@ class SetupScreen(Dialog[bool]):
         assert config is not None
         match config:
             case SSHConfig(contributor_id=cid, key_path=p):
-                self._done_summary_text = f"Signed in as {cid} using SSH key {p.name}."
+                self.done_display.summary_text = f"Signed in as {cid} using SSH key {p.name}."
             case GPGConfig(contributor_type=contributor_type, contributor_id=cid, fpr=f):
                 label = cid if contributor_type == "github" else f"GPG {f[-8:]}"
-                self._done_summary_text = (
+                self.done_display.summary_text = (
                     f"Signed in as {label} using GPG {self._display_fingerprint(f)}."
                 )
             case GistConfig(contributor_id=cid, gist_id=g):
-                self._done_summary_text = f"Signed in as {cid} using cc-sentiment gist {g[:7]}."
+                self.done_display.summary_text = f"Signed in as {cid} using cc-sentiment gist {g[:7]}."
         self._set_verification_branch(VerificationState.VERIFIED)
         self._populate_done_info()
         self.transition_to(SetupStage.DONE)
@@ -993,9 +1023,9 @@ class SetupScreen(Dialog[bool]):
                 self.query_one("#username-status", Static),
                 f"Auto-detected: {username}",
             )
-            self._username_status_snapshot = f"Auto-detected: {username}"
+            self.discovery.username_status_snapshot = f"Auto-detected: {username}"
         else:
-            self._username_status_snapshot = ""
+            self.discovery.username_status_snapshot = ""
         self.transition_to(SetupStage.USERNAME)
 
     @on(Button.Pressed, "#username-next")
@@ -1010,7 +1040,7 @@ class SetupScreen(Dialog[bool]):
                 "error",
             )
             return
-        self._username_status_snapshot = str(self.query_one("#username-status", Static).render())
+        self.discovery.username_status_snapshot = str(self.query_one("#username-status", Static).render())
         self.username = username
         self.actions.username_validation_running = True
         self.validate_and_discover()
@@ -1068,16 +1098,20 @@ class SetupScreen(Dialog[bool]):
         all_keys: list[SSHKeyInfo | GPGKeyInfo] = (
             [*ssh_keys, *gpg_keys] if self.username else list(gpg_keys)
         )
-        self._discovered_keys = all_keys
-        self._generation_mode = self._pick_generation_mode()
-        self._generation_radio_index = len(all_keys) if self._generation_mode is not None and not all_keys else None
+        self.discovery.discovered_keys = all_keys
+        self.discovery.generation_mode = self._pick_generation_mode()
+        self.discovery.generation_radio_index = (
+            len(all_keys)
+            if self.discovery.generation_mode is not None and not all_keys
+            else None
+        )
 
         radio_children = [
             *[
                 RadioButton(self._key_radio_label(key))
                 for key in all_keys
             ],
-            *([RadioButton("Create a new cc-sentiment key")] if self._generation_radio_index is not None else []),
+            *([RadioButton("Create a new cc-sentiment key")] if self.discovery.generation_radio_index is not None else []),
         ]
 
         if not radio_children:
@@ -1119,7 +1153,7 @@ class SetupScreen(Dialog[bool]):
         return None
 
     def _generation_prompt(self) -> str:
-        match self._generation_mode:
+        match self.discovery.generation_mode:
             case "gist":
                 return (
                     "We can make a small signing key for cc-sentiment and save its public key in a gist."
@@ -1137,7 +1171,7 @@ class SetupScreen(Dialog[bool]):
     def on_discovery_back(self) -> None:
         self._cancel_remote_check()
         self._finish_discovery_action()
-        self.query_one("#username-status", Static).update(self._username_status_snapshot)
+        self.query_one("#username-status", Static).update(self.discovery.username_status_snapshot)
         self.transition_to(SetupStage.USERNAME)
 
     @on(RadioSet.Changed, "#key-select")
@@ -1151,22 +1185,22 @@ class SetupScreen(Dialog[bool]):
     def on_discovery_next(self) -> None:
         if self.actions.discovery_action_running:
             return
-        if not self._discovered_keys:
+        if not self.discovery.discovered_keys:
             self.actions.discovery_action_running = True
             self._dispatch_generation()
             return
         radio = self.query_one("#key-select", RadioSet)
         idx = radio.pressed_index if radio.pressed_index >= 0 else 0
-        if self._generation_radio_index is not None and idx == self._generation_radio_index:
+        if self.discovery.generation_radio_index is not None and idx == self.discovery.generation_radio_index:
             self.actions.discovery_action_running = True
             self._dispatch_generation()
             return
         self.actions.discovery_action_running = True
-        self.selected_key = self._discovered_keys[idx]
+        self.selected_key = self.discovery.discovered_keys[idx]
         self._go_to_remote()
 
     def _dispatch_generation(self) -> None:
-        match self._generation_mode:
+        match self.discovery.generation_mode:
             case "gist":
                 self.generate_gist_key()
             case "ssh":
@@ -1283,12 +1317,12 @@ Expire-Date: 0
         self.app.call_from_thread(self._finish_gist, gist_id)
 
     def _finish_gist(self, gist_id: str) -> None:
-        self._done_summary_text = (
+        self.done_display.summary_text = (
             f"Signed in as {self.username} using cc-sentiment gist {gist_id[:7]}."
         )
         self.verification_poll.restart(monotonic())
-        self._verification_detail = ""
-        self._verification_action = "gist"
+        self.done_display.verification_detail = ""
+        self.done_display.verification_action = "gist"
         self._set_verification_branch(VerificationState.PENDING)
         self._populate_done_info()
         self._finish_discovery_action()
@@ -1297,8 +1331,8 @@ Expire-Date: 0
         self.verify_server_config()
 
     def _go_to_remote(self) -> None:
-        self._remote_check_generation += 1
-        self._remote_check_worker = self.check_remotes(self._remote_check_generation, self.selected_key)
+        self.remote_check.generation += 1
+        self.remote_check.worker = self.check_remotes(self.remote_check.generation, self.selected_key)
 
     @work(thread=True)
     def check_remotes(
@@ -1306,7 +1340,7 @@ Expire-Date: 0
         generation: int | None = None,
         key: SSHKeyInfo | GPGKeyInfo | None = None,
     ) -> None:
-        generation = self._remote_check_generation if generation is None else generation
+        generation = self.remote_check.generation if generation is None else generation
         key = self.selected_key if key is None else key
         results: list[RemoteCheckRow] = []
         found = False
@@ -1372,7 +1406,7 @@ Expire-Date: 0
             return
         self.actions.remote_action_running = True
         try:
-            if self._key_on_remote:
+            if self.remote_check.key_on_remote:
                 self._save_and_finish()
             else:
                 self.transition_to(SetupStage.UPLOAD)
@@ -1386,14 +1420,14 @@ Expire-Date: 0
         key = self.selected_key
         gh_authed = shutil.which("gh") is not None and await anyio.to_thread.run_sync(KeyDiscovery.gh_authenticated)
         upload_options = self._build_upload_options(gh_authed, key)
-        self._upload_actions = [option.action for option in upload_options]
+        self.upload_plan.actions = [option.action for option in upload_options]
         radio_buttons = [RadioButton(option.label) for option in upload_options]
         radio.mount_all(radio_buttons)
         if radio_buttons:
             radio_buttons[0].toggle()
         radio.display = len(radio_buttons) > 1
         self.query_one("#upload-go", Button).label = (
-            "Show me the key" if self._upload_actions == ["manual"] else "Link my key"
+            "Show me the key" if self.upload_plan.actions == ["manual"] else "Link my key"
         )
 
         pub_text = ""
@@ -1432,7 +1466,7 @@ Expire-Date: 0
     def _selected_upload_action(self) -> str:
         radio = self.query_one("#upload-options", RadioSet)
         idx = radio.pressed_index if radio.display and radio.pressed_index >= 0 else 0
-        return self._upload_actions[idx]
+        return self.upload_plan.actions[idx]
 
     def _sync_upload_preview_height(self) -> None:
         self.query_one("#upload-key-text", KeyPreview).styles.max_height = (
@@ -1448,7 +1482,7 @@ Expire-Date: 0
         match self.selected_key:
             case SSHKeyInfo(path=path):
                 self.state.config = SSHConfig(contributor_id=ContributorId(identity), key_path=path)
-                self._done_summary_text = f"Signed in as {identity} using SSH key {path.name}."
+                self.done_display.summary_text = f"Signed in as {identity} using SSH key {path.name}."
             case GPGKeyInfo(fpr=fpr):
                 self.state.config = (
                     GPGConfig(contributor_type="github", contributor_id=ContributorId(identity), fpr=fpr)
@@ -1456,7 +1490,7 @@ Expire-Date: 0
                     else GPGConfig(contributor_type="gpg", contributor_id=ContributorId(fpr), fpr=fpr)
                 )
                 label = identity or f"GPG {fpr[-8:]}"
-                self._done_summary_text = f"Signed in as {label}."
+                self.done_display.summary_text = f"Signed in as {label}."
             case _:
                 raise AssertionError("selected key required")
 
@@ -1464,10 +1498,10 @@ Expire-Date: 0
         self._apply_selected_config()
         self.state.save()
         self.verification_poll.clear()
-        self._verification_detail = ""
-        self._verification_action = action
-        self._upload_failure_text = message
-        self._failed_retry_target = "upload"
+        self.done_display.verification_detail = ""
+        self.done_display.verification_action = action
+        self.done_display.upload_failure_text = message
+        self.done_display.failed_retry_target = "upload"
         self._set_verification_branch(VerificationState.FAILED)
         self._populate_done_info()
         self._finish_upload_action()
@@ -1503,7 +1537,7 @@ Expire-Date: 0
                     self.app.call_from_thread(self._save_and_fail_upload, "github-ssh", f"Something went wrong: {e}")
                     return
                 if result.returncode == 0:
-                    self._verification_action = "github-ssh"
+                    self.done_display.verification_action = "github-ssh"
                     self.app.call_from_thread(self._set_tone, result_label, "Key linked to GitHub. You're all set.", "success")
                     self.app.call_from_thread(self._save_and_finish)
                 else:
@@ -1525,7 +1559,7 @@ Expire-Date: 0
                         self.app.call_from_thread(self._save_and_fail_upload, "github-gpg", f"Something went wrong: {e}")
                         return
                     if result.returncode == 0:
-                        self._verification_action = "github-gpg"
+                        self.done_display.verification_action = "github-gpg"
                         self.app.call_from_thread(self._set_tone, result_label, "Key linked to GitHub. You're all set.", "success")
                         self.app.call_from_thread(self._save_and_finish)
                     else:
@@ -1550,7 +1584,7 @@ Expire-Date: 0
                         )
                     else:
                         self.app.call_from_thread(self._set_tone, result_label, "Key already published. You're all set.", "success")
-                    self._verification_action = "openpgp"
+                    self.done_display.verification_action = "openpgp"
                     self.app.call_from_thread(self._save_and_finish)
                 except httpx.HTTPError as e:
                     self.app.call_from_thread(
@@ -1564,7 +1598,7 @@ Expire-Date: 0
             case "manual":
                 assert key is not None
                 url = self._manual_destination_url()
-                self._verification_action = "manual"
+                self.done_display.verification_action = "manual"
                 self.app.call_from_thread(
                     self._set_tone,
                     result_label,
@@ -1574,13 +1608,13 @@ Expire-Date: 0
 
     def _save_and_finish(self) -> None:
         self.verification_poll.restart(monotonic())
-        self._verification_detail = ""
-        self._upload_failure_text = ""
-        self._failed_retry_target = ""
+        self.done_display.verification_detail = ""
+        self.done_display.upload_failure_text = ""
+        self.done_display.failed_retry_target = ""
         self._apply_selected_config()
 
-        if not self._verification_action:
-            self._verification_action = "manual"
+        if not self.done_display.verification_action:
+            self.done_display.verification_action = "manual"
         self._set_verification_branch(VerificationState.PENDING)
         self._populate_done_info()
         self._finish_upload_action()
@@ -1589,9 +1623,9 @@ Expire-Date: 0
         self.verify_server_config()
 
     def verify_server_config(self) -> None:
-        if self._verify_worker is not None and self._verify_worker.is_running:
+        if self.verify_worker is not None and self.verify_worker.is_running:
             return
-        self._verify_worker = self.run_worker(
+        self.verify_worker = self.run_worker(
             self._verify_server_config(),
             name=f"setup-verify-{monotonic()}",
             exit_on_error=False,
@@ -1607,7 +1641,7 @@ Expire-Date: 0
                 result = AuthUnreachable(detail=str(error))
             self._on_verify_result(result)
         finally:
-            self._verify_worker = None
+            self.verify_worker = None
 
     @on(Button.Pressed, "#done-btn")
     def on_done(self) -> None:
@@ -1624,7 +1658,7 @@ Expire-Date: 0
 
     @on(Button.Pressed, "#failed-retry")
     async def on_failed_retry(self) -> None:
-        if self._failed_retry_target == "upload":
+        if self.done_display.failed_retry_target == "upload":
             self.transition_to(SetupStage.UPLOAD)
             await self._populate_upload_options()
             return
