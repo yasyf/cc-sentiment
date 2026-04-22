@@ -26,5 +26,6 @@ commands:
   # this mission. Per root AGENTS.md: "Mechanical linting ... handled by
   # pre-commit hooks or CI. Only fix issues requiring human judgment."
   lint: cd client && uv run --with ruff ruff check cc_sentiment/tui tests/test_tui.py
+  lint-tuistory: cd client && uv run --with ruff ruff check tests/tuistory
 
 services: {}

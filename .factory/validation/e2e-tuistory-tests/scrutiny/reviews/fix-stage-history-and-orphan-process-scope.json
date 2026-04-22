@@ -1,0 +1,26 @@
+{
+  "featureId": "fix-stage-history-and-orphan-process-scope",
+  "reviewedAt": "2026-04-22T12:03:51Z",
+  "commitId": "166fa6f15c02bdbe9787ad52c78c6c01c36b8bb7",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed the fix commit plus the original failed diffs (`a45fe4e55b203474ea7cfdcbf1d6d8799b7795e6`, `b5f75b25bf81618306437fbbf8d130bdb88ac4e1`). The remote-elision assertion now uses persisted runtime transition history (`transition_history`) instead of sampled snapshots, and the invariant orphan-process check is expanded to scan harness-owned mitmdump/tuistory/setup/fake-bin scope plus HOME-scoped descendants while excluding the known live mitm fixture PID. This adequately resolves both prior blocking scrutiny failures.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "services",
+      "observation": "Mission lint coverage still excludes `tests/tuistory`, even though this fix modifies tuistory test files.",
+      "evidence": ".factory/services.yaml:28 defines `lint` as `ruff check cc_sentiment/tui tests/test_tui.py`; this fix changes `client/tests/tuistory/setup/test_resilience.py` and `client/tests/tuistory/setup/test_invariants.py`."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The new transition-history handoff contract between SetupScreen and the tuistory harness is implemented but not captured in shared library notes.",
+      "evidence": "Implementation uses `CC_SENTIMENT_TRANSITION_HISTORY_PATH` and writes/reads `.transition-history.json` (`client/cc_sentiment/tui/screens/setup.py:913-918`, `client/tests/tuistory/bin/run_scenario.sh:34,95`, `client/tests/tuistory/driver.py:262-277`), while `.factory/library/tuistory-harness.md` has no `transition_history` mention."
+    }
+  ],
+  "addressesFailureFrom": "/Users/yasyf/Code/cc-sentiment/.factory/validation/e2e-tuistory-tests/scrutiny/reviews/scenario-width-resilience-and-idempotency.json; /Users/yasyf/Code/cc-sentiment/.factory/validation/e2e-tuistory-tests/scrutiny/reviews/scenario-invariants-and-regression.json",
+  "summary": "Pass: the fix feature directly addresses the two prior scrutiny blockers (remote-stage inference via sampled snapshots and narrow orphan-process scope) and the updated assertions now align with the intended contracts."
+}

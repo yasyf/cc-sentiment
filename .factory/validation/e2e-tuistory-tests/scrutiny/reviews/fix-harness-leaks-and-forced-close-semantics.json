@@ -1,0 +1,22 @@
+{
+  "featureId": "fix-harness-leaks-and-forced-close-semantics",
+  "reviewedAt": "2026-04-22T12:04:23Z",
+  "commitId": "60438bb76eb01042f77372248bc518d46feefeab",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "This fix commit correctly resolves the two blocking harness bugs from `tuistory-mitmproxy-harness` (startup-leak cleanup coverage in `conftest.py` and forced-close default failure semantics in `driver.py` with explicit opt-in in harness-only scenarios), but it does not address the remaining blocking failure from `scenario-invariants-and-regression`.",
+    "issues": [
+      {
+        "file": "client/tests/tuistory/setup/test_invariants.py",
+        "line": 223,
+        "severity": "blocking",
+        "description": "The prior blocking scrutiny failure for `scenario-invariants-and-regression` remains unresolved by this fix commit: `assert_no_setup_processes` still only checks for `uv run cc-sentiment setup` under the scenario home root and does not assert mitmdump/tuistory/temp-home descendant cleanup. Commit `60438bb` changes only `conftest.py`, `driver.py`, and `test_harness.py`, so this contract gap from the prior review persists."
+      }
+    ]
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": "/Users/yasyf/Code/cc-sentiment/.factory/validation/e2e-tuistory-tests/scrutiny/reviews/tuistory-mitmproxy-harness.json | /Users/yasyf/Code/cc-sentiment/.factory/validation/e2e-tuistory-tests/scrutiny/reviews/scenario-invariants-and-regression.json",
+  "summary": "Fix is partially successful: harness startup cleanup and forced-close semantics are corrected, but the blocking per-scenario orphan-scope assertion gap from the invariants feature was not fixed in this commit, so overall status is fail."
+}

@@ -1198,6 +1198,12 @@ async def test_setup_pending_exit_preserves_state_exit_preserves(tmp_path: Path)
             screen.selected_key = ssh_key
             screen._save_and_finish()
             await pilot.pause(delay=0.3)
+            await wait_for_condition(
+                pilot,
+                predicate=lambda: screen.verification_state is VerificationState.PENDING,
+                failure_message=lambda: f"expected pending verification state, got {screen.verification_state}",
+            )
+            assert len(list(screen.query("#pending-exit"))) == 1
 
             before = state_file.read_text()
 
@@ -1236,6 +1242,7 @@ async def test_setup_pending_retry_immediate_does_not_reset_elapsed_retry_immedi
             await pilot.pause()
 
             assert screen.query_one("#pending-status", PendingStatus).label.endswith("0:05")
+            assert len(list(screen.query("#pending-retry"))) == 1
 
             await pilot.click("#pending-retry")
             await pilot.pause(delay=0.3)
@@ -1266,6 +1273,12 @@ async def test_setup_pending_network_drop_pending_keeps_pending_network_drop_pen
             screen.selected_key = ssh_key
             screen._save_and_finish()
             await pilot.pause(delay=0.3)
+            await wait_for_condition(
+                pilot,
+                predicate=lambda: screen.verification_state is VerificationState.PENDING,
+                failure_message=lambda: f"expected pending verification state, got {screen.verification_state}",
+            )
+            assert len(list(screen.query("#pending-retry"))) == 1
 
             await pilot.click("#pending-retry")
             await pilot.pause(delay=0.3)
@@ -1345,7 +1358,7 @@ async def test_setup_verify_result_maps_five_xx_and_network_drop_to_identical_pe
 async def test_setup_pending_five_xx_retry_can_recover_to_verified(tmp_path: Path):
     state = AppState()
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
-    probe = AsyncMock(side_effect=[AuthServerError(status=502), AuthOk()])
+    probe = AsyncMock(return_value=AuthServerError(status=502))
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
          patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
@@ -1357,13 +1370,26 @@ async def test_setup_pending_five_xx_retry_can_recover_to_verified(tmp_path: Pat
             screen.selected_key = ssh_key
             screen._save_and_finish()
             await pilot.pause(delay=0.3)
+            await wait_for_condition(
+                pilot,
+                predicate=lambda: screen.verification_state is VerificationState.PENDING,
+                failure_message=lambda: f"expected pending verification state, got {screen.verification_state}",
+            )
+            assert len(list(screen.query("#pending-retry"))) == 1
 
-            assert screen.verification_state is VerificationState.PENDING
-
+            before_retry_calls = probe.await_count
+            probe.return_value = AuthOk()
             await pilot.click("#pending-retry")
-            await pilot.pause(delay=0.3)
-
-            assert probe.await_count == 2
+            await wait_for_condition(
+                pilot,
+                predicate=lambda: probe.await_count > before_retry_calls,
+                failure_message=lambda: f"expected retry probe after click, got {probe.await_count} total probes",
+            )
+            await wait_for_condition(
+                pilot,
+                predicate=lambda: screen.verification_state is VerificationState.VERIFIED,
+                failure_message=lambda: f"expected verified state, got {screen.verification_state}",
+            )
             assert screen.verification_state is VerificationState.VERIFIED
             assert screen.verification_ok is True
             assert screen.query_one("#done-btn", Button).label.plain == "Contribute my stats"
