@@ -25,7 +25,7 @@ class EngineFactory:
     def default(cls) -> str:
         match (sys.platform, platform.machine()):
             case ("darwin", "arm64"):
-                return "omlx"
+                return "mlx"
             case _:
                 return "claude"
 

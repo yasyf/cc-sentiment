@@ -289,10 +289,10 @@ class TestClaudeCliStatus:
 
 
 class TestDefaultEngine:
-    def test_apple_silicon_prefers_omlx(self) -> None:
+    def test_apple_silicon_prefers_mlx(self) -> None:
         with patch("cc_sentiment.engines.factory.sys.platform", "darwin"), \
              patch("cc_sentiment.engines.factory.platform.machine", return_value="arm64"):
-            assert EngineFactory.default() == "omlx"
+            assert EngineFactory.default() == "mlx"
 
     def test_linux_falls_back_to_claude(self) -> None:
         with patch("cc_sentiment.engines.factory.sys.platform", "linux"), \

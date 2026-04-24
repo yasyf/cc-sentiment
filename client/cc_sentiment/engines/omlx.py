@@ -14,7 +14,7 @@ import anyio.to_thread
 import httpx
 
 from cc_sentiment.models import ConversationBucket, SentimentScore
-from cc_sentiment.text import extract_score, format_conversation
+from cc_sentiment.text import build_prefix_messages, extract_score, format_conversation
 
 from cc_sentiment.engines.protocol import (
     DEFAULT_MODEL,
@@ -63,6 +63,7 @@ class OMLXEngine:
         self._next_warm_task: asyncio.Task[None] | None = None
         self.on_log: Callable[[str], None] = on_log or SILENT_LOG
         self.system_prompt = SYSTEM_PROMPT
+        self.prefix_messages = build_prefix_messages()
         self._start_server()
 
     @staticmethod
@@ -200,7 +201,7 @@ class OMLXEngine:
         return {
             **({"model": self.model_name} if self.model_name else {}),
             "messages": [
-                {"role": "system", "content": self.system_prompt},
+                *self.prefix_messages,
                 {"role": "user", "content": f"CONVERSATION:\n{user_content}"},
             ],
             "max_tokens": 1,
