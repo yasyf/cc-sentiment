@@ -26,7 +26,7 @@ class DebugSection(Card):
             f"engine:   [b]{s.engine_name}[/]",
             f"nlp:      {s.nlp_state}",
             *([f"nlp out:  {s.nlp_output}"] if s.nlp_output else []),
-            f"prewarm:  uvx={s.prewarm_uvx}  model={s.prewarm_model}",
+            f"prewarm:  model={s.prewarm_model}",
             f"card:     attempts={s.card_attempts}  status=[b]{s.card_last_status}[/]  "
             f"elapsed={s.card_elapsed:.0f}s{stopped}",
             f"share:    prewarm={s.share_prewarm}",

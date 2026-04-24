@@ -27,7 +27,6 @@ from textual.widgets import (
 
 from cc_sentiment.daemon import LaunchAgent
 from cc_sentiment.engines import (
-    OMLX_UVX_SPEC,
     ClaudeCLIEngine,
     ClaudeUnavailable,
     EngineFactory,
@@ -246,32 +245,18 @@ class CCSentimentApp(App[None]):
     def _maybe_prewarm(self) -> None:
         if self._prewarmed:
             return
-        if EngineFactory.default() != "omlx":
+        if EngineFactory.default() != "mlx":
             return
         self._prewarmed = True
-        self.run_worker(self._prewarm_uvx(), name="prewarm-uvx", exit_on_error=False)
         self.run_worker(self._prewarm_model(), name="prewarm-model", exit_on_error=False)
 
-    async def _prewarm_uvx(self) -> None:
-        self._set_debug(prewarm_uvx="running")
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "uvx", "--from", OMLX_UVX_SPEC, "omlx", "--help",
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await proc.wait()
-        except OSError as exc:
-            self._set_debug(prewarm_uvx=f"failed: {exc.__class__.__name__}")
-            return
-        self._set_debug(prewarm_uvx="done")
-
     async def _prewarm_model(self) -> None:
+        from huggingface_hub import snapshot_download
+        from huggingface_hub.utils import disable_progress_bars
+
+        disable_progress_bars()
         self._set_debug(prewarm_model="running")
         try:
-            from huggingface_hub import snapshot_download
-            from huggingface_hub.utils import disable_progress_bars
-            disable_progress_bars()
             await anyio.to_thread.run_sync(snapshot_download, DEFAULT_MODEL)
         except (OSError, httpx.HTTPError) as exc:
             self._set_debug(prewarm_model=f"failed: {exc.__class__.__name__}")
@@ -423,13 +408,9 @@ class CCSentimentApp(App[None]):
         self._debug(f"transcript-backend: {TranscriptParser.backend_name()}")
 
         build_task: asyncio.Task[InferenceEngine] | None = None
-        if engine == "omlx":
+        if engine == "mlx":
             build_task = asyncio.create_task(
-                EngineFactory.build(
-                    engine,
-                    self.model_repo,
-                    on_engine_log=lambda msg: self.call_from_thread(self._debug, msg),
-                ),
+                EngineFactory.build(engine, self.model_repo),
                 name="engine-build",
             )
 

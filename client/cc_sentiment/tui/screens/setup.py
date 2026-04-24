@@ -693,7 +693,7 @@ class SetupScreen(Dialog[bool]):
                     "and the dashboard checks your public key."
                 )
         match EngineFactory.default():
-            case "omlx":
+            case "mlx":
                 self.done_display.process_text = (
                     "Where scoring happens: entirely on your Mac with a local Gemma model."
                 )

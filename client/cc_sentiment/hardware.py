@@ -21,8 +21,7 @@ class HardwareProfile:
 
 
 class Hardware:
-    BASELINE_OMLX_USER_MSGS_PER_SEC: ClassVar[float] = 950.0
-    BASELINE_MLX_USER_MSGS_PER_SEC: ClassVar[float] = 0.0
+    BASELINE_MLX_USER_MSGS_PER_SEC: ClassVar[float] = 79.0
     AVG_NON_FILTERED_USER_MSGS_PER_BUCKET: ClassVar[float] = 1.42
 
     BANDWIDTH_GBPS: ClassVar[dict[tuple[int, ChipVariant], int]] = {
@@ -75,10 +74,9 @@ class Hardware:
 
     @classmethod
     def estimate_buckets_per_sec(cls, engine: str) -> float | None:
-        match engine:
-            case "omlx": msgs_per_sec = cls.BASELINE_OMLX_USER_MSGS_PER_SEC
-            case "mlx":  msgs_per_sec = cls.BASELINE_MLX_USER_MSGS_PER_SEC
-            case _:      return None
+        if engine != "mlx":
+            return None
+        msgs_per_sec = cls.BASELINE_MLX_USER_MSGS_PER_SEC
         if msgs_per_sec == 0.0 or cls.AVG_NON_FILTERED_USER_MSGS_PER_BUCKET == 0.0:
             return None
         profile = cls.detect_profile()

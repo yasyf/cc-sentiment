@@ -18,7 +18,7 @@ DAEMON_PING_ERRORS = (httpx.HTTPError, subprocess.CalledProcessError, OSError, T
 
 
 @click.group(invoke_without_command=True)
-@click.option("--model", "model_repo", default=None, help="Model repo (HF for mlx/omlx) or name (claude)")
+@click.option("--model", "model_repo", default=None, help="Model repo (HF for mlx) or name (claude)")
 @click.option(
     "--debug",
     is_flag=True,

@@ -29,9 +29,6 @@ DEMOS: tuple[tuple[str, str], ...] = (
 )
 
 
-STRUCTURED_OUTPUTS_CHOICE = ["1", "2", "3", "4", "5"]
-
-
 NOOP_PROGRESS: Callable[[int], None] = lambda _: None
 NOOP_SNIPPET: Callable[[str, int], Awaitable[None]] = lambda *_: asyncio.sleep(0)
 

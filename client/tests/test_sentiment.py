@@ -115,8 +115,7 @@ class TestConversationFormatting:
 
 
 class TestClassifierIntegration:
-    def test_score_chunk(self) -> None:
-        from cc_sentiment.engines import SYSTEM_PROMPT
+    async def test_score_calls_batch_generate(self) -> None:
         from cc_sentiment.sentiment import SentimentClassifier
         from cc_sentiment.text import build_prefix_messages
 
@@ -134,13 +133,11 @@ class TestClassifierIntegration:
             classifier.model = MagicMock()
             classifier.tokenizer = mock_tokenizer
             classifier.logit_processor = MagicMock()
-            classifier.system_prompt = SYSTEM_PROMPT
             classifier.prefix_messages = build_prefix_messages()
             classifier.prefix_tokens = [1, 2]
             classifier.base_cache = [MagicMock()]
 
-            bucket = make_bucket([("user", "this works perfectly!")])
-            scores = classifier._score_chunk([bucket])
+            scores = await classifier.score([make_bucket([("user", "this works perfectly!")])])
 
         assert scores == [SentimentScore(4)]
         mock_mlx_lm.batch_generate.assert_called_once()

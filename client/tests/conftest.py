@@ -7,7 +7,12 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def no_network_warmup(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def no_network_warmup(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    if "slow" in request.keywords:
+        yield
+        return
     monkeypatch.setattr(
         "cc_sentiment.tui.app.CCSentimentApp._maybe_prewarm", lambda self: None
     )

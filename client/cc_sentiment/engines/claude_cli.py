@@ -8,10 +8,8 @@ from dataclasses import dataclass
 
 import orjson
 
-from cc_sentiment.models import ConversationBucket, SentimentScore
-from cc_sentiment.text import extract_score, format_conversation
-
-from cc_sentiment.engines.protocol import NOOP_PROGRESS, SYSTEM_PROMPT
+from cc_sentiment.engines.base import BaseEngine
+from cc_sentiment.engines.protocol import SYSTEM_PROMPT
 
 
 @dataclass(frozen=True)
@@ -32,7 +30,7 @@ class ClaudeNotAuthenticated:
 ClaudeStatus = ClaudeReady | ClaudeNotInstalled | ClaudeNotAuthenticated
 
 
-class ClaudeCLIEngine:
+class ClaudeCLIEngine(BaseEngine):
     HAIKU_MODEL = "claude-haiku-4-5"
     HAIKU_INPUT_USD_PER_MTOK = 1.0
     HAIKU_OUTPUT_USD_PER_MTOK = 5.0
@@ -42,7 +40,6 @@ class ClaudeCLIEngine:
 
     def __init__(self, model: str) -> None:
         self.model = model
-        self.system_prompt = SYSTEM_PROMPT
         self.total_cost_usd = 0.0
         self.total_input_tokens = 0
         self.total_output_tokens = 0
@@ -66,11 +63,15 @@ class ClaudeCLIEngine:
             return ClaudeReady()
         return ClaudeNotAuthenticated()
 
-    async def score_one(self, bucket: ConversationBucket) -> SentimentScore:
+    @staticmethod
+    def _last_user_content(messages: list[dict[str, str]]) -> str:
+        return next(m["content"] for m in reversed(messages) if m["role"] == "user")
+
+    async def _call(self, messages: list[dict[str, str]]) -> str:
         proc = await asyncio.create_subprocess_exec(
-            "claude", "-p", f"CONVERSATION:\n{format_conversation(bucket)}",
+            "claude", "-p", self._last_user_content(messages),
             "--model", self.model,
-            "--system-prompt", self.system_prompt,
+            "--system-prompt", SYSTEM_PROMPT,
             "--output-format", "json",
             "--max-turns", "1",
             "--tools", "",
@@ -88,25 +89,19 @@ class ClaudeCLIEngine:
         self.total_cost_usd += data["total_cost_usd"]
         self.total_input_tokens += usage["input_tokens"]
         self.total_output_tokens += usage["output_tokens"]
-        return extract_score(data["result"])
+        return data["result"]
 
-    async def score(
+    async def score_messages(
         self,
-        buckets: list[ConversationBucket],
-        on_progress: Callable[[int], None] = NOOP_PROGRESS,
-    ) -> list[SentimentScore]:
+        message_lists: list[list[dict[str, str]]],
+        on_progress: Callable[[int], None],
+    ) -> list[str]:
         sem = asyncio.Semaphore(self.CONCURRENCY)
 
-        async def one(bucket: ConversationBucket) -> SentimentScore:
+        async def one(messages: list[dict[str, str]]) -> str:
             async with sem:
-                score = await self.score_one(bucket)
+                response = await self._call(messages)
             on_progress(1)
-            return score
+            return response
 
-        return list(await asyncio.gather(*(one(b) for b in buckets)))
-
-    def peak_memory_gb(self) -> float:
-        return 0.0
-
-    async def close(self) -> None:
-        pass
+        return list(await asyncio.gather(*(one(m) for m in message_lists)))

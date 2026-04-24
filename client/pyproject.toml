@@ -30,10 +30,8 @@ dependencies = [
     "spacy>=3.8",
     "afinn>=0.1",
     "zstandard>=0.25.0",
+    "mlx-lm>=0.31.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
-
-[project.optional-dependencies]
-mlx = ["mlx-lm>=0.20"]
 
 [project.scripts]
 cc-sentiment = "cc_sentiment.cli:main"
@@ -66,7 +64,7 @@ debug = false
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
-    "slow: opt-in MLX-backed smoke-eval (requires mlx-lm extra and the shipped adapter)",
+    "slow: opt-in MLX-backed smoke-eval (requires Apple Silicon and the shipped adapter)",
 ]
 
 [tool.cibuildwheel]

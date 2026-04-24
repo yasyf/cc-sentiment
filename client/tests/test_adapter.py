@@ -99,39 +99,56 @@ class TestSmokeEvalAccuracy:
         if not METADATA.exists():
             pytest.skip("metadata.json not shipped yet (no production adapter ready)")
 
-    def _predict_all(self) -> list[tuple[int, int, str]]:
-        from cc_sentiment.engines.filter import FrustrationFilter
-        from cc_sentiment.sentiment import SentimentClassifier
+    async def _predict_all(self) -> list[tuple[int, int, str]]:
+        from datetime import datetime, timezone
 
-        classifier = SentimentClassifier()
+        from cc_sentiment.engines import EngineFactory
+        from cc_sentiment.models import (
+            BucketIndex,
+            ConversationBucket,
+            SessionId,
+            UserMessage,
+        )
+
         samples = [
             orjson.loads(line) for line in SMOKE_EVAL.read_text().splitlines() if line.strip()
         ]
-        non_filter_indices = [
-            i for i, s in enumerate(samples) if not FrustrationFilter.matches_text(s["text"])
-        ]
-        contents = [
-            f"CONVERSATION:\nDEVELOPER: {samples[i]['text'].strip()}"
-            for i in non_filter_indices
-        ]
-        scores = classifier.score_user_contents(contents) if contents else []
-        score_by_index = dict(zip(non_filter_indices, scores, strict=True))
-
-        return [
-            (int(s["score"]), score_by_index.get(i, 1), s.get("tag", ""))
+        ts = datetime(2026, 4, 21, tzinfo=timezone.utc)
+        buckets = [
+            ConversationBucket(
+                session_id=SessionId(f"smoke-{i}"),
+                bucket_index=BucketIndex(0),
+                bucket_start=ts,
+                messages=(
+                    UserMessage(
+                        content=s["text"], timestamp=ts,
+                        session_id=SessionId(f"smoke-{i}"), uuid=f"u-{i}",
+                        tool_calls=(), thinking_chars=0, cc_version="2.1.117",
+                    ),
+                ),
+            )
             for i, s in enumerate(samples)
         ]
+        engine = await EngineFactory.build(EngineFactory.default())
+        try:
+            scores = await engine.score(buckets)
+        finally:
+            await engine.close()
+        return [
+            (int(s["score"]), int(p), s.get("tag", ""))
+            for s, p in zip(samples, scores, strict=True)
+        ]
 
-    def test_smoke_eval_accuracy_floor(self) -> None:
+    async def test_smoke_eval_accuracy_floor(self) -> None:
         self._skip_if_incomplete()
-        results = self._predict_all()
+        results = await self._predict_all()
         correct = sum(1 for t, p, _ in results if t == p)
         acc = correct / len(results) if results else 0.0
         assert acc >= self.EXACT_ACC_FLOOR, f"smoke exact_acc {acc:.3f} < {self.EXACT_ACC_FLOOR}"
 
-    def test_smoke_eval_session_resume_floor(self) -> None:
+    async def test_smoke_eval_session_resume_floor(self) -> None:
         self._skip_if_incomplete()
-        results = [r for r in self._predict_all() if r[2] == "session_resume"]
+        results = [r for r in await self._predict_all() if r[2] == "session_resume"]
         if not results:
             pytest.skip("smoke fixture has no session_resume samples")
         correct = sum(1 for t, p, _ in results if t == p)

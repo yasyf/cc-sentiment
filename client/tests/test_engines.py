@@ -308,7 +308,7 @@ class TestDefaultEngine:
 class TestResolveEngine:
     def test_non_claude_skips_status_check(self) -> None:
         with patch.object(ClaudeCLIEngine, "check_status") as m:
-            assert EngineFactory.resolve("omlx") == "omlx"
+            assert EngineFactory.resolve("mlx") == "mlx"
             m.assert_not_called()
 
     def test_claude_ready_returns_engine(self) -> None:
