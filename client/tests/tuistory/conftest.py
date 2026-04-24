@@ -19,6 +19,13 @@ FAKE_BIN_DIR = CLIENT_ROOT / "tests" / "tuistory" / "_fixtures" / "fake-bin"
 STUBS_PATH = CLIENT_ROOT / "tests" / "tuistory" / "stubs.py"
 
 
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    here = Path(__file__).parent
+    for item in items:
+        if item.path.is_relative_to(here):
+            item.add_marker(pytest.mark.integration)
+
+
 class MitmOutput:
     PORT_PATTERN = re.compile(r"listening at .*:(\d+)")
 
