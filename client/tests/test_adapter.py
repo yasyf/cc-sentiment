@@ -100,7 +100,7 @@ class TestSmokeEvalAccuracy:
             pytest.skip("metadata.json not shipped yet (no production adapter ready)")
 
     def _predict_all(self) -> list[tuple[int, int, str]]:
-        from cc_sentiment.engines.filter import FRUSTRATION_PATTERN
+        from cc_sentiment.engines.filter import FrustrationFilter
         from cc_sentiment.sentiment import SentimentClassifier
 
         classifier = SentimentClassifier()
@@ -108,7 +108,7 @@ class TestSmokeEvalAccuracy:
             orjson.loads(line) for line in SMOKE_EVAL.read_text().splitlines() if line.strip()
         ]
         non_filter_indices = [
-            i for i, s in enumerate(samples) if not FRUSTRATION_PATTERN.search(s["text"])
+            i for i, s in enumerate(samples) if not FrustrationFilter.matches_text(s["text"])
         ]
         contents = [
             f"CONVERSATION:\nDEVELOPER: {samples[i]['text'].strip()}"

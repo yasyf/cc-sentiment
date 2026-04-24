@@ -31,13 +31,13 @@ class FrustrationFilter:
         self.inner = inner
 
     @staticmethod
-    def matched_user_message(bucket: ConversationBucket) -> str | None:
+    def matches_text(text: str) -> bool:
+        return FRUSTRATION_PATTERN.search(text) is not None
+
+    @classmethod
+    def matched_user_message(cls, bucket: ConversationBucket) -> str | None:
         return next(
-            (
-                msg.content
-                for msg in bucket.messages
-                if msg.role == "user" and FRUSTRATION_PATTERN.search(msg.content)
-            ),
+            (msg.content for msg in bucket.messages if msg.role == "user" and cls.matches_text(msg.content)),
             None,
         )
 
