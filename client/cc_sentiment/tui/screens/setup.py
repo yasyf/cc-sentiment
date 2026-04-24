@@ -1094,28 +1094,37 @@ Expire-Date: 0
             case SSHKeyInfo(path=p):
                 try:
                     github_keys = KeyDiscovery.fetch_github_ssh_keys(self.username)
+                except httpx.HTTPError:
+                    results.append(RemoteCheckRow("?", "GitHub", "Couldn't reach GitHub", Tone.MUTED))
+                else:
                     local_fp = SSHBackend(private_key_path=p).fingerprint()
                     if any(" ".join(gk.split()[:2]) == local_fp for gk in github_keys):
                         results.append(RemoteCheckRow("✓", "GitHub", "Found on GitHub", Tone.SUCCESS))
                         found = True
                     else:
                         results.append(RemoteCheckRow("—", "GitHub", "Not on GitHub yet", Tone.WARNING))
-                except httpx.HTTPError:
-                    results.append(RemoteCheckRow("?", "GitHub", "Couldn't reach GitHub", Tone.MUTED))
 
             case GPGKeyInfo(fpr=f):
                 if self.username:
                     try:
-                        if KeyDiscovery.gpg_key_on_github(self.username, f):
+                        on_github = KeyDiscovery.gpg_key_on_github(self.username, f)
+                    except httpx.HTTPError:
+                        results.append(RemoteCheckRow("?", "GitHub", "Couldn't reach GitHub", Tone.MUTED))
+                    else:
+                        if on_github:
                             results.append(RemoteCheckRow("✓", "GitHub", "Found on GitHub", Tone.SUCCESS))
                             found = True
                         else:
                             results.append(RemoteCheckRow("—", "GitHub", "Not on GitHub yet", Tone.WARNING))
-                    except httpx.HTTPError:
-                        results.append(RemoteCheckRow("?", "GitHub", "Couldn't reach GitHub", Tone.MUTED))
 
                 try:
-                    if KeyDiscovery.fetch_openpgp_key(f):
+                    armored = KeyDiscovery.fetch_openpgp_key(f)
+                except httpx.HTTPError:
+                    results.append(
+                        RemoteCheckRow("?", "keys.openpgp.org", "Couldn't reach keys.openpgp.org", Tone.WARNING)
+                    )
+                else:
+                    if armored:
                         results.append(
                             RemoteCheckRow("✓", "keys.openpgp.org", "Found on keys.openpgp.org", Tone.SUCCESS)
                         )
@@ -1125,10 +1134,6 @@ Expire-Date: 0
                         results.append(
                             RemoteCheckRow("—", "keys.openpgp.org", "Not on keys.openpgp.org yet", Tone.WARNING)
                         )
-                except httpx.HTTPError:
-                    results.append(
-                        RemoteCheckRow("?", "keys.openpgp.org", "Couldn't reach keys.openpgp.org", Tone.WARNING)
-                    )
 
         self.app.call_from_thread(
             self._apply_remote_results,
@@ -1218,7 +1223,7 @@ Expire-Date: 0
             case _:
                 return []
 
-    def _selected_upload_action(self) -> str:
+    def _selected_upload_action(self) -> VerificationAction:
         radio = self.query_one("#upload-options", RadioSet)
         idx = radio.pressed_index if radio.display and radio.pressed_index >= 0 else 0
         return self.upload_plan.actions[idx]
