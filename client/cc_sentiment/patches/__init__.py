@@ -1,11 +1,7 @@
 from __future__ import annotations
 
 import contextlib
-import importlib.util
-import subprocess
 import time
-from importlib.resources import files as pkg_files
-from pathlib import Path
 
 
 class MLXPatches:
@@ -16,21 +12,7 @@ class MLXPatches:
         if cls.applied:
             return
         cls.applied = True
-        cls._apply_sliding_window()
         cls._apply_batchstats_zerodiv_guard()
-
-    @staticmethod
-    def _apply_sliding_window() -> None:
-        spec = importlib.util.find_spec("mlx_lm")
-        if spec is None or spec.origin is None:
-            return
-        subprocess.run(
-            ["patch", "-p1", "--forward", "-i",
-             str(pkg_files("cc_sentiment.patches").joinpath("pr999.patch"))],
-            cwd=str(Path(spec.origin).parent.parent),
-            capture_output=True,
-            timeout=10,
-        )
 
     @staticmethod
     def _apply_batchstats_zerodiv_guard() -> None:
