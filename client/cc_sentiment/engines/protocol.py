@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
@@ -28,29 +29,11 @@ DEMOS: tuple[tuple[str, str], ...] = (
 )
 
 
-def build_user_content(text: str) -> str:
-    return f"CONVERSATION:\nDEVELOPER: {text.strip()}"
-
-
-def build_prefix_messages() -> list[dict[str, str]]:
-    prefix: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for demo_msg, demo_score in DEMOS:
-        prefix.append({"role": "user", "content": build_user_content(demo_msg)})
-        prefix.append({"role": "assistant", "content": demo_score})
-    return prefix
-
-
 STRUCTURED_OUTPUTS_CHOICE = ["1", "2", "3", "4", "5"]
 
 
 NOOP_PROGRESS: Callable[[int], None] = lambda _: None
-
-
-async def noop_snippet(_s: str, _i: int) -> None:
-    return None
-
-
-NOOP_SNIPPET: Callable[[str, int], Awaitable[None]] = noop_snippet
+NOOP_SNIPPET: Callable[[str, int], Awaitable[None]] = lambda *_: asyncio.sleep(0)
 
 
 class InferenceEngine(Protocol):

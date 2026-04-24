@@ -118,8 +118,8 @@ class TestClassifierIntegration:
     def test_score_chunk(self) -> None:
         from cc_sentiment.engines import SYSTEM_PROMPT
         from cc_sentiment.sentiment import SentimentClassifier
+        from cc_sentiment.text import build_prefix_messages
 
-        mock_model = MagicMock()
         mock_tokenizer = MagicMock()
         mock_tokenizer.apply_chat_template.return_value = [1, 2, 3, 4, 5]
 
@@ -127,22 +127,16 @@ class TestClassifierIntegration:
         mock_batch_result.texts = ["4"]
 
         mock_mlx_lm = MagicMock()
-        mock_mlx_lm.load.return_value = (mock_model, mock_tokenizer)
         mock_mlx_lm.batch_generate.return_value = mock_batch_result
 
-        mock_logit_proc = MagicMock()
-
-        with patch.dict(sys.modules, {
-            "mlx_lm": mock_mlx_lm,
-        }), patch("cc_sentiment.patches.apply_kv_cache_patch"), \
-             patch("cc_sentiment.sentiment.AdapterFuser.ensure_fused"), \
-             patch("cc_sentiment.sentiment.SentimentClassifier.make_score_logit_processor", return_value=mock_logit_proc):
+        with patch.dict(sys.modules, {"mlx_lm": mock_mlx_lm}):
             classifier = SentimentClassifier.__new__(SentimentClassifier)
-            classifier.model = mock_model
+            classifier.model = MagicMock()
             classifier.tokenizer = mock_tokenizer
-            classifier.logit_processor = mock_logit_proc
+            classifier.logit_processor = MagicMock()
             classifier.system_prompt = SYSTEM_PROMPT
-            classifier.system_tokens = [1, 2]
+            classifier.prefix_messages = build_prefix_messages()
+            classifier.prefix_tokens = [1, 2]
             classifier.base_cache = [MagicMock()]
 
             bucket = make_bucket([("user", "this works perfectly!")])

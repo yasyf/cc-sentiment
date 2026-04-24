@@ -11,10 +11,9 @@ from anyio import to_thread
 
 from cc_sentiment.adapter import AdapterCodec
 from cc_sentiment.engines import DEFAULT_MODEL, NOOP_PROGRESS, SYSTEM_PROMPT
-from cc_sentiment.engines.protocol import build_prefix_messages
 from cc_sentiment.models import ConversationBucket, SentimentScore
 from cc_sentiment.patches import apply_kv_cache_patch
-from cc_sentiment.text import extract_score, format_conversation
+from cc_sentiment.text import build_prefix_messages, extract_score, format_conversation
 
 if sys.platform != "darwin" or platform.machine() != "arm64":
     raise RuntimeError(
