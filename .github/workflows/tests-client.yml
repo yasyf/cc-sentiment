@@ -40,7 +40,7 @@ jobs:
 
       - name: Sync (rebuilds Rust ext in release mode via debug=false)
         working-directory: client
-        run: uv sync --extra mlx
+        run: uv sync
 
       - name: Run tests (rust backend)
         working-directory: client
@@ -72,7 +72,7 @@ jobs:
 
       - name: Sync (no Rust toolchain — setuptools-rust skips when cargo absent)
         working-directory: client
-        run: uv sync --extra mlx
+        run: uv sync
 
       - name: Run tests (python fallback backend)
         working-directory: client
