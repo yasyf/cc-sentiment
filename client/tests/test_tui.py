@@ -39,6 +39,10 @@ from cc_sentiment.tui.screens.setup import (
     SetupStage,
     VerificationState,
 )
+from cc_sentiment.tui.setup_state import (
+    RetryTarget,
+    VerificationAction,
+)
 from cc_sentiment.tui.stages import (
     Discovering,
     IdleAfterUpload,
@@ -1132,7 +1136,7 @@ async def test_setup_pending_retry_cadence_auto_polls_pending_retry_cadence(tmp_
         return AuthUnauthorized(status=401)
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch("cc_sentiment.tui.screens.setup.PENDING_RETRY_SECONDS", 0.2), \
+         patch("cc_sentiment.tui.setup_state.PENDING_RETRY_SECONDS", 0.2), \
          patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
          patch("cc_sentiment.upload.Uploader.probe_credentials", new=probe):
         async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
@@ -1154,7 +1158,7 @@ async def test_setup_pending_propagation_window_transitions_to_failed_propagatio
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
          patch("cc_sentiment.tui.screens.setup.monotonic", new=fake_clock), \
-         patch("cc_sentiment.tui.screens.setup.PENDING_PROPAGATION_WINDOW_SECONDS", 5.0), \
+         patch("cc_sentiment.tui.setup_state.PENDING_PROPAGATION_WINDOW_SECONDS", 5.0), \
          patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
          patch(
              "cc_sentiment.upload.Uploader.probe_credentials",
@@ -1188,16 +1192,16 @@ async def test_setup_pending_propagation_window_transitions_to_failed_propagatio
 @pytest.mark.parametrize(
     ("action", "selected_key", "expected"),
     [
-        ("manual", SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment=""), ("Paste your public key at", "github.com/settings/ssh/new")),
-        ("openpgp", GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096"), ("verification link", "keys.openpgp.org")),
-        ("github-ssh", SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment=""), ("GitHub", "propagate")),
-        ("github-gpg", GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096"), ("GitHub", "propagate")),
-        ("gist", None, ("gist", "retry")),
+        (VerificationAction.MANUAL, SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment=""), ("Paste your public key at", "github.com/settings/ssh/new")),
+        (VerificationAction.OPENPGP, GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096"), ("verification link", "keys.openpgp.org")),
+        (VerificationAction.GITHUB_SSH, SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment=""), ("GitHub", "propagate")),
+        (VerificationAction.GITHUB_GPG, GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096"), ("GitHub", "propagate")),
+        (VerificationAction.GIST, None, ("gist", "retry")),
     ],
 )
 async def test_setup_pending_verification_action_instructions_cover_surviving_actions(
     tmp_path: Path,
-    action: str,
+    action: VerificationAction,
     selected_key: SSHKeyInfo | GPGKeyInfo | None,
     expected: tuple[str, str],
 ):
@@ -1268,7 +1272,7 @@ async def test_setup_pending_retry_immediate_does_not_reset_elapsed_retry_immedi
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
          patch("cc_sentiment.tui.screens.setup.monotonic", new=fake_clock), \
-         patch("cc_sentiment.tui.screens.setup.PENDING_RETRY_SECONDS", 60.0), \
+         patch("cc_sentiment.tui.setup_state.PENDING_RETRY_SECONDS", 60.0), \
          patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
          patch("cc_sentiment.upload.Uploader.probe_credentials", new=probe):
         async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
@@ -1378,7 +1382,7 @@ async def test_setup_verify_result_maps_five_xx_and_network_drop_to_identical_pe
             screen = pilot.app.screen
             screen.transition_to(SetupStage.DONE)
             screen.done_display.summary_text = "Signed in as testuser using SSH key id_ed25519."
-            screen.done_display.verification_action = "github-ssh"
+            screen.done_display.verification_action = VerificationAction.GITHUB_SSH
             screen.verification_poll.restart(fake_clock())
 
             screen._on_verify_result(AuthServerError(status=502))
@@ -2147,9 +2151,9 @@ async def test_setup_failed_retry_for_upload_returns_to_upload(no_auto_setup):
             screen = pilot.app.screen
             screen.username = "testuser"
             screen.selected_key = ssh_key
-            screen.done_display.verification_action = "github-ssh"
+            screen.done_display.verification_action = VerificationAction.GITHUB_SSH
             screen.done_display.upload_failure_text = "Something went wrong: boom"
-            screen.done_display.failed_retry_target = "upload"
+            screen.done_display.failed_retry_target = RetryTarget.UPLOAD
             screen.done_display.summary_text = "Signed in as testuser using SSH key id_ed25519."
             screen.transition_to(SetupStage.DONE)
             screen._set_verification_branch(VerificationState.FAILED)
@@ -2170,7 +2174,7 @@ async def test_setup_upload_action_manual_uses_non_error_tone(no_auto_setup):
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
 
     def finish_upload_only(screen: SetupScreen) -> None:
-        screen._finish_upload_action()
+        screen.actions.upload_running = False
 
     with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value=None), \
          patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"), \
@@ -2197,7 +2201,7 @@ async def test_setup_upload_action_openpgp_warns_and_saves(no_auto_setup):
     gpg_key = GPGKeyInfo(fpr="ABCDEF1234567890", email="alice@example.com", algo="rsa4096")
 
     def finish_upload_only(screen: SetupScreen) -> None:
-        screen._finish_upload_action()
+        screen.actions.upload_running = False
 
     with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value=None), \
          patch("cc_sentiment.tui.screens.setup.GPGBackend.public_key_text", return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----"), \

@@ -4,6 +4,7 @@ from cc_sentiment.tui.widgets.button_row import ButtonRow
 from cc_sentiment.tui.widgets.card import Card
 from cc_sentiment.tui.widgets.command_box import CommandBox
 from cc_sentiment.tui.widgets.debug_section import DebugSection
+from cc_sentiment.tui.widgets.done_branch import DoneBranch
 from cc_sentiment.tui.widgets.hourly_chart import HourlyChart
 from cc_sentiment.tui.widgets.key_preview import KeyPreview
 from cc_sentiment.tui.widgets.pending_status import PendingStatus
@@ -20,6 +21,7 @@ __all__ = [
     "Card",
     "CommandBox",
     "DebugSection",
+    "DoneBranch",
     "HourlyChart",
     "KeyPreview",
     "PendingStatus",

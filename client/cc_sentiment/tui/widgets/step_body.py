@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from textual.containers import Vertical
-from textual.widget import Widget
 
 
 class StepBody(Vertical):
@@ -48,6 +47,3 @@ class StepBody(Vertical):
         max-height: 2;
     }
     """
-
-    def __init__(self, *children: Widget, **kwargs) -> None:
-        super().__init__(*children, **kwargs)

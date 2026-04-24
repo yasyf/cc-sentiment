@@ -7,25 +7,5 @@ commands:
   test-tuistory-live: cd client && CC_SENTIMENT_E2E_LIVE=1 uv run pytest tests/tuistory -xvs -m live
   setup-dry: cd client && uv run cc-sentiment setup
   install-mitmproxy: uv tool install mitmproxy
-
-  # Typecheck: this project does NOT configure or run pyright/mypy. There is
-  # no pyrightconfig.json, no mypy.ini, no typecheck step in pre-commit/CI.
-  # Running project-wide pyright surfaces 185+ baseline errors in off-limits
-  # modules (engines/, upload, hardware) plus missing optional ML deps
-  # (huggingface_hub, mlx*). Even scoped to the mission files, pyright flags
-  # 158 errors from pre-existing test patterns (pilot.app.screen returning
-  # generic Screen[object] — the codebase does not use cast() defensively,
-  # matching AGENTS.md "no defensive coding" rule). Treating typecheck as a
-  # validator gate would fail against the project's actual conventions.
-  # The scrutiny-validator is configured to skip typecheck when not defined.
-  typecheck: 'echo "cc-sentiment has no typecheck baseline (no pyright/mypy config in project); skipping per services.yaml policy"'
-
-  # Lint: scoped to mission files. Ruff is used by the project via pre-commit,
-  # but this mission only gates on mission-touched paths. Pre-existing E731/E701
-  # in engines/upload/hardware are tracked by the project's pre-commit, not by
-  # this mission. Per root AGENTS.md: "Mechanical linting ... handled by
-  # pre-commit hooks or CI. Only fix issues requiring human judgment."
-  lint: cd client && uv run --with ruff ruff check cc_sentiment/tui tests/test_tui.py
-  lint-tuistory: cd client && uv run --with ruff ruff check tests/tuistory
-
+  lint: cd client && uv run --with ruff ruff check cc_sentiment/tui tests
 services: {}
