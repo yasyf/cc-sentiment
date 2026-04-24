@@ -100,50 +100,27 @@ class TestSmokeEvalAccuracy:
             pytest.skip("metadata.json not shipped yet (no production adapter ready)")
 
     def _predict_all(self) -> list[tuple[int, int, str]]:
-        from cc_sentiment.adapter import AdapterCodec as _Codec
         from cc_sentiment.engines.filter import FRUSTRATION_PATTERN
-        from cc_sentiment.engines.protocol import DEMOS, SYSTEM_PROMPT
-        from cc_sentiment.text import extract_score
-        from mlx_lm import generate, load
+        from cc_sentiment.sentiment import SentimentClassifier
 
-        tmp = Path("/tmp/cc_sentiment_shipped_smoke")
-        tmp.mkdir(exist_ok=True)
-        (tmp / "adapters.safetensors").unlink(missing_ok=True)
-        _Codec.decode(tmp / "adapters.safetensors")
-        (tmp / "adapter_config.json").write_bytes(_Codec.CONFIG.read_bytes())
+        classifier = SentimentClassifier()
+        samples = [
+            orjson.loads(line) for line in SMOKE_EVAL.read_text().splitlines() if line.strip()
+        ]
+        non_filter_indices = [
+            i for i, s in enumerate(samples) if not FRUSTRATION_PATTERN.search(s["text"])
+        ]
+        contents = [
+            f"CONVERSATION:\nDEVELOPER: {samples[i]['text'].strip()}"
+            for i in non_filter_indices
+        ]
+        scores = classifier.score_user_contents(contents) if contents else []
+        score_by_index = dict(zip(non_filter_indices, scores, strict=True))
 
-        model, tokenizer = load("unsloth/gemma-4-E2B-it-UD-MLX-4bit", adapter_path=str(tmp))
-
-        results: list[tuple[int, int, str]] = []
-        for line in SMOKE_EVAL.read_text().splitlines():
-            if not line.strip():
-                continue
-            sample = orjson.loads(line)
-            text = sample["text"]
-            truth = int(sample["score"])
-            tag = sample.get("tag", "")
-            if FRUSTRATION_PATTERN.search(text):
-                pred = 1
-            else:
-                messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-                for demo_msg, demo_score in DEMOS:
-                    messages.append(
-                        {"role": "user", "content": f"CONVERSATION:\nDEVELOPER: {demo_msg}"}
-                    )
-                    messages.append({"role": "assistant", "content": demo_score})
-                messages.append(
-                    {"role": "user", "content": f"CONVERSATION:\nDEVELOPER: {text.strip()}"}
-                )
-                prompt = tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
-                )
-                out = generate(model, tokenizer, prompt=prompt, max_tokens=4, verbose=False)
-                try:
-                    pred = int(extract_score(out))
-                except ValueError:
-                    pred = 3
-            results.append((truth, pred, tag))
-        return results
+        return [
+            (int(s["score"]), score_by_index.get(i, 1), s.get("tag", ""))
+            for i, s in enumerate(samples)
+        ]
 
     def test_smoke_eval_accuracy_floor(self) -> None:
         self._skip_if_incomplete()

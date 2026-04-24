@@ -28,6 +28,18 @@ DEMOS: tuple[tuple[str, str], ...] = (
 )
 
 
+def build_user_content(text: str) -> str:
+    return f"CONVERSATION:\nDEVELOPER: {text.strip()}"
+
+
+def build_prefix_messages() -> list[dict[str, str]]:
+    prefix: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for demo_msg, demo_score in DEMOS:
+        prefix.append({"role": "user", "content": build_user_content(demo_msg)})
+        prefix.append({"role": "assistant", "content": demo_score})
+    return prefix
+
+
 STRUCTURED_OUTPUTS_CHOICE = ["1", "2", "3", "4", "5"]
 
 

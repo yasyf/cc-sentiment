@@ -11,7 +11,7 @@ from anyio import to_thread
 
 from cc_sentiment.adapter import AdapterCodec
 from cc_sentiment.engines import DEFAULT_MODEL, NOOP_PROGRESS, SYSTEM_PROMPT
-from cc_sentiment.engines.protocol import DEMOS
+from cc_sentiment.engines.protocol import build_prefix_messages
 from cc_sentiment.models import ConversationBucket, SentimentScore
 from cc_sentiment.patches import apply_kv_cache_patch
 from cc_sentiment.text import extract_score, format_conversation
@@ -88,14 +88,7 @@ class SentimentClassifier:
         self.score_token_ids = self.compute_score_token_ids(self.tokenizer)
         self.logit_processor = self.make_score_logit_processor(self.score_token_ids)
 
-        self.prefix_messages: list[dict[str, str]] = [
-            {"role": "system", "content": self.system_prompt}
-        ]
-        for demo_msg, demo_score in DEMOS:
-            self.prefix_messages.append(
-                {"role": "user", "content": f"CONVERSATION:\nDEVELOPER: {demo_msg}"}
-            )
-            self.prefix_messages.append({"role": "assistant", "content": demo_score})
+        self.prefix_messages = build_prefix_messages()
         self.prefix_tokens = self.tokenizer.apply_chat_template(
             self.prefix_messages,
             tokenize=True,
@@ -110,19 +103,16 @@ class SentimentClassifier:
             return_prompt_caches=True,
         ).caches[0]
 
-    def _score_chunk(self, buckets: list[ConversationBucket]) -> list[SentimentScore]:
+    def score_user_contents(self, user_contents: list[str]) -> list[SentimentScore]:
         from mlx_lm import batch_generate
 
         suffixes = [
             self.tokenizer.apply_chat_template(
-                [
-                    *self.prefix_messages,
-                    {"role": "user", "content": f"CONVERSATION:\n{format_conversation(b)}"},
-                ],
+                [*self.prefix_messages, {"role": "user", "content": content}],
                 tokenize=True,
                 add_generation_prompt=True,
             )[len(self.prefix_tokens):]
-            for b in buckets
+            for content in user_contents
         ]
         result = batch_generate(
             self.model,
@@ -133,6 +123,11 @@ class SentimentClassifier:
             prompt_caches=[copy.deepcopy(self.base_cache) for _ in suffixes],
         )
         return [extract_score(text) for text in result.texts]
+
+    def _score_chunk(self, buckets: list[ConversationBucket]) -> list[SentimentScore]:
+        return self.score_user_contents(
+            [f"CONVERSATION:\n{format_conversation(b)}" for b in buckets]
+        )
 
     async def score(
         self,
