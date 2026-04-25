@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
@@ -11,6 +12,8 @@ from cc_sentiment.nlp import NLP
 
 if TYPE_CHECKING:
     import spacy.tokens
+
+WORD_BOUNDARY_PATTERN = re.compile(r"\b[a-zA-Z]+\b")
 
 
 @dataclass(frozen=True)
@@ -64,6 +67,13 @@ class Highlighter:
     SENTIMENT_POS: ClassVar[frozenset[str]] = frozenset(
         {"ADJ", "ADV", "VERB", "INTJ", "NOUN"}
     )
+
+    @classmethod
+    def profanity_tokens_in(cls, text: str) -> list[str]:
+        return [
+            word for word in WORD_BOUNDARY_PATTERN.findall(text.lower())
+            if word in cls.PROFANITY_TOKENS
+        ]
 
     @classmethod
     def windowed_highlight(cls, full: str, score: int) -> Text:

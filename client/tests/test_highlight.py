@@ -35,6 +35,17 @@ def real_lexicon(monkeypatch):
     )
 
 
+def test_profanity_tokens_in_finds_inflections():
+    assert Highlighter.profanity_tokens_in("shit, that broke") == ["shit"]
+    assert Highlighter.profanity_tokens_in("FUCKING broken AGAIN") == ["fucking"]
+    assert Highlighter.profanity_tokens_in("totally fine here") == []
+
+
+def test_profanity_tokens_in_collects_all_matches():
+    matches = Highlighter.profanity_tokens_in("damn it, this is shit and bullshit too")
+    assert matches == ["damn", "shit", "bullshit"]
+
+
 def test_slice_window_both_ellipses_center():
     full = "a" * 30 + "BUG" + "b" * 30
     anchor = HighlightSpan(start=30, end=33, color="red", priority=2)

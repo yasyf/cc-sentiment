@@ -305,7 +305,7 @@ class ProcessingView:
     def venting_phrase(self) -> str:
         top = self.stats.live_fun.top()
         if top is None:
-            return "[dim]no swearing yet — you're kind to Claude[/]"
+            return "[dim]you're kind to Claude[/]"
         word, count = top
         return f'[b yellow]"{word}"[/] ×[b cyan]{count}[/]'
 

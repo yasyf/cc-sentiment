@@ -7,12 +7,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import anyio
 import pytest
 
+from datetime import datetime, timezone
+
 from cc_sentiment.models import (
+    AssistantMessage,
     BucketIndex,
     BucketKey,
     SentimentRecord,
     SentimentScore,
     SessionId,
+    UserMessage,
 )
 from cc_sentiment.pipeline import Pipeline, ScannedTranscript, ScanResult
 from cc_sentiment.repo import Repository
@@ -243,6 +247,67 @@ class TestPipelineStateUpdate:
         assert pending[0] == record
         assert str(Path("/fake.jsonl")) in repo.file_mtimes()
         assert len(result) == 1
+
+
+class TestOnFrustration:
+    @staticmethod
+    def make_pair(user_text: str) -> list:
+        ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        return [
+            UserMessage(
+                content=user_text, timestamp=ts, session_id=SessionId("s1"),
+                uuid="u1", tool_calls=(), thinking_chars=0, cc_version="2.1.92",
+            ),
+            AssistantMessage(
+                content="ack", timestamp=ts, session_id=SessionId("s1"),
+                uuid="a1", tool_calls=(), thinking_chars=0,
+                claude_model="claude-sonnet-4-20250514",
+            ),
+            UserMessage(
+                content="ok thanks", timestamp=ts, session_id=SessionId("s1"),
+                uuid="u2", tool_calls=(), thinking_chars=0, cc_version="2.1.92",
+            ),
+            AssistantMessage(
+                content="np", timestamp=ts, session_id=SessionId("s1"),
+                uuid="a2", tool_calls=(), thinking_chars=0,
+                claude_model="claude-sonnet-4-20250514",
+            ),
+        ]
+
+    @pytest.mark.parametrize("score", [SentimentScore(s) for s in (1, 2, 3, 4, 5)])
+    def test_emits_for_any_score_when_profanity_present(
+        self, score: SentimentScore
+    ) -> None:
+        parsed = make_parsed(Path("/p.jsonl"), self.make_pair("shit, that's not right"))
+        classifier = MagicMock()
+        classifier.score = AsyncMock(return_value=[score])
+
+        captured: list[list[str]] = []
+
+        async def run() -> None:
+            await Pipeline.score_transcript(
+                parsed, classifier,
+                on_frustration=captured.append,
+            )
+
+        anyio.run(run)
+        assert captured == [["shit"]]
+
+    def test_no_emission_when_no_profanity(self) -> None:
+        parsed = make_parsed(Path("/p.jsonl"), self.make_pair("everything fine"))
+        classifier = MagicMock()
+        classifier.score = AsyncMock(return_value=[SentimentScore(1)])
+
+        captured: list[list[str]] = []
+
+        async def run() -> None:
+            await Pipeline.score_transcript(
+                parsed, classifier,
+                on_frustration=captured.append,
+            )
+
+        anyio.run(run)
+        assert captured == []
 
 
 class TestOnBucketPlumbing:

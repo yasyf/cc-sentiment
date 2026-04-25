@@ -15,6 +15,7 @@ from cc_sentiment.engines import (
     FrustrationFilter,
     InferenceEngine,
 )
+from cc_sentiment.highlight import Highlighter
 from cc_sentiment.models import (
     BucketKey,
     BucketMetrics,
@@ -189,7 +190,12 @@ class Pipeline:
             for bucket, score in zip(chunk, scores):
                 if snippet := cls.snippet_for(bucket, int(score)):
                     await on_snippet(snippet, int(score))
-                if int(score) == 1 and (words := FrustrationFilter.matched_words(bucket)):
+                if words := [
+                    w
+                    for msg in bucket.messages
+                    if msg.role == "user"
+                    for w in Highlighter.profanity_tokens_in(msg.content)
+                ]:
                     on_frustration(words)
             chunk_records = [
                 cls.to_record(
