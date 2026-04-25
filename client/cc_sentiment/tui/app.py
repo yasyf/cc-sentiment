@@ -251,6 +251,7 @@ class CCSentimentApp(App[None]):
         self.run_worker(self._prewarm_model(), name="prewarm-model", exit_on_error=False)
 
     async def _prewarm_model(self) -> None:
+        EngineFactory.configure_hub_progress()
         from huggingface_hub import snapshot_download
         from huggingface_hub.utils import disable_progress_bars
 

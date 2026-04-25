@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import platform
 import sys
+import threading
 from functools import partial
 
 import anyio.to_thread
@@ -18,6 +19,11 @@ class ClaudeUnavailable(Exception):
 
 
 class EngineFactory:
+    @staticmethod
+    def configure_hub_progress() -> None:
+        from huggingface_hub.utils.tqdm import tqdm as hf_tqdm
+        hf_tqdm.set_lock(threading.RLock())
+
     @classmethod
     def default(cls) -> str:
         match (sys.platform, platform.machine()):
@@ -41,6 +47,7 @@ class EngineFactory:
     async def build(cls, kind: str, model_repo: str | None = None) -> InferenceEngine:
         match kind:
             case "mlx":
+                cls.configure_hub_progress()
                 from cc_sentiment.sentiment import AdapterFuser, SentimentClassifier
                 fused_dir = await anyio.to_thread.run_sync(
                     AdapterFuser.ensure_fused, model_repo or DEFAULT_MODEL

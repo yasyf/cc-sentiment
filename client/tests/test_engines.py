@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 
 import orjson
 from collections.abc import Callable
@@ -321,6 +322,43 @@ class TestMlxBuild:
 
 
 class TestResolveEngine:
+    def test_configure_hub_progress_avoids_textual_bad_fileno(self) -> None:
+        code = """
+import multiprocessing as mp
+import sys
+from cc_sentiment.engines.factory import EngineFactory
+
+mp.set_start_method("spawn", force=True)
+EngineFactory.configure_hub_progress()
+
+from huggingface_hub.utils.tqdm import tqdm
+
+class FakeStderr:
+    def write(self, s):
+        pass
+
+    def flush(self):
+        pass
+
+    def isatty(self):
+        return True
+
+    def fileno(self):
+        return -1
+
+sys.stderr = FakeStderr()
+for _ in tqdm(range(1), disable=False):
+    pass
+print("ok")
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True, text=True, check=False,
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip() == "ok"
+        assert "bad value(s) in fds_to_keep" not in result.stderr
+
     def test_non_claude_skips_status_check(self) -> None:
         with patch.object(ClaudeCLIEngine, "check_status") as m:
             assert EngineFactory.resolve("mlx") == "mlx"
