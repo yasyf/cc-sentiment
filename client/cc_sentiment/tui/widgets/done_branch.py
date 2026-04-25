@@ -19,6 +19,7 @@ from cc_sentiment.tui.widgets.step_actions import StepActions
 class DoneBranch(Vertical):
     DEFAULT_CSS = """
     DoneBranch > Static { margin: 0 0 1 0; }
+    DoneBranch Button.-primary:focus { text-style: bold; }
     """
 
     verification_state: reactive[VerificationState] = reactive(VerificationState.VERIFIED, recompose=True)
@@ -73,8 +74,8 @@ class DoneBranch(Vertical):
                         Syntax(
                             self.sample_payload(),
                             "json",
-                            theme="ansi_dark",
-                            background_color="default",
+                            theme="github-dark",
+                            background_color=None,
                         ),
                         id="done-payload",
                         classes="code",
