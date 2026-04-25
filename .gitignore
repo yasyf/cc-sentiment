@@ -63,3 +63,4 @@ experiments
 .claude/scheduled_tasks.lock
 .vercel
 app/.playwright-cli
+.claude/worktrees
