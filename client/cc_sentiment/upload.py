@@ -171,7 +171,8 @@ class Uploader:
     @RETRY_POLICY
     async def _verify_credentials(self, config: SSHConfig | GPGConfig | GistConfig) -> None:
         backend = self.backend_from_config(config)
-        signature = await anyio.to_thread.run_sync(PayloadSigner.sign, TEST_PAYLOAD, backend)
+        with anyio.fail_after(10):
+            signature = await anyio.to_thread.run_sync(PayloadSigner.sign, TEST_PAYLOAD, backend)
         async with httpx.AsyncClient() as client:
             (await client.post(
                 f"{self.server_url}/verify",
@@ -205,7 +206,8 @@ class Uploader:
         assert state.config is not None, "Client not configured. Run 'cc-sentiment setup' first."
 
         backend = self.backend_from_config(state.config)
-        signature = await anyio.to_thread.run_sync(PayloadSigner.sign_records, records, backend)
+        with anyio.fail_after(10):
+            signature = await anyio.to_thread.run_sync(PayloadSigner.sign_records, records, backend)
         payload = UploadPayload(
             contributor_type=state.config.contributor_type,
             contributor_id=self.wire_contributor_id(state.config),
@@ -247,7 +249,8 @@ class Uploader:
             event.model_dump(mode="json"), option=orjson.OPT_SORT_KEYS
         ).decode()
         backend = self.backend_from_config(config)
-        signature = await anyio.to_thread.run_sync(PayloadSigner.sign, canonical, backend)
+        with anyio.fail_after(10):
+            signature = await anyio.to_thread.run_sync(PayloadSigner.sign, canonical, backend)
         payload = DaemonEventPayload(
             contributor_type=config.contributor_type,
             contributor_id=self.wire_contributor_id(config),
@@ -293,7 +296,8 @@ class Uploader:
             mint_payload.model_dump(mode="json"), option=orjson.OPT_SORT_KEYS
         ).decode()
         backend = self.backend_from_config(config)
-        signature = await anyio.to_thread.run_sync(PayloadSigner.sign, canonical, backend)
+        with anyio.fail_after(10):
+            signature = await anyio.to_thread.run_sync(PayloadSigner.sign, canonical, backend)
         request = ShareMintRequest(
             contributor_type=config.contributor_type,
             contributor_id=self.wire_contributor_id(config),

@@ -277,24 +277,26 @@ def create_app(
         if age > SHARE_REQUEST_MAX_AGE_SECONDS:
             return JSONResponse({"detail": "Stale or future issued_at"}, status_code=400)
 
-        if not await verifier.verify_signature(
-            body.contributor_type,
-            body.contributor_id,
-            json.dumps(
-                body.payload.model_dump(mode="json"),
-                sort_keys=True,
-                separators=(",", ":"),
-            ),
-            body.signature,
-        ):
-            return JSONResponse({"detail": "Signature verification failed"}, status_code=401)
-
         db_contributor_id = (
             body.contributor_id.split("/", 1)[0]
             if body.contributor_type == "gist"
             else body.contributor_id
         )
-        avatar_url = await verifier.resolve_avatar_url(body.contributor_type, db_contributor_id)
+        verified, avatar_url = await asyncio.gather(
+            verifier.verify_signature(
+                body.contributor_type,
+                body.contributor_id,
+                json.dumps(
+                    body.payload.model_dump(mode="json"),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                body.signature,
+            ),
+            verifier.resolve_avatar_url(body.contributor_type, db_contributor_id),
+        )
+        if not verified:
+            return JSONResponse({"detail": "Signature verification failed"}, status_code=401)
         record = ShareRecord(
             id=secrets.token_urlsafe(6),
             contributor_type=body.contributor_type,

@@ -135,6 +135,7 @@ class StatShareScreen(Dialog[None]):
             OSError,
             AssertionError,
             ValidationError,
+            TimeoutError,
         ):
             self.query_one("#stat-tweet", Button).label = MINT_FAILED_LABEL
             return

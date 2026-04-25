@@ -3985,6 +3985,17 @@ async def test_stat_share_surfaces_signing_failure_on_label():
             assert tweet.disabled is True
 
 
+async def test_stat_share_surfaces_signing_timeout_on_label():
+    harness = StatShareHarness(GITHUB_CONFIG, STAT)
+    failing_mint = AsyncMock(side_effect=TimeoutError())
+    with patch("cc_sentiment.tui.screens.stat_share.Uploader.mint_share", new=failing_mint):
+        async with harness.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            tweet = pilot.app.screen.query_one("#stat-tweet", Button)
+            assert str(tweet.label) == "Share unavailable"
+            assert tweet.disabled is True
+
+
 async def test_stat_share_skip_dismisses_without_opening_browser():
     harness = StatShareHarness(GITHUB_CONFIG, STAT)
     with patch("cc_sentiment.tui.screens.stat_share.Uploader.mint_share", new=stub_mint_share()), \
