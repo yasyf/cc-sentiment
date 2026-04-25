@@ -298,6 +298,40 @@ def test_windowed_highlight_colors_incorrect_red(real_nlp, real_lexicon):
     assert any(str(s.style) == "red" for s in text.spans)
 
 
+def test_collect_candidates_skips_python_literal_true(real_lexicon):
+    full = "strict=True))"
+    tokens = [
+        FakeToken(idx=0, text="strict", pos_="NOUN", lemma_="strict"),
+        FakeToken(idx=6, text="=", pos_="PUNCT", lemma_="="),
+        FakeToken(idx=7, text="True", pos_="ADJ", lemma_="true"),
+    ]
+    candidates = Highlighter.collect_candidates(full, tokens, score=2)
+    assert not any(c.start == 7 for c in candidates)
+
+
+def test_collect_candidates_skips_kwarg_value_after_equals(real_lexicon):
+    full = "verbose=working"
+    tokens = [
+        FakeToken(idx=0, text="verbose", pos_="ADJ", lemma_="verbose"),
+        FakeToken(idx=7, text="=", pos_="PUNCT", lemma_="="),
+        FakeToken(idx=8, text="working", pos_="VERB", lemma_="work"),
+    ]
+    candidates = Highlighter.collect_candidates(full, tokens, score=4)
+    assert not any(c.start == 8 for c in candidates)
+
+
+def test_collect_candidates_keeps_lowercase_true_as_word(real_lexicon):
+    full = "this is true love"
+    tokens = [
+        FakeToken(idx=0, text="this", pos_="PRON", lemma_="this"),
+        FakeToken(idx=5, text="is", pos_="AUX", lemma_="be"),
+        FakeToken(idx=8, text="true", pos_="ADJ", lemma_="true"),
+        FakeToken(idx=13, text="love", pos_="NOUN", lemma_="love"),
+    ]
+    candidates = Highlighter.collect_candidates(full, tokens, score=4)
+    assert any(c.start == 8 and c.color == "green" for c in candidates)
+
+
 def test_collect_candidates_tags_incorrect_red_from_override(real_lexicon):
     full = "this seems incorrect for tqdm"
     tokens = [

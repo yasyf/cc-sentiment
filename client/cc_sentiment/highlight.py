@@ -36,6 +36,7 @@ class Highlighter:
     MAX_SNIPPET_CHARS: ClassVar[int] = 60
     MAX_SNAP_DISTANCE: ClassVar[int] = 15
     FALLBACK_MIN_LEN: ClassVar[int] = 3
+    PYTHON_LITERALS: ClassVar[frozenset[str]] = frozenset({"True", "False", "None"})
     PROFANITY_TOKENS: ClassVar[frozenset[str]] = frozenset(
         {
             "fuck", "fucks", "fucker", "fuckers", "fucking", "fucked", "fuckin",
@@ -114,6 +115,10 @@ class Highlighter:
             start, end = tok.idx, tok.idx + len(tok.text)
             if lemma in cls.PROFANITY_TOKENS:
                 spans.append(HighlightSpan(start, end, "red", priority=3))
+                continue
+            if tok.text in cls.PYTHON_LITERALS:
+                continue
+            if i > 0 and tokens[i - 1].text == "=":
                 continue
             if tok.pos_ not in cls.SENTIMENT_POS:
                 continue

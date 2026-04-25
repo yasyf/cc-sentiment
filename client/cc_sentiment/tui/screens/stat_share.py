@@ -36,6 +36,8 @@ class CardPoller:
     POLL_BACKOFF_AFTER: ClassVar[int] = 5
     POLL_BACKOFF_SECONDS: ClassVar[float] = 15.0
     MAX_POLL_SECONDS: ClassVar[float] = 180.0
+    TICK_SECONDS: ClassVar[float] = 1.0
+    MAX_ERROR_DETAIL: ClassVar[int] = 80
 
     attempts: int = 0
     started_at: float = field(default_factory=time.monotonic)
@@ -47,6 +49,10 @@ class CardPoller:
 
     def elapsed(self) -> float:
         return time.monotonic() - self.started_at
+
+    @classmethod
+    def truncate(cls, text: str) -> str:
+        return text[: cls.MAX_ERROR_DETAIL - 1] + "…" if len(text) > cls.MAX_ERROR_DETAIL else text
 
     @staticmethod
     def last_status_from(reason: str) -> str:
@@ -70,7 +76,7 @@ class CardPoller:
             try:
                 stat = await uploader.fetch_my_stat(self.config)
             except (httpx.HTTPError, httpx.InvalidURL) as exc:
-                status = f"error: {exc.__class__.__name__}"
+                status = f"error: {self.truncate(f'{exc.__class__.__name__}: {exc}'.strip())}"
             else:
                 status = "http 200" if stat is not None else "http 404"
             self.on_state(self.attempts, status, self.elapsed(), None)
@@ -83,7 +89,12 @@ class CardPoller:
                 if self.attempts >= self.POLL_BACKOFF_AFTER
                 else self.POLL_INTERVAL_SECONDS
             )
-            await anyio.sleep(delay)
+            remaining = delay
+            while remaining > 0 and not self.cancelled:
+                step = min(self.TICK_SECONDS, remaining)
+                await anyio.sleep(step)
+                remaining -= step
+                self.on_state(self.attempts, status, self.elapsed(), None)
         if not self.cancelled:
             self.on_state(self.attempts, "timeout", self.elapsed(), "timeout")
 

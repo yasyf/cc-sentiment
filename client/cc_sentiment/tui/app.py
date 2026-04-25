@@ -124,7 +124,7 @@ class CCSentimentApp(App[None]):
     ProgressBar Bar > .bar--bar { color: $accent; }
     ProgressBar Bar > .bar--complete { color: $accent; }
     #hourly-chart { height: 7; }
-    #moments-log { height: auto; min-height: 4; max-height: 10; }
+    #moments-log { height: auto; min-height: 4; max-height: 10; color: $foreground; }
     #stats-rows { height: auto; }
     #status-line { height: auto; margin: 1 0 0 0; }
     """

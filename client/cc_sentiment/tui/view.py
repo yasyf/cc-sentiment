@@ -25,7 +25,6 @@ class StatsState:
     avg_score: float = 0.0
     toughest_hour: int | None = None
     toughest_day: int | None = None
-    toughest_model: str | None = None
     live_fun: LiveFunStats = field(default_factory=LiveFunStats)
 
 
@@ -248,31 +247,20 @@ class ProcessingView:
         qualifying = {k: mean(v) for k, v in groups.items() if len(v) >= min_samples}
         return min(qualifying, key=qualifying.__getitem__) if qualifying else None
 
-    @staticmethod
-    def short_model(model: str) -> str:
-        return next(
-            (t for t in model.split("-") if t not in ("claude", "anthropic") and not t.isdigit()),
-            model,
-        )
-
     def update_peaks(self, records: list[SentimentRecord]) -> None:
         if len(records) < self.INSIGHTS_MIN_RECORDS:
             self.stats.toughest_hour = None
             self.stats.toughest_day = None
-            self.stats.toughest_model = None
             return
         hours: dict[int, list[int]] = defaultdict(list)
         days: dict[int, list[int]] = defaultdict(list)
-        models: dict[str, list[int]] = defaultdict(list)
         for r in records:
             local = r.time.astimezone()
             score = int(r.sentiment_score)
             hours[local.hour].append(score)
             days[local.weekday()].append(score)
-            models[r.claude_model].append(score)
         self.stats.toughest_hour = self.pick_toughest(hours, self.INSIGHTS_MIN_SAMPLES)
         self.stats.toughest_day = self.pick_toughest(days, self.INSIGHTS_MIN_SAMPLES)
-        self.stats.toughest_model = self.pick_toughest(models, self.INSIGHTS_MIN_SAMPLES)
 
     def render_stats(self) -> None:
         section = self.app.query_one("#stats-section")
@@ -295,7 +283,7 @@ class ProcessingView:
             ))
         peaks = self.peaks_phrase()
         if peaks:
-            lines.append(self.stats_row("peaks", peaks))
+            lines.append(self.stats_row("lows", peaks))
         self.app.query_one("#stats-rows", Static).update("\n".join(lines))
 
     @classmethod
@@ -322,6 +310,4 @@ class ProcessingView:
                 parts.append(f"on [b red]{self.WEEKDAY_LABELS[d]}[/]")
             case _:
                 pass
-        if (m := self.stats.toughest_model) is not None:
-            parts.append(f"[b red]{self.short_model(m)}[/] was toughest")
         return " · ".join(parts)
