@@ -21,7 +21,7 @@ class HardwareProfile:
 
 
 class Hardware:
-    BASELINE_MLX_USER_MSGS_PER_SEC: ClassVar[float] = 79.0
+    BASELINE_MLX_USER_MSGS_PER_SEC: ClassVar[float] = 37.0
     AVG_NON_FILTERED_USER_MSGS_PER_BUCKET: ClassVar[float] = 1.42
 
     BANDWIDTH_GBPS: ClassVar[dict[tuple[int, ChipVariant], int]] = {

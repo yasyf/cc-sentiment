@@ -145,3 +145,16 @@ def benchmark(
         model_repo=model_repo,
         scaling_test=scaling,
     )
+
+
+@main.command(hidden=True)
+@click.option("--buckets", default=100, help="Buckets to profile")
+@click.option("--model", "model_repo", default=None)
+def profile(buckets: int, model_repo: str | None) -> None:
+    from cc_sentiment.engines.protocol import DEFAULT_MODEL
+    from cc_sentiment.profiling import Profiler
+
+    Profiler.run_full_profile(
+        n_buckets=buckets,
+        model_repo=model_repo or DEFAULT_MODEL,
+    )

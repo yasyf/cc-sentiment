@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import sys
+import time
 from datetime import datetime, timezone
+from importlib.util import find_spec
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,6 +21,10 @@ from cc_sentiment.models import (
     SessionId,
     TranscriptMessage,
     UserMessage,
+)
+
+MLX_AVAILABLE: bool = (
+    find_spec("mlx_lm") is not None and sys.platform == "darwin"
 )
 
 
@@ -112,6 +118,102 @@ class TestConversationFormatting:
         text = format_conversation(bucket)
         assert text.endswith("\n[... truncated]")
         assert len(text) == MAX_CONVERSATION_CHARS + len("\n[... truncated]")
+
+
+class TestScoreMessagesSorting:
+    @staticmethod
+    def make_classifier_stub() -> "object":
+        from cc_sentiment.sentiment import SentimentClassifier
+
+        classifier = SentimentClassifier.__new__(SentimentClassifier)
+        return classifier
+
+    async def test_score_messages_sorts_by_last_content_length(self) -> None:
+        from cc_sentiment.sentiment import SentimentClassifier
+
+        message_lists = [
+            [{"role": "user", "content": "longest" * 100}],   # idx 0, very long
+            [{"role": "user", "content": "short"}],            # idx 1, shortest
+            [{"role": "user", "content": "medium" * 30}],      # idx 2, middle
+        ]
+        seen_chunks: list[list[str]] = []
+
+        def fake_generate_chunk(self, chunk):
+            seen_chunks.append([m[-1]["content"] for m in chunk])
+            return [str(len(m[-1]["content"])) for m in chunk]
+
+        classifier = SentimentClassifier.__new__(SentimentClassifier)
+        classifier.BATCH_SIZE = 2
+        with patch.object(SentimentClassifier, "_generate_chunk", fake_generate_chunk):
+            responses = await classifier.score_messages(message_lists, on_progress=lambda n: None)
+
+        flat_seen = [c for chunk in seen_chunks for c in chunk]
+        assert flat_seen == sorted(flat_seen, key=len)
+        assert responses == [str(len(m[-1]["content"])) for m in message_lists]
+
+    async def test_score_messages_preserves_original_order(self) -> None:
+        from cc_sentiment.sentiment import SentimentClassifier
+
+        message_lists = [
+            [{"role": "user", "content": "x" * n}] for n in (50, 5, 200, 1, 30)
+        ]
+
+        def fake_generate_chunk(self, chunk):
+            return [str(len(m[-1]["content"])) for m in chunk]
+
+        classifier = SentimentClassifier.__new__(SentimentClassifier)
+        classifier.BATCH_SIZE = 2
+        with patch.object(SentimentClassifier, "_generate_chunk", fake_generate_chunk):
+            responses = await classifier.score_messages(message_lists, on_progress=lambda n: None)
+
+        assert responses == ["50", "5", "200", "1", "30"]
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not MLX_AVAILABLE, reason="requires mlx-lm (Apple Silicon)")
+async def test_score_meets_calibrated_throughput_floor() -> None:
+    from cc_sentiment.engines.factory import EngineFactory
+    from cc_sentiment.engines.protocol import DEFAULT_MODEL
+    from cc_sentiment.hardware import Hardware
+    from cc_sentiment.transcripts import (
+        ConversationBucketer,
+        TranscriptDiscovery,
+        TranscriptParser,
+    )
+
+    predicted = Hardware.estimate_buckets_per_sec("mlx")
+    if predicted is None:
+        pytest.skip("hardware below minimum spec")
+
+    transcripts = TranscriptDiscovery.find_transcripts()
+    if not transcripts:
+        pytest.skip("no transcripts available; run cc-sentiment first")
+
+    paths = [(p, TranscriptDiscovery.stat_mtime(p) or 0.0) for p in transcripts]
+    buckets: list[ConversationBucket] = []
+    async for parsed in TranscriptParser.stream_transcripts(paths):
+        buckets.extend(ConversationBucketer.bucket_messages(list(parsed.messages)))
+        if len(buckets) >= 50:
+            break
+    buckets = buckets[:50]
+    if len(buckets) < 50:
+        pytest.skip(f"only {len(buckets)} buckets available, need 50")
+
+    engine = await EngineFactory.build("mlx", DEFAULT_MODEL)
+    try:
+        await engine.score(buckets[:5])  # warmup
+        t0 = time.monotonic()
+        await engine.score(buckets)
+        elapsed = time.monotonic() - t0
+    finally:
+        await engine.close()
+
+    measured = len(buckets) / elapsed
+    floor = predicted * 0.5
+    assert measured >= floor, (
+        f"throughput {measured:.1f} b/s below floor {floor:.1f} "
+        f"(predicted {predicted:.1f}, hardware regressed by >2x)"
+    )
 
 
 class TestClassifierIntegration:

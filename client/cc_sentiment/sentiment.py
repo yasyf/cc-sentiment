@@ -59,7 +59,7 @@ class AdapterFuser:
 
 
 class SentimentClassifier(BaseEngine):
-    BATCH_SIZE = 8
+    BATCH_SIZE = 2
 
     def __init__(self, fused_dir: Path) -> None:
         MLXPatches.apply()
@@ -113,10 +113,17 @@ class SentimentClassifier(BaseEngine):
         message_lists: list[list[dict[str, str]]],
         on_progress: Callable[[int], None],
     ) -> list[str]:
-        responses: list[str] = []
-        for start in range(0, len(message_lists), self.BATCH_SIZE):
-            chunk = message_lists[start:start + self.BATCH_SIZE]
-            responses.extend(await to_thread.run_sync(self._generate_chunk, chunk))
+        order = sorted(
+            range(len(message_lists)),
+            key=lambda i: len(message_lists[i][-1]["content"]),
+        )
+        responses: list[str] = [""] * len(message_lists)
+        for start in range(0, len(order), self.BATCH_SIZE):
+            slice_ = order[start:start + self.BATCH_SIZE]
+            chunk = [message_lists[i] for i in slice_]
+            chunk_responses = await to_thread.run_sync(self._generate_chunk, chunk)
+            for i, r in zip(slice_, chunk_responses):
+                responses[i] = r
             on_progress(len(chunk))
         return responses
 
