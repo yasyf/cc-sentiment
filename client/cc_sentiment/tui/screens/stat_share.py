@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import time
 import webbrowser
 from collections.abc import Callable
@@ -9,6 +10,7 @@ from typing import ClassVar
 import anyio
 import anyio.to_thread
 import httpx
+from pydantic import ValidationError
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -125,7 +127,15 @@ class StatShareScreen(Dialog[None]):
     async def _mint_share(self) -> None:
         try:
             response = await Uploader().mint_share(self.config)
-        except (httpx.HTTPError, httpx.InvalidURL):
+        except (
+            httpx.HTTPError,
+            httpx.InvalidURL,
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            OSError,
+            AssertionError,
+            ValidationError,
+        ):
             self.query_one("#stat-tweet", Button).label = MINT_FAILED_LABEL
             return
         self.share_id = response.id

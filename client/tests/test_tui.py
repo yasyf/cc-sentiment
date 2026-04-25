@@ -3967,6 +3967,21 @@ async def test_stat_share_tweet_button_disabled_until_mint_resolves():
             assert tweet.disabled is False
 
 
+async def test_stat_share_surfaces_signing_failure_on_label():
+    import subprocess
+
+    harness = StatShareHarness(GITHUB_CONFIG, STAT)
+    failing_mint = AsyncMock(
+        side_effect=subprocess.CalledProcessError(1, ["ssh-keygen"])
+    )
+    with patch("cc_sentiment.tui.screens.stat_share.Uploader.mint_share", new=failing_mint):
+        async with harness.run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            tweet = pilot.app.screen.query_one("#stat-tweet", Button)
+            assert str(tweet.label) == "Share unavailable"
+            assert tweet.disabled is True
+
+
 async def test_stat_share_skip_dismisses_without_opening_browser():
     harness = StatShareHarness(GITHUB_CONFIG, STAT)
     with patch("cc_sentiment.tui.screens.stat_share.Uploader.mint_share", new=stub_mint_share()), \

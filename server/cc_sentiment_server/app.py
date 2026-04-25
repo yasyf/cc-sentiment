@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import secrets
@@ -53,6 +54,10 @@ class MyStatSpawner(Protocol):
 
 class RevalidateSpawner(Protocol):
     async def __call__(self, tag: str) -> None: ...
+
+
+class WarmShareSpawner(Protocol):
+    async def __call__(self, share_id: str) -> None: ...
 
 
 @dataclass
@@ -163,6 +168,7 @@ def create_app(
     spawn: RefreshSpawner,
     spawn_my_stat: MyStatSpawner,
     revalidate: RevalidateSpawner,
+    spawn_warm_share: WarmShareSpawner,
     allowed_origins: list[str],
     data_api_token: str = "",
 ) -> FastAPI:
@@ -262,7 +268,10 @@ def create_app(
 
     @web_app.post("/share")
     @limiter.limit("10/minute")
-    async def mint_share(request: Request, body: ShareMintRequest) -> ShareMintResponse:
+    async def mint_share(
+        request: Request,
+        body: ShareMintRequest,
+    ) -> ShareMintResponse:
         now = datetime.now(timezone.utc)
         age = abs((now - body.payload.issued_at).total_seconds())
         if age > SHARE_REQUEST_MAX_AGE_SECONDS:
@@ -294,18 +303,7 @@ def create_app(
             created_at=now,
         )
         await share_store.put(record)
-        async with httpx.AsyncClient(
-            headers={"User-Agent": "Twitterbot/1.0", "Accept": "*/*"},
-            timeout=15.0,
-        ) as client:
-            try:
-                await client.get(f"{DASHBOARD_URL}/share/{record.id}/og")
-            except httpx.HTTPError:
-                pass
-            try:
-                await client.get(f"{DASHBOARD_URL}/share/{record.id}")
-            except httpx.HTTPError:
-                pass
+        await spawn_warm_share(record.id)
         return ShareMintResponse(id=record.id, url=f"{DASHBOARD_URL}/share/{record.id}")
 
     @web_app.get("/share/{share_id}")
@@ -383,6 +381,8 @@ class API:
             await refresh_my_stat.spawn.aio(contributor_id)
         async def revalidate(tag: str) -> None:
             await revalidate_dashboard.spawn.aio(tag)
+        async def spawn_warm_share(share_id: str) -> None:
+            await warm_share.spawn.aio(share_id)
         return create_app(
             db=self.db,
             verifier=self.verifier,
@@ -391,6 +391,7 @@ class API:
             spawn=spawn,
             spawn_my_stat=spawn_my_stat,
             revalidate=revalidate,
+            spawn_warm_share=spawn_warm_share,
             allowed_origins=os.environ["ALLOWED_ORIGINS"].split(","),
             data_api_token=os.environ["DATA_API_TOKEN"],
         )
@@ -431,6 +432,18 @@ async def refresh_my_stat(contributor_ids: list[str]) -> list[None]:
     finally:
         await db.close()
     return [None] * len(contributor_ids)
+
+
+@app.function(image=image)
+async def warm_share(share_id: str) -> None:
+    async with httpx.AsyncClient(
+        headers={"User-Agent": "Twitterbot/1.0", "Accept": "*/*"},
+        timeout=15.0,
+    ) as client:
+        with contextlib.suppress(httpx.HTTPError):
+            await client.get(f"{DASHBOARD_URL}/share/{share_id}/og")
+        with contextlib.suppress(httpx.HTTPError):
+            await client.get(f"{DASHBOARD_URL}/share/{share_id}")
 
 
 @app.function(image=image, secrets=[modal.Secret.from_name("cc-sentiment-vercel")], enable_memory_snapshot=True)
