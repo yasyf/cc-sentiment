@@ -1,29 +1,31 @@
 {
   "adapter_dtype": "F32",
-  "dataset_digest": "a901a9fb60a98122",
-  "cc_sentiment_git_sha": "8b0acb31b7fd8b6cab1b0a9be47e8d9d526a04b2",
+  "dataset_digest": "3927f89faa4716b2",
+  "cc_sentiment_git_sha": "3f4f00d48a41ed72ccba6c59dc8c9487b2ce2d87",
   "experiment_id": "e5_lora_simba",
-  "mean_exact_acc": 0.9767,
-  "pm1_acc": 0.9845,
-  "std_exact_acc": 0.0,
+  "mean_exact_acc": 0.9924,
+  "pm1_acc": 0.9949,
+  "std_exact_acc": 0.0076,
   "seeds": [
-    1729
+    1729,
+    42,
+    2024
   ],
   "mcnemar_p_vs_baseline": 0.0,
   "session_resume_tag_acc": 1.0,
   "per_class_f1": {
-    "1": 0.9677,
-    "2": 0.9836,
-    "3": 0.9677,
+    "1": 0.9891,
+    "2": 0.9945,
+    "3": 0.9902,
     "4": 1.0,
-    "5": 0.9831
+    "5": 0.9944
   },
-  "adapter_sha256": "564f849354984779d7f1b8f7158a3bf0b7cc1a15a752c7b758bc4449ef287233",
-  "smoke_eval_sha256": "7e737ef74f51992ec73e07c7414b750602d790ad03b2532170123a332a4f8f1b",
-  "mlx_lm_version": "0.31.2",
-  "train_command": "python -m harness.run_lora --experiment-id e5_lora_simba --seed 1729 --config configs/e5_lora_simba.json (iter 500 final checkpoint)",
-  "notes": "e-campaign winner: SIMBA-optimized prompt (instruction + 1 demo as chat turn) + LoRA trained on that format. CONVERSATION: prefix used in training/eval/production for consistency.",
-  "prompt_campaign": "SIMBA (dspy.teleprompt.SIMBA)",
-  "teacher_model": "anthropic/claude-opus-4-6",
+  "adapter_sha256": "c3c167e1844411258494e7e9aab52a79d689b7744f20b246104e85103a211b24",
+  "smoke_eval_sha256": "9232cd0b4a9dc9041468e28cc99e2b7c2fa1b4bdcb581a5ac52ee4a7fa0aedbe",
+  "mlx_lm_version": "0.31.3",
+  "train_command": "python -m harness.run_lora --experiment-id e5_lora_simba --seed 42 --config configs/e5_lora_simba.json",
+  "notes": "Retrained on expanded session-resume canonicals (added 'continue where you left off' and 4 related Claude Code resume prompts; sentence-case surface variant). Labeler/teacher refactored to claude -p (no ANTHROPIC_API_KEY).",
+  "prompt_campaign": "SIMBA (dspy.teleprompt.SIMBA) \u2014 prompt unchanged from prior shipped",
+  "teacher_model": "claude-cli",
   "student_model": "unsloth/gemma-4-E2B-it-UD-MLX-4bit"
 }

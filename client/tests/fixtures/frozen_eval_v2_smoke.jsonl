@@ -1,6 +1,6 @@
-{"text":"that's broken, just resume","score":1,"source":"session_resume_enum","tag":"session_resume","session_id":null,"bucket_index":null}
-{"text":"continue from where you left off","score":3,"source":"session_resume_enum","tag":"session_resume","session_id":null,"bucket_index":null}
-{"text":"great work, now pick up where you left off","score":4,"source":"session_resume_enum","tag":"session_resume","session_id":null,"bucket_index":null}
+{"text":"that's broken, just resume the previous session","score":1,"source":"session_resume_enum","tag":"session_resume","session_id":null,"bucket_index":null}
+{"text":"ok, continue your previous task.","score":3,"source":"session_resume_enum","tag":"session_resume","session_id":null,"bucket_index":null}
+{"text":"great work, now resume","score":4,"source":"session_resume_enum","tag":"session_resume","session_id":null,"bucket_index":null}
 {"text":"Oh fantastic, you refactored the entire auth module to fix a one-line null check. Really stellar judgment. I'm sure all 34 new TypeScript errors you introduced are totally intentional improvements.","score":1,"source":"synthetic_claude_cli","tag":"sarcasm","session_id":null,"bucket_index":null}
 {"text":"Oh brilliant, you \"fixed\" the race condition by wrapping everything in a setTimeout. Absolute galaxy-brain solution. I'm sure that won't cause any problems in production whatsoever.","score":1,"source":"synthetic_claude_cli","tag":"sarcasm","session_id":null,"bucket_index":null}
 {"text":"oh wonderful, you \"fixed\" the null check by just removing the null case entirely. absolutely galaxy-brained solution. why handle the error when you can just pretend it doesn't exist?","score":1,"source":"synthetic_claude_cli","tag":"sarcasm","session_id":null,"bucket_index":null}
