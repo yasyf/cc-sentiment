@@ -6,6 +6,7 @@ import orjson
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from importlib.util import find_spec
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -20,6 +21,7 @@ from cc_sentiment.engines import (
     EngineFactory,
     FrustrationFilter,
 )
+from cc_sentiment.engines.protocol import DEFAULT_MODEL
 from cc_sentiment.text import extract_score
 from cc_sentiment.models import (
     AssistantMessage,
@@ -30,6 +32,8 @@ from cc_sentiment.models import (
     TranscriptMessage,
     UserMessage,
 )
+
+MLX_AVAILABLE: bool = find_spec("mlx_lm") is not None
 
 
 def make_message(role: str, content: str) -> TranscriptMessage:
@@ -303,6 +307,17 @@ class TestDefaultEngine:
         with patch("cc_sentiment.engines.factory.sys.platform", "darwin"), \
              patch("cc_sentiment.engines.factory.platform.machine", return_value="x86_64"):
             assert EngineFactory.default() == "claude"
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not MLX_AVAILABLE, reason="requires mlx-lm (Apple Silicon)")
+class TestMlxBuild:
+    async def test_build_returns_frustration_filter(self) -> None:
+        engine = await EngineFactory.build("mlx", DEFAULT_MODEL)
+        try:
+            assert isinstance(engine, FrustrationFilter)
+        finally:
+            await engine.close()
 
 
 class TestResolveEngine:

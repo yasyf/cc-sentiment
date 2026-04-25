@@ -11,7 +11,6 @@ from anyio import to_thread
 
 from cc_sentiment.adapter import AdapterCodec
 from cc_sentiment.engines.base import BaseEngine
-from cc_sentiment.engines.protocol import DEFAULT_MODEL
 from cc_sentiment.patches import MLXPatches
 from cc_sentiment.text import build_prefix_messages
 
@@ -62,12 +61,12 @@ class AdapterFuser:
 class SentimentClassifier(BaseEngine):
     BATCH_SIZE = 8
 
-    def __init__(self, model_repo: str = DEFAULT_MODEL) -> None:
+    def __init__(self, fused_dir: Path) -> None:
         MLXPatches.apply()
 
         from mlx_lm import batch_generate, load
 
-        self.model, self.tokenizer = load(str(AdapterFuser.ensure_fused(model_repo)))
+        self.model, self.tokenizer = load(str(fused_dir))
         self.logit_processor = self._score_only_logit_processor()
         self.prefix_messages = build_prefix_messages()
         self.prefix_tokens = self.tokenizer.apply_chat_template(

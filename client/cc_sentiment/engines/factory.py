@@ -41,9 +41,12 @@ class EngineFactory:
     async def build(cls, kind: str, model_repo: str | None = None) -> InferenceEngine:
         match kind:
             case "mlx":
-                from cc_sentiment.sentiment import SentimentClassifier
+                from cc_sentiment.sentiment import AdapterFuser, SentimentClassifier
+                fused_dir = await anyio.to_thread.run_sync(
+                    AdapterFuser.ensure_fused, model_repo or DEFAULT_MODEL
+                )
                 inner: InferenceEngine = await anyio.to_thread.run_sync(
-                    partial(SentimentClassifier, model_repo or DEFAULT_MODEL)
+                    partial(SentimentClassifier, fused_dir)
                 )
             case "claude":
                 inner = ClaudeCLIEngine(model_repo or ClaudeCLIEngine.HAIKU_MODEL)
