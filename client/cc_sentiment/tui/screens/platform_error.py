@@ -12,7 +12,7 @@ from cc_sentiment.engines import (
 )
 
 from cc_sentiment.tui.screens.dialog import Dialog
-from cc_sentiment.tui.widgets import CommandBox
+from cc_sentiment.tui.widgets import ButtonRow, CommandBox
 
 INSTALL_BREW = "brew install --cask claude-code"
 INSTALL_CURL = "curl -fsSL https://claude.ai/install.sh | bash"
@@ -24,6 +24,7 @@ class PlatformErrorScreen(Dialog[None]):
     PlatformErrorScreen > #dialog-box { border: heavy $error; }
     PlatformErrorScreen > #dialog-box .title { color: $error; }
     PlatformErrorScreen > #dialog-box CommandBox { margin: 0 0 1 0; }
+    PlatformErrorScreen > #dialog-box ButtonRow { align-horizontal: right; }
     """
 
     BINDINGS = [("q", "done", "Quit"), ("escape", "done", "Quit")]
@@ -52,7 +53,7 @@ class PlatformErrorScreen(Dialog[None]):
                         classes="detail",
                     )
                     yield CommandBox(AUTH_LOGIN)
-            yield Button("Quit", id="quit-btn", variant="primary")
+            yield ButtonRow(Button("Quit", id="quit-btn", variant="primary"))
 
     @on(Button.Pressed, "#quit-btn")
     def on_quit(self) -> None:

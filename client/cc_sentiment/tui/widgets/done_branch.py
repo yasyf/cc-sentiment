@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import suppress
 from typing import Callable
 
+from rich.syntax import Syntax
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.css.query import NoMatches
@@ -16,6 +17,10 @@ from cc_sentiment.tui.widgets.step_actions import StepActions
 
 
 class DoneBranch(Vertical):
+    DEFAULT_CSS = """
+    DoneBranch > Static { margin: 0 0 1 0; }
+    """
+
     verification_state: reactive[VerificationState] = reactive(VerificationState.VERIFIED, recompose=True)
     verification_ok: reactive[bool] = reactive(True, recompose=True)
     summary_text: reactive[str] = reactive("", recompose=True)
@@ -58,16 +63,22 @@ class DoneBranch(Vertical):
                     id="done-summary-card",
                     classes=f"done-card {Tone.SUCCESS.value}",
                 )
-                yield StepActions(
-                    primary=Button("Contribute my stats", id="done-btn", variant="primary"),
-                )
                 yield Static(
                     "Only signed stats leave your Mac, one row per conversation.",
                     id="done-payload-lead",
                     classes=Tone.MUTED.value,
                 )
                 yield Card(
-                    Static(self.sample_payload(), id="done-payload", classes="code"),
+                    Static(
+                        Syntax(
+                            self.sample_payload(),
+                            "json",
+                            theme="ansi_dark",
+                            background_color="default",
+                        ),
+                        id="done-payload",
+                        classes="code",
+                    ),
                     title="What actually gets sent",
                     id="done-payload-card",
                     classes="done-card",
@@ -75,6 +86,9 @@ class DoneBranch(Vertical):
                 yield Static(self.identify_text, id="done-identify", classes=Tone.MUTED.value)
                 yield Static(self.process_text, id="done-process", classes=Tone.MUTED.value)
                 yield Static(self.eta_text, id="done-eta", classes=Tone.MUTED.value)
+                yield StepActions(
+                    primary=Button("Contribute my stats", id="done-btn", variant="primary"),
+                )
             case VerificationState.PENDING:
                 yield Card(
                     Static(summary_text, id="done-summary", classes=Tone.WARNING.value),
@@ -83,13 +97,13 @@ class DoneBranch(Vertical):
                     id="done-summary-card",
                     classes=f"done-card {Tone.WARNING.value}",
                 )
-                yield PendingStatus(self.pending_label, id="pending-status")
                 yield Card(
                     Static(self.instructions_text, id="done-instructions", classes=Tone.MUTED.value),
                     title="Next steps",
                     id="done-instructions-card",
                     classes="done-card",
                 )
+                yield PendingStatus(self.pending_label, id="pending-status")
                 yield StepActions(
                     Button("Exit, continue later", id="pending-exit", variant="default"),
                     primary=Button("Retry now", id="pending-retry", variant="primary"),
@@ -102,15 +116,15 @@ class DoneBranch(Vertical):
                     id="done-summary-card",
                     classes=f"done-card {Tone.ERROR.value}",
                 )
-                yield StepActions(
-                    Button("Exit", id="failed-exit", variant="default"),
-                    primary=Button("Retry", id="failed-retry", variant="primary"),
-                )
                 yield Card(
                     Static(self.instructions_text, id="done-instructions", classes=Tone.MUTED.value),
                     title="Next steps",
                     id="done-instructions-card",
                     classes="done-card",
+                )
+                yield StepActions(
+                    Button("Exit", id="failed-exit", variant="default"),
+                    primary=Button("Retry", id="failed-retry", variant="primary"),
                 )
 
     def watch_pending_label(self, label: str) -> None:

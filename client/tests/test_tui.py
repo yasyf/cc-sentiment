@@ -920,7 +920,7 @@ async def test_setup_honest_end_state_verified_branch_uses_payload_card_and_cont
             assert screen.query_one("#done-btn", Button).variant == "primary"
             assert screen.query_one("#done-payload-card", Card).border_title == "What actually gets sent"
             assert "one row per conversation" in str(screen.query_one("#done-payload-lead", Static).render())
-            assert "sentiment_score" in str(screen.query_one("#done-payload", Static).render())
+            assert "sentiment_score" in screen.query_one("#done-payload", Static).content.code
             assert list(screen.query("#pending-retry, #failed-retry")) == []
 
 
