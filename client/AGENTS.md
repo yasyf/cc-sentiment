@@ -20,7 +20,7 @@ Root `AGENTS.md` rules apply unless overridden here. The client follows a functi
    - `cc_sentiment/transcripts/parser.py` — carve-out: hosts `Backend`-implementing class plus picklable parsing helpers (`build_message`, `python_parse_chunk`, etc.) that must stay module-level for `anyio.to_process.run_sync`
    - `cc_sentiment/patches/__init__.py` — `apply_kv_cache_patch`
    - `cc_sentiment/_transcripts_rs.pyi` — `.pyi` stub; free `def` is required syntax
-   New utility modules require justification. Click-decorated commands in `cli.py` are framework convention and stay free.
+   New utility modules require justification. Typer-decorated commands in `cli.py` are framework convention and stay free.
 
 5. **Match statements for type dispatch.** `match (sys.platform, platform.machine())`, `match kind:` in `EngineFactory.build`. `if/elif` only for boolean flags or non-type-discriminated branching.
 
@@ -43,7 +43,7 @@ Root `AGENTS.md` rules apply unless overridden here. The client follows a functi
 - **Runtime**: Python 3.12+. Cross-platform: local MLX inference is Apple Silicon only, other platforms fall back to the `claude` CLI engine.
 - **ML inference**: MLX (`mlx-lm`, optional `[mlx]` extra) for local Gemma 4 on Apple Silicon GPU; cloud `omlx` subprocess on Apple Silicon by default; `claude` CLI elsewhere.
 - **Model**: `unsloth/gemma-4-E2B-it-UD-MLX-4bit` (4-bit quantized, ~2.5GB)
-- **CLI**: `click` or `typer`
+- **CLI**: `typer` (built on Click)
 - **HTTP**: `httpx` for async uploads
 - **Signing**: `ssh-keygen -Y sign` via subprocess
 - **Packaging**: `uv tool install` from pyproject.toml with `[project.scripts]` entry point
@@ -68,7 +68,7 @@ client/
     ├── __init__.py
     ├── _transcripts_rs.pyi  # PyO3 stub
     ├── benchmark.py         # BenchmarkRunner (perf + scaling tests)
-    ├── cli.py               # Click commands — thin
+    ├── cli.py               # Typer commands — thin
     ├── daemon.py            # background daemon entry
     ├── hardware.py          # platform / RAM detection
     ├── headless.py          # headless scan flow (no TUI)

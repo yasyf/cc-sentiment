@@ -2,40 +2,52 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from click.testing import CliRunner
+from typer.models import CommandInfo
+from typer.testing import CliRunner
 
-from cc_sentiment.cli import main
+from cc_sentiment.cli import app
 from cc_sentiment.models import AppState
+
+
+def find_command(name: str) -> CommandInfo | None:
+    return next(
+        (
+            ci
+            for ci in app.registered_commands
+            if (ci.name or (ci.callback.__name__ if ci.callback else "")) == name
+        ),
+        None,
+    )
 
 
 class TestSingleCommand:
     def test_no_scan_subcommand(self) -> None:
-        assert main.get_command(None, "scan") is None
+        assert find_command("scan") is None
 
     def test_no_upload_subcommand(self) -> None:
-        assert main.get_command(None, "upload") is None
+        assert find_command("upload") is None
 
     def test_no_rescan_subcommand(self) -> None:
-        assert main.get_command(None, "rescan") is None
+        assert find_command("rescan") is None
 
     def test_setup_subcommand_public(self) -> None:
-        cmd = main.get_command(None, "setup")
+        cmd = find_command("setup")
         assert cmd is not None
         assert cmd.hidden is False
 
     def test_run_subcommand_public(self) -> None:
-        cmd = main.get_command(None, "run")
+        cmd = find_command("run")
         assert cmd is not None
         assert cmd.hidden is False
 
     def test_benchmark_hidden(self) -> None:
-        cmd = main.get_command(None, "benchmark")
+        cmd = find_command("benchmark")
         assert cmd is not None
         assert cmd.hidden is True
 
     def test_benchmark_not_in_help(self) -> None:
         runner = CliRunner()
-        result = runner.invoke(main, ["--help"])
+        result = runner.invoke(app, ["--help"])
         assert "benchmark" not in result.output
 
 
@@ -45,7 +57,7 @@ class TestMainLaunchesApp:
         with patch("cc_sentiment.tui.CCSentimentApp", return_value=mock_app) as app_cls, \
              patch.object(AppState, "load", return_value=AppState()):
             runner = CliRunner()
-            result = runner.invoke(main, [])
+            result = runner.invoke(app, [])
             assert result.exit_code == 0, result.output
             app_cls.assert_called_once()
             mock_app.run.assert_called_once()
@@ -55,5 +67,5 @@ class TestMainLaunchesApp:
         with patch("cc_sentiment.tui.CCSentimentApp", return_value=mock_app) as app_cls, \
              patch.object(AppState, "load", return_value=AppState()):
             runner = CliRunner()
-            runner.invoke(main, ["--model", "custom/model"])
+            runner.invoke(app, ["--model", "custom/model"])
             assert app_cls.call_args.kwargs["model_repo"] == "custom/model"

@@ -54,6 +54,7 @@ mlx_models/
 # Project
 .serena/
 .context/
+client/cc_sentiment/_sentry_dsn.py
 
 # Experiments — training/eval harness lives at ~/Code/cc-sentiments-local/
 experiments

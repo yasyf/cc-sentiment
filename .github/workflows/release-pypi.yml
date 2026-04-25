@@ -60,6 +60,15 @@ jobs:
           path.write_text(tomli_w.dumps(data))
           PY
 
+      - name: Bake Sentry DSN into package
+        shell: bash
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: |
+          if [ -n "$SENTRY_DSN" ]; then
+            printf 'DSN = "%s"\n' "$SENTRY_DSN" > client/cc_sentiment/_sentry_dsn.py
+          fi
+
       - name: Install Rust (non-Linux hosts)
         if: runner.os != 'Linux'
         uses: dtolnay/rust-toolchain@stable

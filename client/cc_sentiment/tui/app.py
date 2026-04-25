@@ -11,6 +11,7 @@ from typing import ClassVar
 import anyio
 import anyio.to_thread
 import httpx
+import sentry_sdk
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -164,6 +165,12 @@ class CCSentimentApp(App[None]):
         self._debug_state = DebugState()
         self._boot_screen: BootingScreen | None = None
         self._prewarmed = False
+
+    def _handle_exception(self, error: Exception) -> None:
+        with sentry_sdk.new_scope() as scope:
+            scope.set_tag("source", "textual")
+            sentry_sdk.capture_exception(error)
+        super()._handle_exception(error)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)

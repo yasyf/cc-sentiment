@@ -3,30 +3,40 @@ from __future__ import annotations
 import contextlib
 import os
 import subprocess
-import sys
+from typing import Annotated
 
 os.environ.setdefault("PYTHONNODEBUGRANGES", "1")
 
 import anyio
-import click
 import httpx
+import typer
 from rich.console import Console
 
 from cc_sentiment.models import AppState
 
 DAEMON_PING_ERRORS = (httpx.HTTPError, subprocess.CalledProcessError, OSError, TimeoutError)
 
-
-@click.group(invoke_without_command=True)
-@click.option("--model", "model_repo", default=None, help="Model repo (HF for mlx) or name (claude)")
-@click.option(
-    "--debug",
-    is_flag=True,
-    default=lambda: os.environ.get("DEBUG") == "1",
-    help="Verbose diagnostics (also: DEBUG=1)",
+app = typer.Typer(
+    invoke_without_command=True,
+    no_args_is_help=False,
+    add_completion=False,
+    context_settings={"help_option_names": ["-h", "--help"]},
 )
-@click.pass_context
-def main(ctx: click.Context, model_repo: str | None, debug: bool) -> None:
+
+
+@app.callback(invoke_without_command=True)
+def main(
+    ctx: typer.Context,
+    model_repo: Annotated[
+        str | None,
+        typer.Option("--model", help="Model repo (HF for mlx) or name (claude)"),
+    ] = None,
+    debug: Annotated[
+        bool,
+        typer.Option("--debug", help="Verbose diagnostics (also: DEBUG=1)"),
+    ] = False,
+) -> None:
+    debug = debug or os.environ.get("DEBUG") == "1"
     ctx.ensure_object(dict)
     ctx.obj["debug"] = debug
 
@@ -38,20 +48,19 @@ def main(ctx: click.Context, model_repo: str | None, debug: bool) -> None:
 
     with Console().status("[dim]Starting cc-sentiment…[/]"):
         from cc_sentiment.tui import CCSentimentApp
-        app = CCSentimentApp(state=AppState.load(), model_repo=model_repo, debug=debug)
-    app.run()
+        tui_app = CCSentimentApp(state=AppState.load(), model_repo=model_repo, debug=debug)
+    tui_app.run()
 
 
-@main.command()
-@click.pass_context
-def setup(ctx: click.Context) -> None:
+@app.command()
+def setup(ctx: typer.Context) -> None:
     with Console().status("[dim]Starting cc-sentiment…[/]"):
         from cc_sentiment.tui import CCSentimentApp
-        app = CCSentimentApp(state=AppState.load(), setup_only=True, debug=ctx.obj["debug"])
-    app.run()
+        tui_app = CCSentimentApp(state=AppState.load(), setup_only=True, debug=ctx.obj["debug"])
+    tui_app.run()
 
 
-@main.command()
+@app.command()
 def install() -> None:
     from cc_sentiment.daemon import LaunchAgent
     from cc_sentiment.upload import Uploader
@@ -59,29 +68,28 @@ def install() -> None:
     LaunchAgent.install()
     with contextlib.suppress(*DAEMON_PING_ERRORS):
         anyio.run(Uploader.ping_daemon_event, "install")
-    click.echo(
+    typer.echo(
         "Scheduled daily. Your transcripts will be scored and uploaded in the background. "
         "Undo with `cc-sentiment uninstall`."
     )
 
 
-@main.command()
+@app.command()
 def uninstall() -> None:
     from cc_sentiment.daemon import LaunchAgent
     from cc_sentiment.upload import Uploader
 
     if not LaunchAgent.is_installed():
-        click.echo("Not scheduled — nothing to remove.")
+        typer.echo("Not scheduled — nothing to remove.")
         return
     LaunchAgent.uninstall()
     with contextlib.suppress(*DAEMON_PING_ERRORS):
         anyio.run(Uploader.ping_daemon_event, "uninstall")
-    click.echo("Removed the daily schedule.")
+    typer.echo("Removed the daily schedule.")
 
 
-@main.command()
-@click.pass_context
-def run(ctx: click.Context) -> None:
+@app.command()
+def run(ctx: typer.Context) -> None:
     from cc_sentiment.headless import (
         HeadlessAuthError,
         HeadlessClaudeEngineBlocked,
@@ -103,38 +111,40 @@ def run(ctx: click.Context) -> None:
 
     match outcome:
         case HeadlessOk(scored=s, uploaded=u):
-            click.echo(f"Scored {s}, uploaded {u}.")
+            typer.echo(f"Scored {s}, uploaded {u}.")
         case HeadlessNothingToDo():
-            click.echo("Nothing new to score.")
+            typer.echo("Nothing new to score.")
         case HeadlessNotConfigured():
-            click.echo(
-                "Not configured yet. Run `cc-sentiment setup` first.", err=True
-            )
-            sys.exit(2)
+            typer.echo("Not configured yet. Run `cc-sentiment setup` first.", err=True)
+            raise typer.Exit(2)
         case HeadlessClaudeEngineBlocked():
-            click.echo(
+            typer.echo(
                 "The claude engine needs interactive cost confirmation. "
                 "Run `cc-sentiment` instead.",
                 err=True,
             )
-            sys.exit(2)
+            raise typer.Exit(2)
         case HeadlessAuthError(detail=d):
-            click.echo(d, err=True)
-            sys.exit(3)
+            typer.echo(d, err=True)
+            raise typer.Exit(3)
         case HeadlessUploadError(detail=d):
-            click.echo(d, err=True)
-            sys.exit(4)
+            typer.echo(d, err=True)
+            raise typer.Exit(4)
 
 
-@main.command(hidden=True)
-@click.option("--transcripts", default=10, help="Max transcripts to benchmark")
-@click.option("--runs", default=1, help="Timed runs per engine")
-@click.option("--engines", default="mlx", help="Comma-separated engines")
-@click.option("--model", "model_repo", default=None)
-@click.option("--scaling", is_flag=True, help="Run scaling test across bucket sizes")
+@app.command(hidden=True)
 def benchmark(
-    transcripts: int, runs: int, engines: str,
-    model_repo: str | None, scaling: bool,
+    transcripts: Annotated[
+        int, typer.Option("--transcripts", help="Max transcripts to benchmark")
+    ] = 10,
+    runs: Annotated[int, typer.Option("--runs", help="Timed runs per engine")] = 1,
+    engines: Annotated[
+        str, typer.Option("--engines", help="Comma-separated engines")
+    ] = "mlx",
+    model_repo: Annotated[str | None, typer.Option("--model")] = None,
+    scaling: Annotated[
+        bool, typer.Option("--scaling", help="Run scaling test across bucket sizes")
+    ] = False,
 ) -> None:
     from cc_sentiment.benchmark import BenchmarkRunner
 
@@ -147,10 +157,11 @@ def benchmark(
     )
 
 
-@main.command(hidden=True)
-@click.option("--buckets", default=100, help="Buckets to profile")
-@click.option("--model", "model_repo", default=None)
-def profile(buckets: int, model_repo: str | None) -> None:
+@app.command(hidden=True)
+def profile(
+    buckets: Annotated[int, typer.Option("--buckets", help="Buckets to profile")] = 100,
+    model_repo: Annotated[str | None, typer.Option("--model")] = None,
+) -> None:
     from cc_sentiment.engines.protocol import DEFAULT_MODEL
     from cc_sentiment.profiling import Profiler
 
@@ -158,3 +169,9 @@ def profile(buckets: int, model_repo: str | None) -> None:
         n_buckets=buckets,
         model_repo=model_repo or DEFAULT_MODEL,
     )
+
+
+def entrypoint() -> None:
+    from cc_sentiment.observability import Crash
+    Crash.init()
+    app()

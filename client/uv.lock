@@ -79,16 +79,17 @@ source = { editable = "." }
 dependencies = [
     { name = "afinn" },
     { name = "anyio" },
-    { name = "click" },
     { name = "httpx" },
     { name = "mlx-lm", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "orjson" },
     { name = "pydantic" },
     { name = "python-gnupg" },
     { name = "rich" },
+    { name = "sentry-sdk" },
     { name = "spacy" },
     { name = "tenacity" },
     { name = "textual" },
+    { name = "typer" },
     { name = "zstandard" },
 ]
 
@@ -104,16 +105,17 @@ dev = [
 requires-dist = [
     { name = "afinn", specifier = ">=0.1" },
     { name = "anyio", specifier = ">=4.4" },
-    { name = "click", specifier = ">=8.1" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "mlx-lm", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = ">=0.31.3" },
     { name = "orjson", specifier = ">=3.10" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "python-gnupg", specifier = ">=0.5.4" },
     { name = "rich", specifier = ">=13.0" },
+    { name = "sentry-sdk", specifier = ">=2.20" },
     { name = "spacy", specifier = ">=3.8" },
     { name = "tenacity", specifier = ">=8.0" },
     { name = "textual", specifier = ">=3.0" },
+    { name = "typer", specifier = ">=0.12" },
     { name = "zstandard", specifier = ">=0.25.0" },
 ]
 
@@ -960,6 +962,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ea/99/bbe054ebb5a5039457c590e0a4156ed073fb0fe9ce4f7523404dd5b37463/sentencepiece-0.2.1-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:c83b85ab2d6576607f31df77ff86f28182be4a8de6d175d2c33ca609925f5da1", size = 1253670, upload-time = "2025-08-12T07:00:24.69Z" },
     { url = "https://files.pythonhosted.org/packages/a1/11/5b414b9fae6255b5fb1e22e2ed3dc3a72d3a694e5703910e640ac78346bb/sentencepiece-0.2.1-cp314-cp314t-macosx_10_13_universal2.whl", hash = "sha256:a19adcec27c524cb7069a1c741060add95f942d1cbf7ad0d104dffa0a7d28a2b", size = 1946081, upload-time = "2025-08-12T07:00:36.97Z" },
     { url = "https://files.pythonhosted.org/packages/03/b0/811dae8fb9f2784e138785d481469788f2e0d0c109c5737372454415f55f/sentencepiece-0.2.1-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:477c81505db072b3ab627e7eab972ea1025331bd3a92bacbf798df2b75ea86ec", size = 1254846, upload-time = "2025-08-12T07:00:40.611Z" },
+]
+
+[[package]]
+name = "sentry-sdk"
+version = "2.58.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "certifi" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/26/b3/fb8291170d0e844173164709fc0fa0c221ed75a5da740c8746f2a83b4eb1/sentry_sdk-2.58.0.tar.gz", hash = "sha256:c1144d947352d54e5b7daa63596d9f848adf684989c06c4f5a659f0c85a18f6f", size = 438764, upload-time = "2026-04-13T17:23:26.265Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fa/eb/d875669993b762556ae8b2efd86219943b4c0864d22204d622a9aee3052b/sentry_sdk-2.58.0-py2.py3-none-any.whl", hash = "sha256:688d1c704ddecf382ea3326f21a67453d4caa95592d722b7c780a36a9d23109e", size = 460919, upload-time = "2026-04-13T17:23:24.675Z" },
 ]
 
 [[package]]
