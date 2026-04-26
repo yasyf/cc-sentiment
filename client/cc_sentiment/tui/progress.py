@@ -11,11 +11,9 @@ class DebugState:
     nlp_state: str = "—"
     nlp_output: str | None = None
     prewarm_model: str = "—"
-    card_attempts: int = 0
     card_last_status: str = "idle"
     card_elapsed: float = 0.0
     card_stopped: str | None = None
-    card_next_retry: float | None = None
     share_state: str = "—"
 
     def reset(self) -> None:

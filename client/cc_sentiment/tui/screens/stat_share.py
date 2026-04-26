@@ -4,7 +4,7 @@ import subprocess
 import time
 import webbrowser
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import ClassVar
 
 import anyio
@@ -28,92 +28,32 @@ MINT_FAILED_LABEL = "Share unavailable"
 
 
 @dataclass
-class CardPoller:
+class CardFetcher:
     config: SSHConfig | GPGConfig | GistConfig
     on_ready: Callable[[MyStat], None]
-    on_state: Callable[[int, str, float, str | None, float | None], None] = lambda *_: None
-    POLL_INTERVAL_SECONDS: ClassVar[float] = 4.0
-    POLL_BACKOFF_AFTER: ClassVar[int] = 5
-    POLL_BACKOFF_SECONDS: ClassVar[float] = 15.0
-    MAX_POLL_SECONDS: ClassVar[float] = 180.0
-    TICK_SECONDS: ClassVar[float] = 1.0
+    on_state: Callable[[str, float, str], None] = lambda *_: None
     MAX_ERROR_DETAIL: ClassVar[int] = 80
-
-    attempts: int = 0
-    started_at: float = field(default_factory=time.monotonic)
-    cancelled: bool = False
-    last_status: str = "polling"
-    next_retry_at: float | None = None
-
-    def cancel(self, reason: str = "dismissed") -> None:
-        self.cancelled = True
-        self.last_status = self.last_status_from(reason)
-        self.next_retry_at = None
-        self._emit(reason)
-
-    def elapsed(self) -> float:
-        return time.monotonic() - self.started_at
-
-    def _emit(self, stopped: str | None) -> None:
-        self.on_state(self.attempts, self.last_status, self.elapsed(), stopped, self.next_retry_at)
 
     @classmethod
     def truncate(cls, text: str) -> str:
         return text[: cls.MAX_ERROR_DETAIL - 1] + "…" if len(text) > cls.MAX_ERROR_DETAIL else text
 
-    @staticmethod
-    def last_status_from(reason: str) -> str:
-        match reason:
-            case "ready":
-                return "http 200"
-            case "timeout":
-                return "timeout"
-            case "dismissed":
-                return "dismissed"
-            case _:
-                return reason
-
     async def run(self) -> None:
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(self._tick_loop)
-            await self._poll_loop()
-            tg.cancel_scope.cancel()
-
-    async def _tick_loop(self) -> None:
-        while not self.cancelled:
-            await anyio.sleep(self.TICK_SECONDS)
-            self._emit(None)
-
-    async def _poll_loop(self) -> None:
-        uploader = Uploader()
-        while not self.cancelled and self.elapsed() < self.MAX_POLL_SECONDS:
-            self.attempts += 1
-            self.last_status = "polling"
-            self.next_retry_at = None
-            self._emit(None)
-            stat: MyStat | None = None
-            try:
-                stat = await uploader.fetch_my_stat(self.config)
-            except (httpx.HTTPError, httpx.InvalidURL) as exc:
-                self.last_status = f"error: {self.truncate(f'{exc.__class__.__name__}: {exc}'.strip())}"
-            else:
-                self.last_status = "http 200" if stat is not None else "http 404"
-            if stat is not None:
-                self._emit("ready")
-                self.on_ready(stat)
-                return
-            delay = (
-                self.POLL_BACKOFF_SECONDS
-                if self.attempts >= self.POLL_BACKOFF_AFTER
-                else self.POLL_INTERVAL_SECONDS
+        started = time.monotonic()
+        try:
+            stat = await Uploader().fetch_my_stat(self.config)
+        except (httpx.HTTPError, httpx.InvalidURL) as exc:
+            self.on_state(
+                f"error: {self.truncate(f'{exc.__class__.__name__}: {exc}'.strip())}",
+                time.monotonic() - started,
+                "error",
             )
-            self.next_retry_at = self.elapsed() + delay
-            self._emit(None)
-            await anyio.sleep(delay)
-        if not self.cancelled:
-            self.last_status = "timeout"
-            self.next_retry_at = None
-            self._emit("timeout")
+            return
+        if stat is not None:
+            self.on_state("http 200", time.monotonic() - started, "ready")
+            self.on_ready(stat)
+            return
+        self.on_state("http 404", time.monotonic() - started, "no card")
 
 
 class StatShareScreen(Dialog[None]):

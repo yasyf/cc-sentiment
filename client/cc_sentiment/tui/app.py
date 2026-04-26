@@ -70,7 +70,7 @@ from cc_sentiment.tui.screens import (
     SetupScreen,
     StatShareScreen,
 )
-from cc_sentiment.tui.screens.stat_share import CardPoller
+from cc_sentiment.tui.screens.stat_share import CardFetcher
 from cc_sentiment.tui.stages import (
     Authenticating,
     Booting,
@@ -367,25 +367,8 @@ class CCSentimentApp(App[None]):
                 )
 
     def _uploaded_status_text(self) -> str:
-        d = self._debug_state
-        match d.card_stopped:
-            case "ready" | "dismissed":
-                suffix = "[dim]Press O to open.[/]"
-            case "timeout":
-                suffix = (
-                    "[dim]We couldn't generate your card this run — your latest data "
-                    f"may not have a qualifying highlight yet. Open [link='{DASHBOARD_URL}']"
-                    f"[b]sentiments.cc[/b][/link] to see what's there.[/]"
-                )
-            case None:
-                elapsed = int(d.card_elapsed)
-                hint = f" [dim]({elapsed}s)[/]" if d.card_attempts >= 2 and elapsed >= 5 else ""
-                suffix = f"[dim]Generating your card…[/]{hint}"
-            case _:
-                suffix = (
-                    f"[dim]Couldn't generate your card ({d.card_last_status}). "
-                    f"Open [link='{DASHBOARD_URL}'][b]sentiments.cc[/b][/link].[/]"
-                )
+        polling = self._debug_state.card_stopped is None
+        suffix = "[dim]Generating your card…[/]" if polling else "[dim]Press O to open.[/]"
         return (
             "[green]Uploaded.[/] See your data at "
             f"[link='{DASHBOARD_URL}'][b]sentiments.cc[/b][/link]. "
@@ -585,7 +568,7 @@ class CCSentimentApp(App[None]):
 
             if uploaded:
                 assert self.state.config is not None
-                self.run_worker(self._poll_card(self.state.config), name="card-poll", exclusive=True, exit_on_error=False)
+                self.run_worker(self._fetch_card(self.state.config), name="card-fetch", exclusive=True, exit_on_error=False)
                 self.run_worker(self._auto_open_dashboard(), name="auto-open-dashboard", exclusive=True, exit_on_error=False)
         finally:
             if build_task is not None:
@@ -599,14 +582,13 @@ class CCSentimentApp(App[None]):
     def _on_upload_progress_change(self, progress: UploadProgress) -> None:
         self.view.update_upload(progress)
 
-    async def _poll_card(self, config: SSHConfig | GPGConfig | GistConfig) -> None:
+    async def _fetch_card(self, config: SSHConfig | GPGConfig | GistConfig) -> None:
         self._set_debug(share_state="waiting on stat")
-        poller = CardPoller(
+        await CardFetcher(
             config=config,
             on_ready=self._on_card_ready,
             on_state=self._on_card_state,
-        )
-        await poller.run()
+        ).run()
         if isinstance(self.stage, IdleAfterUpload) and self._debug_state.card_stopped != "ready":
             self._update_status(self._uploaded_status_text())
 
@@ -631,20 +613,11 @@ class CCSentimentApp(App[None]):
             case "schedule":
                 await self._install_daemon()
 
-    def _on_card_state(
-        self,
-        attempts: int,
-        status: str,
-        elapsed: float,
-        stopped: str | None,
-        next_retry_at: float | None,
-    ) -> None:
+    def _on_card_state(self, status: str, elapsed: float, stopped: str) -> None:
         self._set_debug(
-            card_attempts=attempts,
             card_last_status=status,
             card_elapsed=elapsed,
             card_stopped=stopped,
-            card_next_retry=next_retry_at,
         )
         if isinstance(self.stage, IdleAfterUpload):
             self._update_status(self._uploaded_status_text())

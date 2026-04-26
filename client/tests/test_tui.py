@@ -220,7 +220,7 @@ def auth_ok():
 
 @pytest.fixture
 def no_stat_share():
-    with patch.object(CCSentimentApp, "_poll_card", new=Mock(side_effect=lambda _config: lambda: None)):
+    with patch.object(CCSentimentApp, "_fetch_card", new=Mock(side_effect=lambda _config: lambda: None)):
         yield
 
 
@@ -4101,45 +4101,64 @@ async def test_cta_pins_to_tweet_after_install_succeeds(tmp_path: Path, auth_ok,
             assert app.view.cta.showing == "tweet"
 
 
-async def test_card_poller_invokes_on_ready_when_stat_arrives():
-    from cc_sentiment.tui.screens.stat_share import CardPoller
+async def test_card_fetcher_invokes_on_ready_when_stat_arrives():
+    from cc_sentiment.tui.screens.stat_share import CardFetcher
 
     calls: list[MyStat] = []
-    states: list[tuple[int, str, float, str | None, float | None]] = []
+    states: list[tuple[str, float, str]] = []
 
     with patch(
         "cc_sentiment.upload.Uploader.fetch_my_stat",
         new_callable=AsyncMock,
         return_value=STAT,
     ):
-        poller = CardPoller(
+        await CardFetcher(
             config=GITHUB_CONFIG,
             on_ready=calls.append,
-            on_state=lambda a, s, e, stop, nxt: states.append((a, s, e, stop, nxt)),
-        )
-        await poller.run()
+            on_state=lambda s, e, stop: states.append((s, e, stop)),
+        ).run()
 
     assert calls == [STAT]
-    assert any(state[3] == "ready" for state in states)
+    assert any(state[2] == "ready" for state in states)
 
 
-async def test_card_poller_gives_up_when_max_duration_exceeded():
-    from cc_sentiment.tui.screens.stat_share import CardPoller
+async def test_card_fetcher_reports_no_card_on_404():
+    from cc_sentiment.tui.screens.stat_share import CardFetcher
 
     calls: list[MyStat] = []
-    states: list[tuple[int, str, float, str | None, float | None]] = []
+    states: list[tuple[str, float, str]] = []
+
+    with patch(
+        "cc_sentiment.upload.Uploader.fetch_my_stat",
+        new_callable=AsyncMock,
+        return_value=None,
+    ):
+        await CardFetcher(
+            config=GITHUB_CONFIG,
+            on_ready=calls.append,
+            on_state=lambda s, e, stop: states.append((s, e, stop)),
+        ).run()
+
+    assert calls == []
+    assert states[-1] == ("http 404", states[-1][1], "no card")
+
+
+async def test_card_fetcher_reports_error_on_network_failure():
+    from cc_sentiment.tui.screens.stat_share import CardFetcher
+
+    calls: list[MyStat] = []
+    states: list[tuple[str, float, str]] = []
 
     with patch(
         "cc_sentiment.upload.Uploader.fetch_my_stat",
         new_callable=AsyncMock,
         side_effect=httpx.ConnectError("no net"),
-    ), patch.object(CardPoller, "MAX_POLL_SECONDS", 0.0):
-        poller = CardPoller(
+    ):
+        await CardFetcher(
             config=GITHUB_CONFIG,
             on_ready=calls.append,
-            on_state=lambda a, s, e, stop, nxt: states.append((a, s, e, stop, nxt)),
-        )
-        await poller.run()
+            on_state=lambda s, e, stop: states.append((s, e, stop)),
+        ).run()
 
     assert calls == []
-    assert any(state[3] == "timeout" for state in states)
+    assert any(state[2] == "error" for state in states)
