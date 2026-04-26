@@ -97,7 +97,7 @@ def test_auto_setup_success_happy_path(tmp_path: Path, harness: HarnessRunner) -
             "require_app_exit": True,
             "steps": (
                 {"action": "sleep", "seconds": 0.3},
-                {"action": "wait", "pattern": "Checking SSH keys on github.com/alice.keys", "timeout_ms": 5000},
+                {"action": "wait", "pattern": "Looking for SSH keys you've published at github.com/alice.keys", "timeout_ms": 5000},
                 {"action": "snapshot", "name": "loading"},
                 {"action": "wait", "pattern": "You're set up. Ready to upload.", "timeout_ms": 10000},
                 {"action": "snapshot", "name": "done"},

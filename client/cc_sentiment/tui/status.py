@@ -103,32 +103,32 @@ class AutoSetup:
         return username
 
     async def try_github_ssh(self, username: str) -> SSHConfig | None:
-        phase = self.emit.begin(f"Checking SSH keys on github.com/{username}.keys")
+        phase = self.emit.begin(f"Looking for SSH keys you've published at github.com/{username}.keys")
         try:
             backend = await anyio.to_thread.run_sync(KeyDiscovery.match_ssh_key, username)
         except httpx.HTTPError:
             phase.unreachable("Couldn't reach GitHub")
             return None
         if not backend:
-            phase.skip("No SSH key on GitHub matches a local one")
+            phase.skip("No matching SSH key on GitHub")
             return None
-        phase.ok(f"Matched {backend.private_key_path.name}")
+        phase.ok(f"Matched your local SSH key {backend.private_key_path.name}")
         return SSHConfig(
             contributor_id=ContributorId(username),
             key_path=backend.private_key_path,
         )
 
     async def try_github_gpg(self, username: str) -> GPGConfig | None:
-        phase = self.emit.begin(f"Checking GPG keys on github.com/{username}.gpg")
+        phase = self.emit.begin(f"Looking for GPG keys you've published at github.com/{username}.gpg")
         try:
             backend = await anyio.to_thread.run_sync(KeyDiscovery.match_gpg_key, username)
         except httpx.HTTPError:
             phase.unreachable("Couldn't reach GitHub")
             return None
         if not backend:
-            phase.skip("No GPG key on GitHub matches a local one")
+            phase.skip("No matching GPG key on GitHub")
             return None
-        phase.ok(f"Matched GPG {backend.fpr[-8:]}")
+        phase.ok("Matched your local GPG key")
         return GPGConfig(
             contributor_type="github",
             contributor_id=ContributorId(username),
@@ -139,7 +139,7 @@ class AutoSetup:
         phase = self.emit.begin("Checking for a cc-sentiment gist")
         key_path = await anyio.to_thread.run_sync(KeyDiscovery.find_gist_keypair)
         if key_path is None:
-            phase.skip("No local cc-sentiment keypair")
+            phase.skip("No cc-sentiment key on this Mac")
             return None
         if not await anyio.to_thread.run_sync(KeyDiscovery.gh_authenticated):
             phase.skip("gh CLI not authenticated")
@@ -148,7 +148,7 @@ class AutoSetup:
         if gist_id is None:
             phase.skip("No cc-sentiment gist on this account")
             return None
-        phase.ok(f"Found gist {gist_id[:7]}")
+        phase.ok("Found your cc-sentiment gist")
         return GistConfig(
             contributor_id=ContributorId(username),
             key_path=key_path,
@@ -156,7 +156,7 @@ class AutoSetup:
         )
 
     async def find_local_gpg(self) -> tuple[GPGKeyInfo, ...]:
-        phase = self.emit.begin("Scanning local GPG keyring")
+        phase = self.emit.begin("Looking through your local GPG keys")
         keys = await anyio.to_thread.run_sync(KeyDiscovery.find_gpg_keys)
         if not keys:
             phase.skip("No local GPG keys")
@@ -168,18 +168,18 @@ class AutoSetup:
     async def try_openpgp(
         self, info: GPGKeyInfo, username: str | None
     ) -> GPGConfig | None:
-        phase = self.emit.begin(f"Checking keys.openpgp.org for {info.fpr[-8:]}")
+        phase = self.emit.begin("Checking public keyservers")
         try:
             armored = await anyio.to_thread.run_sync(
                 KeyDiscovery.fetch_openpgp_key, info.fpr
             )
         except httpx.HTTPError:
-            phase.unreachable("Couldn't reach keys.openpgp.org")
+            phase.unreachable("Couldn't reach public keyservers")
             return None
         if not armored:
-            phase.skip("Not on keys.openpgp.org yet")
+            phase.skip("Not on a public keyserver yet")
             return None
-        phase.ok("Published on keys.openpgp.org")
+        phase.ok("Published on a public keyserver")
         return (
             GPGConfig(contributor_type="github", contributor_id=ContributorId(username), fpr=info.fpr)
             if username
@@ -188,12 +188,12 @@ class AutoSetup:
 
     async def probe_and_save(self, config: SSHConfig | GPGConfig | GistConfig) -> bool:
         from cc_sentiment.upload import AuthOk, Uploader
-        phase = self.emit.begin("Checking your key with the server")
+        phase = self.emit.begin("Checking with sentiments.cc")
         result = await Uploader().probe_credentials(config)
         if not isinstance(result, AuthOk):
-            phase.skip("Dashboard couldn't verify yet")
+            phase.skip("sentiments.cc can't see this key yet")
             return False
-        phase.ok("Verified")
+        phase.ok("Verified by sentiments.cc")
         self.state.config = config
         await anyio.to_thread.run_sync(self.state.save)
         return True

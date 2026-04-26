@@ -32,15 +32,16 @@ class StatsState:
 class CtaState:
     SNAPSHOT_TITLE: ClassVar[str] = "Your cc-sentiment snapshot"
     TWEET_DETAIL: ClassVar[str] = (
-        "Share it? The card on Twitter will show your GitHub avatar and this stat."
+        "We'll share a card with your GitHub avatar and this stat. "
+        "Posts to Twitter; nothing else leaves your Mac."
     )
     TWEET_LABEL: ClassVar[str] = "Tweet it"
-    SCHEDULE_TITLE: ClassVar[str] = "Run this automatically each day?"
+    SCHEDULE_TITLE: ClassVar[str] = "Keep this fresh every day?"
     SCHEDULE_DETAIL: ClassVar[str] = (
-        "Refreshes your numbers daily in the background. "
-        "Undo any time with [b]cc-sentiment uninstall[/]."
+        "We'll re-scan your conversations and update your dashboard once a day in the background. "
+        "Stop any time with [b]cc-sentiment uninstall[/]."
     )
-    SCHEDULE_LABEL: ClassVar[str] = "Schedule it"
+    SCHEDULE_LABEL: ClassVar[str] = "Schedule daily"
 
     tweet_config: SSHConfig | GPGConfig | GistConfig | None = None
     tweet_stat: MyStat | None = None
@@ -278,7 +279,7 @@ class ProcessingView:
         if self.stats.rate > 0:
             lines.append(self.stats_row(
                 "pace",
-                f"[b cyan]{self.stats.rate:.1f}[/] [dim]moments/sec on this Mac[/]",
+                f"[b cyan]{self.stats.rate:.1f}[/] [dim]moments per second on this Mac[/]",
             ))
         peaks = self.peaks_phrase()
         if peaks:

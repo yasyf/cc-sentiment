@@ -77,13 +77,14 @@ from tests.helpers import make_record, make_scan
 
 
 class SetupHarness(App[None]):
-    def __init__(self, state: AppState) -> None:
+    def __init__(self, state: AppState, final_label: str = "Contribute my stats") -> None:
         super().__init__()
         self.state = state
+        self.final_label = final_label
         self.dismissed: bool | None = None
 
     def on_mount(self) -> None:
-        self.push_screen(SetupScreen(self.state), self._capture)
+        self.push_screen(SetupScreen(self.state, final_label=self.final_label), self._capture)
 
     def _capture(self, result: bool | None) -> None:
         self.dismissed = result
@@ -376,7 +377,8 @@ async def test_setup_auto_success_openpgp_without_username_uses_short_gpg_label(
             await pilot.pause(delay=0.3)
             summary = str(pilot.app.screen.query_one("#done-summary", Static).render())
 
-            assert "Signed in as GPG A700D73A" in summary
+            assert "Uploading without a GitHub link" in summary
+            assert "GPG" not in summary
             assert fingerprint not in summary
 
 
@@ -420,7 +422,7 @@ async def test_setup_discovery_single_radioset_no_datatable(no_auto_setup):
 
             assert list(screen.query("#step-discovery DataTable")) == []
             assert radio.display is True
-            assert radio_labels(radio) == ["SSH · id_ed25519 · ssh-ed25519"]
+            assert radio_labels(radio) == ["SSH key  ·  id_ed25519"]
             assert radio.styles.max_height.value == 12
             assert screen.query_one("#discovery-next", Button).disabled is False
 
@@ -457,7 +459,7 @@ async def test_setup_discovery_no_gh_username_hides_ssh_keys(no_auto_setup):
             await pilot.pause(delay=0.3)
 
             assert radio_labels(screen.query_one("#key-select", RadioSet)) == [
-                "GPG · ABCD EF12 3456 7890 · test@example.com",
+                "GPG key  ·  test@example.com",
             ]
 
 
@@ -473,7 +475,7 @@ async def test_setup_tooling_absent_shows_install_hints_and_disables_next(no_aut
             screen._switch_to_discovery()
             await pilot.pause(delay=0.3)
 
-            assert str(screen.query_one("#discovery-status", Static).render()) == "No signing keys found on your machine."
+            assert str(screen.query_one("#discovery-status", Static).render()) == "No keys we can use on this Mac yet."
             assert "install the GitHub CLI" in str(screen.query_one("#discovery-help", Static).render())
             assert "brew install gnupg" in str(screen.query_one("#discovery-help", Static).render())
             assert screen.query_one("#discovery-next", Button).disabled is True
@@ -524,8 +526,7 @@ async def test_setup_remote_elision_skips_visible_remote_step(no_auto_setup):
     with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=(gpg_key,)), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.fetch_openpgp_key", return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----"), \
-         patch.object(AppState, "save"), \
-         patch("cc_sentiment.tui.screens.setup.TranscriptDiscovery.find_transcripts", return_value=()):
+         patch.object(AppState, "save"):
         async with SetupHarness(AppState()).run_test(size=(80, 24)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
@@ -562,7 +563,7 @@ async def test_setup_not_linked_header_uses_warning_copy(no_auto_setup):
             title, explainer = step_header_texts(step)
 
             assert screen.current_stage.value == "step-remote"
-            assert "Your key isn't linked yet" in title
+            assert "Almost there" in title
             assert "Verifying your key" not in title
             assert "Verifying your key" not in explainer
             assert "warning" in step.query_one(".step-title", Static).classes
@@ -775,7 +776,6 @@ async def test_setup_idempotent_verified_saved_config_short_circuits_loading(tmp
     )
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new=AsyncMock(side_effect=AssertionError("resume should not rerun auto setup"))), \
-         patch("cc_sentiment.tui.screens.setup.TranscriptDiscovery.find_transcripts", return_value=()), \
          patch("cc_sentiment.upload.Uploader.probe_credentials", new_callable=AsyncMock, return_value=AuthOk()) as probe:
         state = AppState(config=config)
         state.save()
@@ -894,8 +894,7 @@ async def test_setup_honest_end_state_verified_branch_uses_payload_card_and_cont
     state = AppState()
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
 
-    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch("cc_sentiment.tui.screens.setup.TranscriptDiscovery.find_transcripts", return_value=()):
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)):
         async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
@@ -905,7 +904,7 @@ async def test_setup_honest_end_state_verified_branch_uses_payload_card_and_cont
                 contributor_id=ContributorId("testuser"),
                 key_path=ssh_key.path,
             )
-            screen.done_display.summary_text = "Signed in as testuser using SSH key id_ed25519."
+            screen.done_display.summary_text = "Uploading as @testuser on the dashboard."
             screen.transition_to(screen.current_stage.__class__.DONE)
             screen._set_verification_branch(VerificationState.VERIFIED)
             await pilot.pause(delay=0.2)
@@ -986,8 +985,7 @@ async def test_setup_honest_end_state_failed_branch_retry_button_contract(tmp_pa
     state = AppState()
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
 
-    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch("cc_sentiment.tui.screens.setup.TranscriptDiscovery.find_transcripts", return_value=()):
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)):
         async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
@@ -997,7 +995,7 @@ async def test_setup_honest_end_state_failed_branch_retry_button_contract(tmp_pa
                 contributor_id=ContributorId("testuser"),
                 key_path=ssh_key.path,
             )
-            screen.done_display.summary_text = "Signed in as testuser using SSH key id_ed25519."
+            screen.done_display.summary_text = "Uploading as @testuser on the dashboard."
             screen.transition_to(screen.current_stage.__class__.DONE)
             screen._set_verification_branch(VerificationState.FAILED)
             await pilot.pause(delay=0.2)
@@ -1019,8 +1017,7 @@ async def test_setup_verification_ok_reactive_contribute_visibility(
     state = AppState()
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
 
-    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch("cc_sentiment.tui.screens.setup.TranscriptDiscovery.find_transcripts", return_value=()):
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)):
         async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
@@ -1030,7 +1027,7 @@ async def test_setup_verification_ok_reactive_contribute_visibility(
                 contributor_id=ContributorId("testuser"),
                 key_path=ssh_key.path,
             )
-            screen.done_display.summary_text = "Signed in as testuser using SSH key id_ed25519."
+            screen.done_display.summary_text = "Uploading as @testuser on the dashboard."
             screen.transition_to(screen.current_stage.__class__.DONE)
             screen._set_verification_branch(VerificationState.VERIFIED)
             await pilot.pause(delay=0.2)
@@ -1057,8 +1054,7 @@ async def test_setup_rapid_toggle_cta_never_visible_on_non_verified_branch(
     state = AppState()
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
 
-    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch("cc_sentiment.tui.screens.setup.TranscriptDiscovery.find_transcripts", return_value=()):
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)):
         async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
@@ -1068,7 +1064,7 @@ async def test_setup_rapid_toggle_cta_never_visible_on_non_verified_branch(
                 contributor_id=ContributorId("testuser"),
                 key_path=ssh_key.path,
             )
-            screen.done_display.summary_text = "Signed in as testuser using SSH key id_ed25519."
+            screen.done_display.summary_text = "Uploading as @testuser on the dashboard."
             screen.transition_to(screen.current_stage.__class__.DONE)
             screen._set_verification_branch(VerificationState.VERIFIED)
             await pilot.pause(delay=0.2)
@@ -1365,7 +1361,7 @@ async def test_setup_verify_result_maps_five_xx_and_network_drop_to_identical_pe
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
             screen.transition_to(SetupStage.DONE)
-            screen.done_display.summary_text = "Signed in as testuser using SSH key id_ed25519."
+            screen.done_display.summary_text = "Uploading as @testuser on the dashboard."
             screen.done_display.verification_action = VerificationAction.GITHUB_SSH
             screen.verification_poll.restart(fake_clock())
 
@@ -1516,7 +1512,7 @@ async def test_setup_link_my_key_collapses_to_one_radioset_and_no_manual_button(
                 "Show me the key; I'll add it myself",
             ]
             assert screen.query_one("#upload-go", Button).disabled is False
-            assert screen.query_one("#upload-go", Button).label.plain == "Link my key"
+            assert screen.query_one("#upload-go", Button).label.plain == "Publish my key"
 
 
 async def test_setup_hide_gh_link_option_when_cli_missing(no_auto_setup):
@@ -2010,6 +2006,29 @@ async def test_setup_generation_gist_routes_directly_to_done_verified(tmp_path: 
             assert screen.query_one("#done-btn", Button).label == "Contribute my stats"
 
 
+async def test_setup_only_done_button_shows_finish_setup(tmp_path: Path, no_auto_setup, auth_ok, isolated_state_path: Path):
+    state = AppState()
+    key_path = tmp_path / "id_ed25519"
+
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.generate_gist_keypair", return_value=key_path), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.create_gist", return_value="abcdef1234567890abcd"), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
+         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True):
+        async with SetupHarness(state, final_label="Finish setup").run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            screen = pilot.app.screen
+            screen.username = "testuser"
+            screen._switch_to_discovery()
+            await pilot.pause(delay=0.5)
+
+            screen.on_discovery_next()
+            await pilot.pause(delay=0.5)
+
+            assert screen.query_one(ContentSwitcher).current == "step-done"
+            assert screen.query_one("#done-btn", Button).label == "Finish setup"
+
+
 async def test_setup_generation_gpg_routes_to_remote(tmp_path: Path, no_auto_setup):
     state = AppState()
     generated_key = GPGKeyInfo(
@@ -2134,7 +2153,7 @@ async def test_setup_failed_retry_for_upload_returns_to_upload(no_auto_setup):
             screen.done_display.verification_action = VerificationAction.GITHUB_SSH
             screen.done_display.upload_failure_text = "Something went wrong: boom"
             screen.done_display.failed_retry_target = RetryTarget.UPLOAD
-            screen.done_display.summary_text = "Signed in as testuser using SSH key id_ed25519."
+            screen.done_display.summary_text = "Uploading as @testuser on the dashboard."
             screen.transition_to(SetupStage.DONE)
             screen._set_verification_branch(VerificationState.FAILED)
             await pilot.pause(delay=0.2)
@@ -3013,7 +3032,7 @@ async def test_setup_fingerprint_format_and_email_angle_copy_hierarchy(no_auto_s
             await pilot.pause(delay=0.3)
 
             assert radio_labels(screen.query_one("#key-select", RadioSet)) == [
-                "GPG · F329 9DE3 ... A700 D73A · John Doe <john.doe@example.org>",
+                "GPG key  ·  John Doe <john.doe@example.org>",
             ]
 
 
@@ -3123,7 +3142,7 @@ async def test_cost_review_renders_bucket_count_and_cost():
             str(w.render()) for w in pilot.app.screen.query("Label, Static")
         )
         assert "500" in text
-        assert "claude-haiku-4-5" in text
+        assert "Claude" in text
 
 
 async def test_cost_review_continue_dismisses_true():
@@ -4012,7 +4031,7 @@ async def test_cta_shows_schedule_when_daemon_not_installed(tmp_path: Path, auth
             section = pilot.app.query_one("#cta-section")
             assert "inactive" not in section.classes
             button = pilot.app.query_one("#cta-action", Button)
-            assert str(button.label) == "Schedule it"
+            assert str(button.label) == "Schedule daily"
 
 
 async def test_cta_hides_when_daemon_installed_and_no_tweet(tmp_path: Path, auth_ok, no_stat_share):
@@ -4043,7 +4062,7 @@ async def test_cta_rotates_between_tweet_and_schedule(tmp_path: Path, auth_ok, n
             await pilot.pause()
             assert app.view.cta.showing == "schedule"
             button = pilot.app.query_one("#cta-action", Button)
-            assert str(button.label) == "Schedule it"
+            assert str(button.label) == "Schedule daily"
 
             app.view.rotate_cta()
             await pilot.pause()

@@ -21,22 +21,19 @@ class CostReviewScreen(Dialog[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog-box"):
-            yield Label(f"Use {self.model} for scoring?", classes="title")
+            yield Label("Use Claude to score?", classes="title")
             yield Static(
-                f"This machine can't run local inference, so we'll use the Claude API "
-                f"via `claude -p` to score [b]{self.bucket_count}[/] new buckets.",
+                f"This Mac can't run scoring locally, so we'll use Claude through your account "
+                f"to score [b]{self.bucket_count}[/] new conversations.",
                 classes="detail",
             )
             yield Static(
-                f"Estimated cost: about [b]${self.cost:.2f}[/] "
-                f"(at ${ClaudeCLIEngine.HAIKU_INPUT_USD_PER_MTOK:.2f}/MTok in, "
-                f"${ClaudeCLIEngine.HAIKU_OUTPUT_USD_PER_MTOK:.2f}/MTok out). "
-                f"Actual cost is often lower thanks to prompt caching.",
+                f"About [b]${self.cost:.2f}[/]. Real cost is usually lower thanks to caching.",
                 classes="emphasis",
             )
             yield Static(
-                "This gets billed by Anthropic through your existing `claude` account. "
-                "Your conversation text still leaves the machine only as part of this API call.",
+                "Billed by Anthropic to your existing Claude account. "
+                "Your conversation text leaves this Mac only for that one API call.",
                 classes="detail",
             )
             yield ButtonRow(

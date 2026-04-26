@@ -31,9 +31,15 @@ class DoneBranch(Vertical):
     instructions_text: reactive[str] = reactive("", recompose=True)
     pending_label: reactive[str] = reactive("")
 
-    def __init__(self, sample_payload: Callable[[], str], **kwargs) -> None:
+    def __init__(
+        self,
+        sample_payload: Callable[[], str],
+        final_label: str = "Contribute my stats",
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self.sample_payload = sample_payload
+        self.final_label = final_label
 
     def visible_verification_state(self) -> VerificationState:
         return (
@@ -88,7 +94,7 @@ class DoneBranch(Vertical):
                 yield Static(self.process_text, id="done-process", classes=Tone.MUTED.value)
                 yield Static(self.eta_text, id="done-eta", classes=Tone.MUTED.value)
                 yield StepActions(
-                    primary=Button("Contribute my stats", id="done-btn", variant="primary"),
+                    primary=Button(self.final_label, id="done-btn", variant="primary"),
                 )
             case VerificationState.PENDING:
                 yield Card(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property, partial
 from pathlib import Path
 
@@ -254,3 +254,19 @@ class Pipeline:
                 on_transcript_complete(records)
 
         return all_records
+
+
+@dataclass
+class ScanCache:
+    repo: Repository
+    _result: ScanResult | None = field(default=None, init=False)
+    _lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
+
+    async def get(self) -> ScanResult:
+        async with self._lock:
+            if self._result is None:
+                self._result = await Pipeline.scan(self.repo)
+            return self._result
+
+    def invalidate(self) -> None:
+        self._result = None

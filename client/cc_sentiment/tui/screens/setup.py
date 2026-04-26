@@ -47,7 +47,6 @@ from cc_sentiment.signing import (
     SSHBackend,
     SSHKeyInfo,
 )
-from cc_sentiment.transcripts import TranscriptDiscovery
 from cc_sentiment.tui import setup_state
 from cc_sentiment.tui.format import TimeFormat
 from cc_sentiment.tui.screens.dialog import Dialog
@@ -92,7 +91,6 @@ Config = SSHConfig | GPGConfig | GistConfig
 
 
 class SetupScreen(Dialog[bool]):
-    ROUGH_BUCKETS_PER_FILE: ClassVar[int] = 6
     REMOTE_TONE_STYLES: ClassVar[dict[Tone, str]] = {
         Tone.SUCCESS: "green",
         Tone.WARNING: "yellow",
@@ -159,9 +157,14 @@ class SetupScreen(Dialog[bool]):
     verification_state: reactive[VerificationState] = reactive(VerificationState.VERIFIED)
     verification_ok: reactive[bool] = reactive(True)
 
-    def __init__(self, state: AppState) -> None:
+    def __init__(
+        self,
+        state: AppState,
+        final_label: str = "Contribute my stats",
+    ) -> None:
         super().__init__()
         self.state = state
+        self.final_label = final_label
         self.actions = SetupActionState()
         self.transition_history = [SetupStage.LOADING]
         self.discovery = DiscoveryState()
@@ -275,20 +278,19 @@ class SetupScreen(Dialog[bool]):
     @classmethod
     def _config_summary_text(cls, config: Config) -> str:
         match config:
-            case SSHConfig(contributor_id=cid, key_path=path):
-                return f"Signed in as {cid} using SSH key {path.name}."
-            case GPGConfig(contributor_type=contributor_type, contributor_id=cid, fpr=fpr):
-                label = cid if contributor_type == "github" else f"GPG {fpr[-8:]}"
-                return f"Signed in as {label} using GPG {cls._display_fingerprint(fpr)}."
-            case GistConfig(contributor_id=cid, gist_id=gist_id):
-                return f"Signed in as {cid} using cc-sentiment gist {gist_id[:7]}."
+            case SSHConfig(contributor_id=cid) | GistConfig(contributor_id=cid):
+                return f"Uploading as @{cid} on the dashboard."
+            case GPGConfig(contributor_type="github", contributor_id=cid):
+                return f"Uploading as @{cid} on the dashboard."
+            case GPGConfig(contributor_type="gpg"):
+                return "Uploading without a GitHub link. The dashboard will identify you by your key."
 
     def _key_radio_label(self, key: SSHKeyInfo | GPGKeyInfo) -> Text:
         match key:
-            case SSHKeyInfo(path=path, algorithm=algorithm):
-                return Text(f"SSH · {path.name} · {algorithm}")
-            case GPGKeyInfo(fpr=fingerprint, email=email):
-                return Text(f"GPG · {self._display_fingerprint(fingerprint)} · {email}")
+            case SSHKeyInfo(path=path):
+                return Text(f"SSH key  ·  {path.name}")
+            case GPGKeyInfo(email=email):
+                return Text(f"GPG key  ·  {email or 'no email'}")
 
     def _clear_radio_set(self, radio: RadioSet) -> None:
         radio._pressed_button = None
@@ -305,7 +307,7 @@ class SetupScreen(Dialog[bool]):
         self._clear_radio_set(radio)
         self._set_tone(
             self.query_one("#discovery-status", Static),
-            "Looking for signing keys on your machine...",
+            "Looking for keys we can use...",
         )
         self.query_one("#discovery-help", Static).update("")
         self.query_one("#discovery-next", Button).disabled = True
@@ -313,13 +315,13 @@ class SetupScreen(Dialog[bool]):
     def _reset_remote_stage(self) -> None:
         self.remote_check.reset()
         self._step_header(SetupStage.REMOTE).set_content(
-            "Verifying your key",
-            "Checking where the dashboard can read your public key.",
+            "Confirming your key works",
+            "We're checking that sentiments.cc can find your key online — that's how it confirms each upload is from you.",
         )
         self._render_remote_checks([])
         self._set_tone(
             self.query_one("#remote-status", Static),
-            "Checking where the dashboard can read your public key...",
+            "Checking with sentiments.cc...",
         )
         self.query_one("#remote-next", Button).disabled = True
 
@@ -330,7 +332,7 @@ class SetupScreen(Dialog[bool]):
         self.query_one("#upload-key-text", KeyPreview).text = ""
         self._set_tone(self.query_one("#upload-result", Static), "")
         go_button = self.query_one("#upload-go", Button)
-        go_button.label = "Link my key"
+        go_button.label = "Publish my key"
         go_button.disabled = True
 
     def _reset_done_stage(self) -> None:
@@ -405,7 +407,7 @@ class SetupScreen(Dialog[bool]):
                 case VerificationState.VERIFIED:
                     self._step_header(SetupStage.DONE).set_content(
                         "You're all set",
-                        "Review how uploads are signed and what the dashboard receives.",
+                        "Here's how your data flows.",
                         Tone.SUCCESS,
                     )
                 case VerificationState.PENDING:
@@ -539,19 +541,19 @@ class SetupScreen(Dialog[bool]):
             return
         if self.current_stage is SetupStage.REMOTE:
             self._step_header(SetupStage.REMOTE).set_content(
-                "Verifying your key",
-                "Checking where the dashboard can read your public key.",
+                "Confirming your key works",
+                "We're checking that sentiments.cc can find your key online — that's how it confirms each upload is from you.",
             )
             self._render_remote_checks([])
             self._set_tone(
                 self.query_one("#remote-status", Static),
-                "Checking where the dashboard can read your public key...",
+                "Checking with sentiments.cc...",
             )
             self.query_one("#remote-next", Button).disabled = True
             return
         self._set_tone(
             self.query_one("#discovery-status", Static),
-            "Checking where the dashboard can read your public key...",
+            "Checking with sentiments.cc...",
         )
         self.query_one("#discovery-next", Button).disabled = True
 
@@ -573,7 +575,7 @@ class SetupScreen(Dialog[bool]):
         if found:
             self._step_header(SetupStage.REMOTE).set_content(
                 "Your key is ready",
-                "We found this public key somewhere the dashboard can already read.",
+                "sentiments.cc can already see this key online. You're good.",
                 Tone.SUCCESS,
             )
             self._set_tone(
@@ -589,13 +591,13 @@ class SetupScreen(Dialog[bool]):
         if self.current_stage is not SetupStage.REMOTE:
             self.transition_to(SetupStage.REMOTE, preserve_remote=True)
         self._step_header(SetupStage.REMOTE).set_content(
-            "Your key isn't linked yet",
-            "We checked the public places the dashboard looks for this key.",
+            "Almost there — let's publish your key",
+            "sentiments.cc couldn't find your key in any of the public places it looks. Let's add it to one.",
             Tone.WARNING,
         )
         self._set_tone(
             self.query_one("#remote-status", Static),
-            "Link this key next so the dashboard can verify your uploads.",
+            "Pick where to publish your key — the dashboard checks these spots.",
             Tone.WARNING,
         )
         self._enable_remote_next()
@@ -604,7 +606,7 @@ class SetupScreen(Dialog[bool]):
         with Vertical(id="step-loading"):
             yield StepHeader(
                 "Setting things up...",
-                "Checking whether your current setup already works.",
+                "We need a way to prove each upload is really from you. Checking for keys you've already set up.",
             )
             yield StepBody(
                 PendingStatus("", id="loading-activity"),
@@ -614,7 +616,7 @@ class SetupScreen(Dialog[bool]):
         with Vertical(id="step-username"):
             yield StepHeader(
                 "Who are you?",
-                "Add your GitHub username so we can match the public key you already use.",
+                "Tell us your GitHub username so we can find a key you've already published.",
             )
             yield StepBody(
                 Input(placeholder="GitHub username", id="username-input"),
@@ -628,8 +630,8 @@ class SetupScreen(Dialog[bool]):
     def compose_discovery_step(self) -> ComposeResult:
         with Vertical(id="step-discovery"):
             yield StepHeader(
-                "Pick a signing key",
-                "Choose a local key to sign your uploads.",
+                "Choose a key on this Mac",
+                "Each upload gets a tiny signature so the dashboard knows it's really you. Pick which key to use.",
             )
             yield StepBody(
                 RadioSet(id="key-select"),
@@ -645,8 +647,8 @@ class SetupScreen(Dialog[bool]):
     def compose_remote_step(self) -> ComposeResult:
         with Vertical(id="step-remote"):
             yield StepHeader(
-                "Verifying your key",
-                "Checking where the dashboard can read your public key.",
+                "Confirming your key works",
+                "We're checking that sentiments.cc can find your key online — that's how it confirms each upload is from you.",
             )
             yield StepBody(
                 DataTable(id="remote-checks"),
@@ -660,8 +662,8 @@ class SetupScreen(Dialog[bool]):
     def compose_upload_step(self) -> ComposeResult:
         with Vertical(id="step-upload"):
             yield StepHeader(
-                "Link your key",
-                "Choose how the dashboard can look up your public key.",
+                "Publish your key",
+                "Pick where to publish the public half of your key. We never share or upload the private half.",
             )
             yield StepBody(
                 RadioSet(id="upload-options"),
@@ -669,7 +671,7 @@ class SetupScreen(Dialog[bool]):
                 Static("", id="upload-result", classes="status-line muted"),
                 StepActions(
                     Button("Back", id="upload-back", variant="default"),
-                    primary=Button("Link my key", id="upload-go", variant="primary", disabled=True),
+                    primary=Button("Publish my key", id="upload-go", variant="primary", disabled=True),
                 ),
             )
 
@@ -677,47 +679,57 @@ class SetupScreen(Dialog[bool]):
         with Vertical(id="step-done"):
             yield StepHeader(
                 "You're all set",
-                "Review how uploads are signed and what the dashboard receives.",
+                "Here's how your data flows.",
             )
             yield StepBody(
-                DoneBranch(self.render_sample_payload, id="done-branch"),
+                DoneBranch(
+                    self.render_sample_payload,
+                    final_label=self.final_label,
+                    id="done-branch",
+                ),
             )
 
     def _populate_done_info(self) -> None:
         match self.state.config:
-            case GistConfig(gist_id=g):
+            case GistConfig():
                 self.done_display.identify_text = (
-                    f"How we know it's you: uploads are signed on this Mac, "
-                    f"and gist {g[:7]} holds the public key."
+                    "How we know it's you: each upload gets a small signature from this Mac, "
+                    "and the dashboard reads the matching key from your gist."
                 )
             case _:
                 self.done_display.identify_text = (
-                    "How we know it's you: uploads are signed on this Mac, "
-                    "and the dashboard checks your public key."
+                    "How we know it's you: each upload gets a small signature from this Mac, "
+                    "and the dashboard checks it against the key you published."
                 )
         match EngineFactory.default():
             case "mlx":
                 self.done_display.process_text = (
-                    "Where scoring happens: entirely on your Mac with a local Gemma model."
+                    "Where scoring happens: on this Mac. "
+                    "Your conversation text never leaves your machine."
                 )
             case "claude":
                 self.done_display.process_text = (
-                    "Where scoring happens: through the claude CLI on this Mac, "
-                    "never through the dashboard."
+                    "Where scoring happens: through your existing Claude account, billed to you. "
+                    "Your conversation text leaves only as part of that one API call."
                 )
         self._render_done_branch()
         self._finalize_done_screen()
 
     @work()
     async def _finalize_done_screen(self) -> None:
-        transcripts = await anyio.to_thread.run_sync(TranscriptDiscovery.find_transcripts)
-        files = len(transcripts)
         rate = Hardware.estimate_buckets_per_sec(EngineFactory.default())
-        self.done_display.eta_text = (
-            f"Found {files:,} transcripts. "
-            f"About {TimeFormat.format_duration(files * self.ROUGH_BUCKETS_PER_FILE / rate)} to score here."
-            if rate and files else ""
-        )
+        scan_cache = getattr(self.app, "scan_cache", None)
+        if not rate or scan_cache is None:
+            self._render_done_branch()
+            return
+        scan_result = await scan_cache.get()
+        if scan_result.total_new_buckets == 0:
+            self.done_display.eta_text = "All caught up — nothing new to score."
+        else:
+            self.done_display.eta_text = (
+                f"About {TimeFormat.format_duration(scan_result.total_new_buckets / rate)} "
+                f"to score {scan_result.total_new_buckets:,} new moments."
+            )
         self._render_done_branch()
 
     @staticmethod
@@ -902,19 +914,19 @@ class SetupScreen(Dialog[bool]):
         ]
 
         if not radio_children:
-            self._set_tone(status, "No signing keys found on your machine.")
+            self._set_tone(status, "No keys we can use on this Mac yet.")
             help_text.update(
                 "Go back and enter a GitHub username, or install gpg "
                 "(brew install gnupg) to use GPG."
                 if not self.username
-                else "To create a signing key for cc-sentiment, install the GitHub CLI "
-                "(brew install gh) or gpg (brew install gnupg)."
+                else "To make one for you, install the GitHub CLI (brew install gh) "
+                "or gpg (brew install gnupg)."
             )
             next_btn.disabled = True
             return
 
         if not all_keys:
-            self._set_tone(status, "No signing keys found on your machine.")
+            self._set_tone(status, "No keys we can use on this Mac yet.")
             help_text.update(self._generation_prompt())
         else:
             help_text.update("")
@@ -939,9 +951,9 @@ class SetupScreen(Dialog[bool]):
     def _generation_prompt(self) -> str:
         match self.discovery.generation_mode:
             case GenerationMode.GIST:
-                return "We can make a small signing key for cc-sentiment and save its public key in a gist."
+                return "We can make a key for you and publish the public half as a GitHub gist."
             case GenerationMode.SSH:
-                return "We'll create a small SSH key here, then help you add its public key to GitHub."
+                return "We'll make an SSH key for you, then help you add the public half to GitHub."
             case GenerationMode.GPG:
                 return "No problem. We'll create a GPG key for you here."
             case _:
@@ -992,7 +1004,7 @@ class SetupScreen(Dialog[bool]):
     def generate_gpg_key(self) -> None:
         status = self.query_one("#discovery-status", Static)
         call = self.app.call_from_thread
-        call(self._set_tone, status, "Creating a signing key for you...")
+        call(self._set_tone, status, "Making a key for you...")
 
         identity = self.username or "cc-sentiment"
         email = identity + "@users.noreply.github.com"
@@ -1024,14 +1036,14 @@ Expire-Date: 0
             return
 
         self.selected_key = new_key
-        call(self._set_tone, status, f"Generated key: {self._display_fingerprint(new_key.fpr)}", Tone.SUCCESS)
+        call(self._set_tone, status, f"Made your key. Fingerprint: {self._display_fingerprint(new_key.fpr)}", Tone.SUCCESS)
         call(self._go_to_remote)
 
     @work(thread=True)
     def generate_managed_ssh_key(self) -> None:
         status = self.query_one("#discovery-status", Static)
         call = self.app.call_from_thread
-        call(self._set_tone, status, "Creating a local signing key for cc-sentiment...")
+        call(self._set_tone, status, "Making a key for you...")
         try:
             key_path = KeyDiscovery.generate_gist_keypair()
         except subprocess.CalledProcessError as e:
@@ -1052,7 +1064,7 @@ Expire-Date: 0
     def generate_gist_key(self) -> None:
         status = self.query_one("#discovery-status", Static)
         call = self.app.call_from_thread
-        call(self._set_tone, status, "Creating a signing key and saving its public key as a gist...")
+        call(self._set_tone, status, "Making a key and publishing it to a gist...")
         try:
             key_path = KeyDiscovery.generate_gist_keypair()
             gist_id = KeyDiscovery.create_gist(key_path)
@@ -1066,13 +1078,12 @@ Expire-Date: 0
             key_path=key_path,
             gist_id=gist_id,
         )
-        call(self._set_tone, status, f"Saved key to gist {gist_id[:7]}", Tone.SUCCESS)
+        call(self._set_tone, status, "Published your key as a gist.", Tone.SUCCESS)
         call(self._finish_gist, gist_id)
 
     def _finish_gist(self, gist_id: str) -> None:
-        self.done_display.summary_text = (
-            f"Signed in as {self.username} using cc-sentiment gist {gist_id[:7]}."
-        )
+        assert self.state.config is not None
+        self.done_display.summary_text = self._config_summary_text(self.state.config)
         self.actions.discovery_action_running = False
         self._enter_done(VerificationState.PENDING, action=VerificationAction.GIST, verify=True)
 
@@ -1186,7 +1197,7 @@ Expire-Date: 0
             radio_buttons[0].toggle()
         radio.display = len(radio_buttons) > 1
         self.query_one("#upload-go", Button).label = (
-            "Show me the key" if self.upload_plan.actions == [VerificationAction.MANUAL] else "Link my key"
+            "Show me the key" if self.upload_plan.actions == [VerificationAction.MANUAL] else "Publish my key"
         )
 
         pub_text = ""
@@ -1245,17 +1256,16 @@ Expire-Date: 0
         match self.selected_key:
             case SSHKeyInfo(path=path):
                 self.state.config = SSHConfig(contributor_id=ContributorId(identity), key_path=path)
-                self.done_display.summary_text = f"Signed in as {identity} using SSH key {path.name}."
             case GPGKeyInfo(fpr=fpr):
                 self.state.config = (
                     GPGConfig(contributor_type="github", contributor_id=ContributorId(identity), fpr=fpr)
                     if identity
                     else GPGConfig(contributor_type="gpg", contributor_id=ContributorId(fpr), fpr=fpr)
                 )
-                label = identity or f"GPG {fpr[-8:]}"
-                self.done_display.summary_text = f"Signed in as {label}."
             case _:
                 raise AssertionError("selected key required")
+        assert self.state.config is not None
+        self.done_display.summary_text = self._config_summary_text(self.state.config)
 
     def _save_and_fail_upload(self, action: VerificationAction, message: str) -> None:
         self._apply_selected_config()

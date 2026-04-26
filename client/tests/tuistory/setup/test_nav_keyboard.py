@@ -458,7 +458,7 @@ def test_auto_setup_done_requires_zero_enter_presses(tmp_path: Path, harness: Ha
             "exit_timeout_ms": 15000,
             "require_app_exit": True,
             "steps": (
-                {"action": "wait", "pattern": "Checking SSH keys on github.com/alice.keys", "timeout_ms": 10000},
+                {"action": "wait", "pattern": "Looking for SSH keys you've published at github.com/alice.keys", "timeout_ms": 10000},
                 {"action": "snapshot", "name": "01-loading"},
                 {"action": "wait", "pattern": "You're set up. Ready to upload.", "timeout_ms": 10000},
                 {"action": "snapshot", "name": "02-done"},
@@ -509,7 +509,7 @@ def escape_scenario(stage: str, home_files: dict[str, dict[str, object]], home_d
             return {
                 **base,
                 "steps": (
-                    {"action": "wait", "pattern": "Checking SSH keys on github.com/alice.keys", "timeout_ms": 10000},
+                    {"action": "wait", "pattern": "Looking for SSH keys you've published at github.com/alice.keys", "timeout_ms": 10000},
                     {"action": "snapshot", "name": "01-stage"},
                     {"action": "press", "keys": ("escape",)},
                 ),

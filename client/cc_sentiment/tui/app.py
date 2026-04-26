@@ -46,6 +46,7 @@ from cc_sentiment.models import (
 )
 from cc_sentiment.lexicon import Lexicon
 from cc_sentiment.nlp import NLP
+from cc_sentiment.pipeline import ScanCache
 from cc_sentiment.repo import Repository
 from cc_sentiment.transcripts import TranscriptParser
 from cc_sentiment.upload import (
@@ -159,6 +160,7 @@ class CCSentimentApp(App[None]):
         self.setup_only = setup_only
         self.debug_mode = debug
         self.repo: Repository | None = None
+        self.scan_cache: ScanCache | None = None
         self.records: list[SentimentRecord] = []
         self.view = ProcessingView(self)
         self._scoring = ScoringProgress()
@@ -180,7 +182,7 @@ class CCSentimentApp(App[None]):
                 with Horizontal(id="title-row"):
                     yield Static(f"[b]cc-sentiment[/b] [dim]v{CLIENT_VERSION}[/]", id="title-text")
                     yield Digits("-.--", id="score-digits", classes="inactive")
-                yield Static("[dim]average sentiment[/]", id="score-label", classes="inactive")
+                yield Static("[dim]your average score[/]", id="score-label", classes="inactive")
 
             with Card(id="progress-section", title="progress", classes="inactive"):
                 yield ProgressRow(
@@ -211,9 +213,9 @@ class CCSentimentApp(App[None]):
             with Horizontal(classes="row"):
                 with Card(id="moments-section", title="moments", classes="inactive"):
                     yield Static("", id="moments-log")
-                with Card(id="stats-section", title="stats", classes="inactive"):
+                with Card(id="stats-section", title="your numbers", classes="inactive"):
                     yield Static("", id="stats-rows")
-                with Card(id="cta-section", title="next", classes="inactive"):
+                with Card(id="cta-section", title="", classes="inactive"):
                     yield Static("", id="cta-title")
                     yield Static("", id="cta-detail")
                     with Horizontal(id="cta-buttons"):
@@ -231,15 +233,19 @@ class CCSentimentApp(App[None]):
         self.run_worker(self._load_nlp(), name="spacy-load", group="spacy-load", exclusive=True, exit_on_error=False)
         self._boot_screen = BootingScreen()
         await self.push_screen(self._boot_screen)
-        self._boot_screen.status = "Loading local cache..."
+        self._boot_screen.status = "Loading your local data..."
         self.repo = await anyio.to_thread.run_sync(Repository.open, self.db_path)
+        self.scan_cache = ScanCache(self.repo)
         await self._seed_from_repo()
         self.view.set_schedule_available(not LaunchAgent.is_installed())
         self.set_interval(self.CTA_ROTATE_SECONDS, self.view.rotate_cta)
         self.set_interval(1.0, self._tick_progress_label)
         if self.setup_only:
             await self._dismiss_boot_screen()
-            await self.push_screen(SetupScreen(self.state), lambda _: self.exit())
+            await self.push_screen(
+                SetupScreen(self.state, final_label="Finish setup"),
+                lambda _: self.exit(),
+            )
             return
         self.run_flow()
 
@@ -331,16 +337,16 @@ class CCSentimentApp(App[None]):
             self.view.activate_cta()
         match stage:
             case Booting():
-                self._update_status("[dim]Initializing...[/]")
+                self._update_status("[dim]Starting up...[/]")
             case Authenticating():
-                self._update_status("[dim]Verifying key...[/]")
+                self._update_status("[dim]Connecting to sentiments.cc...[/]")
             case Discovering():
-                self._update_status("[dim]Discovering transcripts...[/]")
+                self._update_status("[dim]Looking for new conversations...[/]")
             case Scoring():
                 self._update_status("")
             case Uploading():
                 self.view.update_upload(self._upload)
-                self._update_status("[dim]Scoring done. Sending the rest up to sentiments.cc...[/]")
+                self._update_status("[dim]Done scoring. Uploading to sentiments.cc...[/]")
             case IdleEmpty():
                 self.view.show_stats(0, 0, 0)
                 self._update_status(
@@ -368,9 +374,13 @@ class CCSentimentApp(App[None]):
 
     def _uploaded_status_text(self) -> str:
         polling = self._debug_state.card_stopped is None
-        suffix = "[dim]Generating your card…[/]" if polling else "[dim]Press O to open.[/]"
+        suffix = (
+            "[dim]Building your shareable card...[/]"
+            if polling
+            else "[dim]Press O to open your dashboard.[/]"
+        )
         return (
-            "[green]Uploaded.[/] See your data at "
+            "[green]Uploaded to[/] "
             f"[link='{DASHBOARD_URL}'][b]sentiments.cc[/b][/link]. "
             f"{suffix}"
         )
@@ -383,24 +393,24 @@ class CCSentimentApp(App[None]):
                     return False
                 continue
             self.stage = Authenticating()
-            self._set_boot_status("Verifying your key with the server...")
+            self._set_boot_status("Connecting to sentiments.cc...")
             match await Uploader().probe_credentials(self.state.config):
                 case AuthOk():
                     return True
                 case AuthUnauthorized():
                     self._update_status(
-                        "[yellow]Server doesn't recognize this key. Let's try setup again.[/]"
+                        "[yellow]sentiments.cc doesn't recognize this key. Let's redo setup.[/]"
                     )
                     self.state.config = None
                     await anyio.to_thread.run_sync(self.state.save)
                     continue
                 case AuthUnreachable(detail=d):
                     self._debug(f"AuthUnreachable: {d}")
-                    self.stage = Error(f"[red]Couldn't reach the server.[/] [dim]{d}[/]")
+                    self.stage = Error(f"[red]Couldn't reach sentiments.cc.[/] [dim]{d}[/]")
                     return False
                 case AuthServerError(status=s):
                     self._debug(f"AuthServerError: status={s}")
-                    self.stage = Error(f"[red]Server error verifying key ({s}).[/]")
+                    self.stage = Error(f"[red]sentiments.cc had an error verifying your key (HTTP {s}).[/]")
                     return False
 
     @work()
@@ -409,7 +419,7 @@ class CCSentimentApp(App[None]):
 
         assert self.repo is not None
 
-        self._set_boot_status("Choosing local engine...")
+        self._set_boot_status("Picking the best way to score on this Mac...")
         try:
             engine = await anyio.to_thread.run_sync(EngineFactory.resolve, None)
         except ClaudeUnavailable as e:
@@ -432,7 +442,8 @@ class CCSentimentApp(App[None]):
         try:
             self.stage = Discovering()
             self._set_boot_status("Discovering transcripts...")
-            scan = await Pipeline.scan(self.repo)
+            assert self.scan_cache is not None
+            scan = await self.scan_cache.get()
             pending = await anyio.to_thread.run_sync(self.repo.pending_records)
             self._debug(f"transcripts={len(scan.transcripts)} pending={len(pending)}")
 
@@ -683,6 +694,8 @@ class CCSentimentApp(App[None]):
     async def _reset_for_rescan(self) -> None:
         assert self.repo is not None
         await anyio.to_thread.run_sync(self.repo.clear_all)
+        if self.scan_cache is not None:
+            self.scan_cache.invalidate()
         self.records = []
         self.scored = 0
         self.total = 0

@@ -18,7 +18,7 @@ from cc_sentiment.models import (
     SessionId,
     UserMessage,
 )
-from cc_sentiment.pipeline import Pipeline, ScannedTranscript, ScanResult
+from cc_sentiment.pipeline import Pipeline, ScanCache, ScannedTranscript, ScanResult
 from cc_sentiment.repo import Repository
 from cc_sentiment.transcripts import ParsedTranscript, TranscriptParser
 from tests.helpers import make_parsed, make_record
@@ -355,3 +355,66 @@ class TestOnBucketPlumbing:
 
         anyio.run(run)
         assert captured["on_bucket"] is cb
+
+
+class TestScanCache:
+    def _scan_result(self) -> ScanResult:
+        return ScanResult(transcripts=(), scored_by_path={})
+
+    def test_first_get_calls_scan_once(self, repo: Repository) -> None:
+        result = self._scan_result()
+        cache = ScanCache(repo)
+        with patch.object(Pipeline, "scan", AsyncMock(return_value=result)) as scan:
+            got = anyio.run(lambda: cache.get())
+        assert got is result
+        assert scan.call_count == 1
+
+    def test_repeat_get_uses_cache(self, repo: Repository) -> None:
+        result = self._scan_result()
+        cache = ScanCache(repo)
+        with patch.object(Pipeline, "scan", AsyncMock(return_value=result)) as scan:
+            async def run() -> tuple[ScanResult, ScanResult]:
+                return await cache.get(), await cache.get()
+            first, second = anyio.run(run)
+        assert first is second is result
+        assert scan.call_count == 1
+
+    def test_invalidate_triggers_rescan(self, repo: Repository) -> None:
+        a, b = self._scan_result(), self._scan_result()
+        cache = ScanCache(repo)
+        with patch.object(Pipeline, "scan", AsyncMock(side_effect=[a, b])) as scan:
+            async def run() -> tuple[ScanResult, ScanResult]:
+                first = await cache.get()
+                cache.invalidate()
+                second = await cache.get()
+                return first, second
+            first, second = anyio.run(run)
+        assert first is a
+        assert second is b
+        assert scan.call_count == 2
+
+    def test_concurrent_get_runs_one_scan(self, repo: Repository) -> None:
+        result = self._scan_result()
+        cache = ScanCache(repo)
+        scan_calls = 0
+
+        async def slow_scan(_: Repository) -> ScanResult:
+            nonlocal scan_calls
+            scan_calls += 1
+            await anyio.sleep(0.01)
+            return result
+
+        with patch.object(Pipeline, "scan", new=slow_scan):
+            results: list[ScanResult] = []
+
+            async def collect() -> None:
+                results.append(await cache.get())
+
+            async def run() -> None:
+                async with anyio.create_task_group() as tg:
+                    for _ in range(5):
+                        tg.start_soon(collect)
+
+            anyio.run(run)
+        assert scan_calls == 1
+        assert all(r is result for r in results)
