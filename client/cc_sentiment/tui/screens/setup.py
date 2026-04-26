@@ -136,12 +136,15 @@ class SetupScreen(Dialog[bool]):
     }
     SetupScreen > #dialog-box .done-card.success {
         border: round $success;
+        border-title-color: $success;
     }
     SetupScreen > #dialog-box .done-card.warning {
         border: round $warning;
+        border-title-color: $warning;
     }
     SetupScreen > #dialog-box .done-card.error {
         border: round $error;
+        border-title-color: $error;
     }
     """
 

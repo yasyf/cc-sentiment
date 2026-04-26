@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cached_property, partial
 from pathlib import Path
@@ -134,16 +134,26 @@ class Pipeline:
         return SNIPPET_WHITESPACE.sub(" ", stripped).strip()
 
     @classmethod
-    def snippet_for(cls, bucket: ConversationBucket, score: int) -> str:
+    async def snippet_for(cls, bucket: ConversationBucket, score: int) -> str:
         if score == 1 and (matched := FrustrationFilter.matched_user_message(bucket)) is not None:
             if cleaned := cls.clean_snippet(matched):
                 return cleaned
-        for msg in bucket.messages:
-            if msg.role != "user":
-                continue
+        user_msgs = [m for m in bucket.messages if m.role == "user"]
+        if score in (1, 2, 4, 5) and user_msgs:
+            ranked = await anyio.to_thread.run_sync(cls.rank_user_messages, user_msgs, score)
+        else:
+            ranked = user_msgs
+        for msg in ranked:
             if cleaned := cls.clean_snippet(msg.content):
                 return cleaned
         return ""
+
+    @staticmethod
+    def rank_user_messages(
+        user_msgs: Sequence[TranscriptMessage], score: int
+    ) -> list[TranscriptMessage]:
+        direction = -1 if score >= 4 else 1
+        return sorted(user_msgs, key=lambda m: direction * Highlighter.message_polarity(m.content))
 
     @staticmethod
     def to_record(
@@ -188,7 +198,7 @@ class Pipeline:
             chunk = new_buckets[start:start + STREAM_CHUNK_SIZE]
             scores = await classifier.score(chunk, on_progress=on_bucket)
             for bucket, score in zip(chunk, scores):
-                if snippet := cls.snippet_for(bucket, int(score)):
+                if snippet := await cls.snippet_for(bucket, int(score)):
                     await on_snippet(snippet, int(score))
                 if words := [
                     w

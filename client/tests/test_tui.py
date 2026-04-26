@@ -4105,7 +4105,7 @@ async def test_card_poller_invokes_on_ready_when_stat_arrives():
     from cc_sentiment.tui.screens.stat_share import CardPoller
 
     calls: list[MyStat] = []
-    states: list[tuple[int, str, float, str | None]] = []
+    states: list[tuple[int, str, float, str | None, float | None]] = []
 
     with patch(
         "cc_sentiment.upload.Uploader.fetch_my_stat",
@@ -4115,7 +4115,7 @@ async def test_card_poller_invokes_on_ready_when_stat_arrives():
         poller = CardPoller(
             config=GITHUB_CONFIG,
             on_ready=calls.append,
-            on_state=lambda a, s, e, stop: states.append((a, s, e, stop)),
+            on_state=lambda a, s, e, stop, nxt: states.append((a, s, e, stop, nxt)),
         )
         await poller.run()
 
@@ -4127,7 +4127,7 @@ async def test_card_poller_gives_up_when_max_duration_exceeded():
     from cc_sentiment.tui.screens.stat_share import CardPoller
 
     calls: list[MyStat] = []
-    states: list[tuple[int, str, float, str | None]] = []
+    states: list[tuple[int, str, float, str | None, float | None]] = []
 
     with patch(
         "cc_sentiment.upload.Uploader.fetch_my_stat",
@@ -4137,7 +4137,7 @@ async def test_card_poller_gives_up_when_max_duration_exceeded():
         poller = CardPoller(
             config=GITHUB_CONFIG,
             on_ready=calls.append,
-            on_state=lambda a, s, e, stop: states.append((a, s, e, stop)),
+            on_state=lambda a, s, e, stop, nxt: states.append((a, s, e, stop, nxt)),
         )
         await poller.run()
 

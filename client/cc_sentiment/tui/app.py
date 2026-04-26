@@ -127,6 +127,7 @@ class CCSentimentApp(App[None]):
     #moments-log { height: auto; min-height: 4; max-height: 10; color: $foreground; }
     #stats-rows { height: auto; }
     #status-line { height: auto; margin: 1 0 0 0; }
+    Button.-primary:focus, Button.-default:focus { text-style: bold; }
     """
 
     BINDINGS = [
@@ -235,11 +236,16 @@ class CCSentimentApp(App[None]):
         await self._seed_from_repo()
         self.view.set_schedule_available(not LaunchAgent.is_installed())
         self.set_interval(self.CTA_ROTATE_SECONDS, self.view.rotate_cta)
+        self.set_interval(1.0, self._tick_progress_label)
         if self.setup_only:
             await self._dismiss_boot_screen()
             await self.push_screen(SetupScreen(self.state), lambda _: self.exit())
             return
         self.run_flow()
+
+    def _tick_progress_label(self) -> None:
+        if self._scoring.start_time > 0 and self.scored < self.total:
+            self.view.update_progress_label(self._scoring, self.scored, self.total)
 
     async def _load_nlp(self) -> None:
         await NLP.ensure_ready()
@@ -361,8 +367,25 @@ class CCSentimentApp(App[None]):
                 )
 
     def _uploaded_status_text(self) -> str:
-        polling = self._debug_state.card_last_status in ("polling", "idle") and self._debug_state.card_stopped is None
-        suffix = "[dim]Generating your card…[/]" if polling else "[dim]Press O to open.[/]"
+        d = self._debug_state
+        match d.card_stopped:
+            case "ready" | "dismissed":
+                suffix = "[dim]Press O to open.[/]"
+            case "timeout":
+                suffix = (
+                    "[dim]We couldn't generate your card this run — your latest data "
+                    f"may not have a qualifying highlight yet. Open [link='{DASHBOARD_URL}']"
+                    f"[b]sentiments.cc[/b][/link] to see what's there.[/]"
+                )
+            case None:
+                elapsed = int(d.card_elapsed)
+                hint = f" [dim]({elapsed}s)[/]" if d.card_attempts >= 2 and elapsed >= 5 else ""
+                suffix = f"[dim]Generating your card…[/]{hint}"
+            case _:
+                suffix = (
+                    f"[dim]Couldn't generate your card ({d.card_last_status}). "
+                    f"Open [link='{DASHBOARD_URL}'][b]sentiments.cc[/b][/link].[/]"
+                )
         return (
             "[green]Uploaded.[/] See your data at "
             f"[link='{DASHBOARD_URL}'][b]sentiments.cc[/b][/link]. "
@@ -577,6 +600,7 @@ class CCSentimentApp(App[None]):
         self.view.update_upload(progress)
 
     async def _poll_card(self, config: SSHConfig | GPGConfig | GistConfig) -> None:
+        self._set_debug(share_state="waiting on stat")
         poller = CardPoller(
             config=config,
             on_ready=self._on_card_ready,
@@ -590,7 +614,10 @@ class CCSentimentApp(App[None]):
         if self.state.config is None:
             return
         self.view.set_tweet(self.state.config, stat)
-        self.push_screen(StatShareScreen(self.state.config, stat))
+        self.push_screen(StatShareScreen(
+            self.state.config, stat,
+            on_share_state=lambda s: self._set_debug(share_state=s),
+        ))
         if isinstance(self.stage, IdleAfterUpload):
             self._update_status(self._uploaded_status_text())
 
@@ -604,13 +631,23 @@ class CCSentimentApp(App[None]):
             case "schedule":
                 await self._install_daemon()
 
-    def _on_card_state(self, attempts: int, status: str, elapsed: float, stopped: str | None) -> None:
+    def _on_card_state(
+        self,
+        attempts: int,
+        status: str,
+        elapsed: float,
+        stopped: str | None,
+        next_retry_at: float | None,
+    ) -> None:
         self._set_debug(
             card_attempts=attempts,
             card_last_status=status,
             card_elapsed=elapsed,
             card_stopped=stopped,
+            card_next_retry=next_retry_at,
         )
+        if isinstance(self.stage, IdleAfterUpload):
+            self._update_status(self._uploaded_status_text())
 
     async def _install_daemon(self) -> None:
         try:
@@ -692,7 +729,7 @@ class CCSentimentApp(App[None]):
     def _add_buckets(self, n: int) -> None:
         asyncio.get_running_loop()
         self.scored += n
-        self.view.bump_scored(self.scored, self._scoring, self.total)
+        self.view.bump_scored(self.scored, self._scoring)
 
     def _add_records(self, new_records: list[SentimentRecord]) -> None:
         asyncio.get_running_loop()

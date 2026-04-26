@@ -7,7 +7,7 @@ from cc_sentiment.tui.widgets.section import Section
 
 class Card(Section):
     DEFAULT_CSS: ClassVar[str] = """
-    Card { border: round $surface; padding: 0 1; height: auto; }
+    Card { border: round $surface; border-title-color: $text; padding: 0 1; height: auto; }
     """
 
     def __init__(self, *children, title: str, **kwargs) -> None:

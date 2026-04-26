@@ -77,6 +77,34 @@ class Highlighter:
         ]
 
     @classmethod
+    def message_polarity(cls, text: str) -> int:
+        if (nlp := NLP.get()) is None:
+            return 0
+        polarity = 0
+        tokens = list(nlp(text))
+        for i, tok in enumerate(tokens):
+            lemma = tok.lemma_.lower()
+            if lemma in cls.PROFANITY_TOKENS:
+                polarity -= 3
+                continue
+            if tok.text in cls.PYTHON_LITERALS:
+                continue
+            if i > 0 and tokens[i - 1].text == "=":
+                continue
+            if tok.pos_ not in cls.SENTIMENT_POS:
+                continue
+            score = Lexicon.polarity(lemma)
+            if score == 0:
+                continue
+            if tok.pos_ == "NOUN" and lemma not in Lexicon.DOMAIN_OVERRIDES:
+                continue
+            if cls.is_negated(tokens, i):
+                score = -score
+            polarity += score
+        polarity -= 3 * len(FRUSTRATION_PATTERN.findall(text))
+        return polarity
+
+    @classmethod
     def windowed_highlight(cls, full: str, score: int) -> Text:
         width = cls.MAX_SNIPPET_CHARS
         if (nlp := NLP.get()) is None:

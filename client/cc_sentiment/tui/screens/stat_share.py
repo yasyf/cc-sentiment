@@ -31,7 +31,7 @@ MINT_FAILED_LABEL = "Share unavailable"
 class CardPoller:
     config: SSHConfig | GPGConfig | GistConfig
     on_ready: Callable[[MyStat], None]
-    on_state: Callable[[int, str, float, str | None], None] = lambda *_: None
+    on_state: Callable[[int, str, float, str | None, float | None], None] = lambda *_: None
     POLL_INTERVAL_SECONDS: ClassVar[float] = 4.0
     POLL_BACKOFF_AFTER: ClassVar[int] = 5
     POLL_BACKOFF_SECONDS: ClassVar[float] = 15.0
@@ -42,13 +42,20 @@ class CardPoller:
     attempts: int = 0
     started_at: float = field(default_factory=time.monotonic)
     cancelled: bool = False
+    last_status: str = "polling"
+    next_retry_at: float | None = None
 
     def cancel(self, reason: str = "dismissed") -> None:
         self.cancelled = True
-        self.on_state(self.attempts, self.last_status_from(reason), self.elapsed(), reason)
+        self.last_status = self.last_status_from(reason)
+        self.next_retry_at = None
+        self._emit(reason)
 
     def elapsed(self) -> float:
         return time.monotonic() - self.started_at
+
+    def _emit(self, stopped: str | None) -> None:
+        self.on_state(self.attempts, self.last_status, self.elapsed(), stopped, self.next_retry_at)
 
     @classmethod
     def truncate(cls, text: str) -> str:
@@ -67,21 +74,32 @@ class CardPoller:
                 return reason
 
     async def run(self) -> None:
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(self._tick_loop)
+            await self._poll_loop()
+            tg.cancel_scope.cancel()
+
+    async def _tick_loop(self) -> None:
+        while not self.cancelled:
+            await anyio.sleep(self.TICK_SECONDS)
+            self._emit(None)
+
+    async def _poll_loop(self) -> None:
         uploader = Uploader()
         while not self.cancelled and self.elapsed() < self.MAX_POLL_SECONDS:
             self.attempts += 1
-            status = "polling"
-            self.on_state(self.attempts, status, self.elapsed(), None)
+            self.last_status = "polling"
+            self.next_retry_at = None
+            self._emit(None)
             stat: MyStat | None = None
             try:
                 stat = await uploader.fetch_my_stat(self.config)
             except (httpx.HTTPError, httpx.InvalidURL) as exc:
-                status = f"error: {self.truncate(f'{exc.__class__.__name__}: {exc}'.strip())}"
+                self.last_status = f"error: {self.truncate(f'{exc.__class__.__name__}: {exc}'.strip())}"
             else:
-                status = "http 200" if stat is not None else "http 404"
-            self.on_state(self.attempts, status, self.elapsed(), None)
+                self.last_status = "http 200" if stat is not None else "http 404"
             if stat is not None:
-                self.on_state(self.attempts, "http 200", self.elapsed(), "ready")
+                self._emit("ready")
                 self.on_ready(stat)
                 return
             delay = (
@@ -89,14 +107,13 @@ class CardPoller:
                 if self.attempts >= self.POLL_BACKOFF_AFTER
                 else self.POLL_INTERVAL_SECONDS
             )
-            remaining = delay
-            while remaining > 0 and not self.cancelled:
-                step = min(self.TICK_SECONDS, remaining)
-                await anyio.sleep(step)
-                remaining -= step
-                self.on_state(self.attempts, status, self.elapsed(), None)
+            self.next_retry_at = self.elapsed() + delay
+            self._emit(None)
+            await anyio.sleep(delay)
         if not self.cancelled:
-            self.on_state(self.attempts, "timeout", self.elapsed(), "timeout")
+            self.last_status = "timeout"
+            self.next_retry_at = None
+            self._emit("timeout")
 
 
 class StatShareScreen(Dialog[None]):
@@ -113,10 +130,16 @@ class StatShareScreen(Dialog[None]):
 
     BINDINGS = [("escape", "skip", "Skip")]
 
-    def __init__(self, config: SSHConfig | GPGConfig | GistConfig, stat: MyStat) -> None:
+    def __init__(
+        self,
+        config: SSHConfig | GPGConfig | GistConfig,
+        stat: MyStat,
+        on_share_state: Callable[[str], None] = lambda _: None,
+    ) -> None:
         super().__init__()
         self.config = config
         self.stat = stat
+        self.on_share_state = on_share_state
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog-box"):
@@ -136,6 +159,7 @@ class StatShareScreen(Dialog[None]):
         )
 
     async def _mint_share(self) -> None:
+        self.on_share_state("minting")
         try:
             response = await Uploader().mint_share(self.config)
         except (
@@ -147,9 +171,11 @@ class StatShareScreen(Dialog[None]):
             AssertionError,
             ValidationError,
             TimeoutError,
-        ):
+        ) as exc:
+            self.on_share_state(f"failed: {exc.__class__.__name__}")
             self.query_one("#stat-tweet", Button).label = MINT_FAILED_LABEL
             return
+        self.on_share_state("ready")
         self.share_id = response.id
         tweet_button = self.query_one("#stat-tweet", Button)
         tweet_button.label = CtaState.TWEET_LABEL

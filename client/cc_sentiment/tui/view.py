@@ -182,9 +182,8 @@ class ProcessingView:
             f"[b]{TimeFormat.format_hms(elapsed)}[/] / [dim]~{TimeFormat.format_hms(projected)}[/]"
         )
 
-    def bump_scored(self, scored: int, scoring: ScoringProgress, total: int) -> None:
+    def bump_scored(self, scored: int, scoring: ScoringProgress) -> None:
         self.app.query_one("#scan-progress", ProgressBar).update(progress=scored)
-        self.update_progress_label(scoring, scored, total)
         self.stats.rate = scoring.rate(scored)
         self.render_stats()
 
