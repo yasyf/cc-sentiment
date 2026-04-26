@@ -228,7 +228,7 @@ class CCSentimentApp(App[None]):
     async def on_mount(self) -> None:
         self.title = "cc-sentiment"
         self._set_debug(nlp_state="loading")
-        self.run_worker(self._load_nlp(), name="spacy-load", exclusive=True, exit_on_error=False)
+        self.run_worker(self._load_nlp(), name="spacy-load", group="spacy-load", exclusive=True, exit_on_error=False)
         self._boot_screen = BootingScreen()
         await self.push_screen(self._boot_screen)
         self._boot_screen.status = "Loading local cache..."
@@ -568,8 +568,8 @@ class CCSentimentApp(App[None]):
 
             if uploaded:
                 assert self.state.config is not None
-                self.run_worker(self._fetch_card(self.state.config), name="card-fetch", exclusive=True, exit_on_error=True)
-                self.run_worker(self._auto_open_dashboard(), name="auto-open-dashboard", exclusive=True, exit_on_error=False)
+                self.run_worker(self._fetch_card(self.state.config), name="card-fetch", group="card-fetch", exclusive=True, exit_on_error=True)
+                self.run_worker(self._auto_open_dashboard(), name="auto-open-dashboard", group="auto-open-dashboard", exclusive=True, exit_on_error=False)
         finally:
             if build_task is not None:
                 if not build_task.done():

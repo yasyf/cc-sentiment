@@ -220,7 +220,9 @@ def auth_ok():
 
 @pytest.fixture
 def no_stat_share():
-    with patch.object(CCSentimentApp, "_fetch_card", new=Mock(side_effect=lambda _config: lambda: None)):
+    async def _noop(self, config):
+        return None
+    with patch.object(CCSentimentApp, "_fetch_card", new=_noop):
         yield
 
 
