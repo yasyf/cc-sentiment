@@ -342,6 +342,7 @@ class PeerStat(StatCandidate):
 
 @dataclass(frozen=True, slots=True)
 class AngriestHourStat(StatCandidate):
+    MIN_HOUR_RECORDS: ClassVar[int] = 5
     QUERY: ClassVar[str] = """
     SELECT EXTRACT(HOUR FROM time AT TIME ZONE 'America/Los_Angeles')::int AS hour,
            AVG(sentiment_score)::float AS avg_score,
@@ -349,7 +350,7 @@ class AngriestHourStat(StatCandidate):
     FROM sentiment
     WHERE contributor_id = %(contributor_id)s
     GROUP BY hour
-    HAVING COUNT(*) >= 30
+    HAVING COUNT(*) >= %(min_records)s
     ORDER BY avg_score ASC, count DESC
     LIMIT 1
     """
@@ -372,9 +373,12 @@ class AngriestHourStat(StatCandidate):
     async def score(
         self, fetch_one: Callable[[str, dict], Awaitable[tuple]], contributor_id: str
     ) -> ScoredStat | None:
-        row = await fetch_one(self.query, {"contributor_id": contributor_id})
+        row = await fetch_one(
+            self.query,
+            {"contributor_id": contributor_id, "min_records": self.MIN_HOUR_RECORDS},
+        )
         match row:
-            case (int(hour), float(_), int(count)) if count >= 1:
+            case (int(hour), float(_), int(count)) if count >= self.MIN_HOUR_RECORDS:
                 formatted = self.format_hour(hour)
                 return ScoredStat(
                     MyStatResponse(
