@@ -593,8 +593,12 @@ class CCSentimentApp(App[None]):
 
             if uploaded:
                 assert self.state.config is not None
-                self.run_worker(self._fetch_card(self.state.config), name="card-fetch", group="card-fetch", exclusive=True, exit_on_error=True)
-                self.run_worker(self._auto_open_dashboard(), name="auto-open-dashboard", group="auto-open-dashboard", exclusive=True, exit_on_error=False)
+                is_first = not self.state.has_celebrated_first_upload
+                if is_first:
+                    self.state.has_celebrated_first_upload = True
+                    await anyio.to_thread.run_sync(self.state.save)
+                    self.run_worker(self._auto_open_dashboard(), name="auto-open-dashboard", group="auto-open-dashboard", exclusive=True, exit_on_error=False)
+                self.run_worker(self._fetch_card(self.state.config, push_share=is_first), name="card-fetch", group="card-fetch", exclusive=True, exit_on_error=True)
         finally:
             if build_task is not None:
                 if not build_task.done():
@@ -607,24 +611,25 @@ class CCSentimentApp(App[None]):
     def _on_upload_progress_change(self, progress: UploadProgress) -> None:
         self.view.update_upload(progress)
 
-    async def _fetch_card(self, config: SSHConfig | GPGConfig | GistConfig) -> None:
+    async def _fetch_card(self, config: SSHConfig | GPGConfig | GistConfig, push_share: bool) -> None:
         self._set_debug(share_state="waiting on stat")
         await CardFetcher(
             config=config,
-            on_ready=self._on_card_ready,
+            on_ready=lambda stat: self._on_card_ready(stat, push_share=push_share),
             on_state=self._on_card_state,
         ).run()
         if isinstance(self.stage, IdleAfterUpload) and self._debug_state.card_stopped != "ready":
             self._update_status(self._uploaded_status_text())
 
-    def _on_card_ready(self, stat: MyStat) -> None:
+    def _on_card_ready(self, stat: MyStat, push_share: bool) -> None:
         if self.state.config is None:
             return
         self.view.set_tweet(self.state.config, stat)
-        self.push_screen(StatShareScreen(
-            self.state.config, stat,
-            on_share_state=lambda s: self._set_debug(share_state=s),
-        ))
+        if push_share:
+            self.push_screen(StatShareScreen(
+                self.state.config, stat,
+                on_share_state=lambda s: self._set_debug(share_state=s),
+            ))
         if isinstance(self.stage, IdleAfterUpload):
             self._update_status(self._uploaded_status_text())
 

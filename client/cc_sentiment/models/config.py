@@ -44,6 +44,7 @@ class AppState(BaseModel):
     model_config = {"extra": "ignore"}
 
     config: ClientConfig | None = None
+    has_celebrated_first_upload: bool = False
 
     @classmethod
     def state_path(cls) -> Path:

@@ -221,7 +221,7 @@ def auth_ok():
 
 @pytest.fixture
 def no_stat_share():
-    async def _noop(self, config):
+    async def _noop(self, config, push_share):
         return None
     with patch.object(CCSentimentApp, "_fetch_card", new=_noop):
         yield
