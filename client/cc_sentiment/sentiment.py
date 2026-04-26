@@ -64,7 +64,7 @@ class SentimentClassifier(BaseEngine):
     def __init__(self, fused_dir: Path) -> None:
         MLXPatches.apply()
 
-        from mlx_lm import batch_generate, load
+        from mlx_lm import load
 
         self.model, self.tokenizer = load(str(fused_dir))
         self.logit_processor = self._score_only_logit_processor()
@@ -72,6 +72,13 @@ class SentimentClassifier(BaseEngine):
         self.prefix_tokens = self.tokenizer.apply_chat_template(
             self.prefix_messages, tokenize=True, add_generation_prompt=False,
         )
+        self.base_cache = None
+
+    def ensure_base_cache(self) -> None:
+        if self.base_cache is not None:
+            return
+        from mlx_lm import batch_generate
+
         self.base_cache = batch_generate(
             self.model, self.tokenizer, [self.prefix_tokens],
             max_tokens=1, logits_processors=[self.logit_processor],
@@ -96,6 +103,7 @@ class SentimentClassifier(BaseEngine):
     def _generate_chunk(self, chunk: list[list[dict[str, str]]]) -> list[str]:
         from mlx_lm import batch_generate
 
+        self.ensure_base_cache()
         suffixes = [
             self.tokenizer.apply_chat_template(
                 messages, tokenize=True, add_generation_prompt=True,

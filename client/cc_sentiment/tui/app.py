@@ -281,6 +281,18 @@ class CCSentimentApp(App[None]):
         except (OSError, httpx.HTTPError) as exc:
             self._set_debug(prewarm_model=f"failed: {exc.__class__.__name__}")
             return
+        from cc_sentiment.sentiment import AdapterFuser, SentimentClassifier
+
+        try:
+            fused_dir = await anyio.to_thread.run_sync(AdapterFuser.ensure_fused, DEFAULT_MODEL)
+        except OSError as exc:
+            self._set_debug(prewarm_model=f"failed: {exc.__class__.__name__}")
+            return
+        try:
+            await anyio.to_thread.run_sync(SentimentClassifier, fused_dir)
+        except (OSError, RuntimeError) as exc:
+            self._set_debug(prewarm_model=f"failed: {exc.__class__.__name__}")
+            return
         self._set_debug(prewarm_model="done")
 
     async def _dismiss_boot_screen(self) -> None:
@@ -362,9 +374,11 @@ class CCSentimentApp(App[None]):
                     f"{b} moment{'s' if b != 1 else ''} scored. "
                     f"[dim]Press R to rescan, O to open dashboard.[/]"
                 )
+                self._maybe_prewarm()
             case IdleAfterUpload(total_buckets=b, total_sessions=s, total_files=f):
                 self.view.show_stats(b, s, f)
                 self._update_status(self._uploaded_status_text())
+                self._maybe_prewarm()
             case Error(message=m):
                 self._update_status(m)
             case RescanConfirm():
@@ -483,7 +497,7 @@ class CCSentimentApp(App[None]):
             if needs_classifier:
                 if build_task is not None:
                     if not build_task.done():
-                        self._set_boot_status("Almost ready — warming up the local model...")
+                        self._set_boot_status("Loading the local model on this Mac...")
                     try:
                         classifier = await build_task
                     except (TimeoutError, OSError, RuntimeError) as exc:

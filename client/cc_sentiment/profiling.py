@@ -61,6 +61,7 @@ class Profiler:
         t0 = time.monotonic()
         fused_dir = AdapterFuser.ensure_fused(model_repo)
         classifier = SentimentClassifier(fused_dir)
+        classifier.ensure_base_cache()
         click.echo(f"  Ready in {time.monotonic() - t0:.1f}s")
         return classifier
 
