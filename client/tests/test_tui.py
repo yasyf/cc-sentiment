@@ -640,12 +640,12 @@ async def test_setup_key_preview_gpg_long_ascii_armor_stays_within_dialog(no_aut
             assert preview.scroll_y == preview.max_scroll_y
 
 
-async def test_setup_save_ssh_config(tmp_path: Path, no_auto_setup):
+async def test_setup_save_ssh_config(tmp_path: Path, no_auto_setup, isolated_state_path: Path):
     state = AppState()
-    state_file = tmp_path / "state.json"
+    state_file = isolated_state_path
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
 
-    with patch.object(AppState, "state_path", return_value=state_file):
+    if True:
         async with SetupHarness(state).run_test() as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
@@ -659,12 +659,12 @@ async def test_setup_save_ssh_config(tmp_path: Path, no_auto_setup):
             assert state.config.key_path == Path("/home/.ssh/id_ed25519")
 
 
-async def test_setup_save_gpg_config(tmp_path: Path, no_auto_setup):
+async def test_setup_save_gpg_config(tmp_path: Path, no_auto_setup, isolated_state_path: Path):
     state = AppState()
-    state_file = tmp_path / "state.json"
+    state_file = isolated_state_path
     gpg_key = GPGKeyInfo(fpr="F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A", email="test@example.com", algo="rsa4096")
 
-    with patch.object(AppState, "state_path", return_value=state_file):
+    if True:
         async with SetupHarness(state).run_test() as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
@@ -677,9 +677,9 @@ async def test_setup_save_gpg_config(tmp_path: Path, no_auto_setup):
             assert state.config.fpr == "F3299DE3FE0F6C3CF2B66BFBF7ECDD88A700D73A"
 
 
-async def test_setup_persist_at_commit_before_probe_returns(tmp_path: Path):
+async def test_setup_persist_at_commit_before_probe_returns(tmp_path: Path, isolated_state_path: Path):
     state = AppState()
-    state_file = tmp_path / "state.json"
+    state_file = isolated_state_path
     probe_started = anyio.Event()
     probe_release = anyio.Event()
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
@@ -691,7 +691,6 @@ async def test_setup_persist_at_commit_before_probe_returns(tmp_path: Path):
         return AuthUnauthorized(status=401)
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch.object(AppState, "state_path", return_value=state_file), \
          patch("cc_sentiment.upload.Uploader.probe_credentials", new=probe):
         async with SetupHarness(state).run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.3)
@@ -713,14 +712,14 @@ async def test_setup_persist_at_commit_before_probe_returns(tmp_path: Path):
             await pilot.pause(delay=0.3)
 
 
-def test_app_state_first_run_mkdir_creates_dir_with_0700(tmp_path: Path):
-    state_file = tmp_path / ".cc-sentiment" / "state.json"
+def test_app_state_first_run_mkdir_creates_dir_with_0700(tmp_path: Path, isolated_state_path: Path):
+    state_file = isolated_state_path
     config = SSHConfig(
         contributor_id=ContributorId("testuser"),
         key_path=Path("/home/.ssh/id_ed25519"),
     )
 
-    with patch.object(AppState, "state_path", return_value=state_file):
+    if True:
         AppState(config=config).save()
 
     assert state_file.exists()
@@ -752,10 +751,10 @@ def test_app_state_first_run_mkdir_creates_dir_with_0700(tmp_path: Path):
         ),
     ],
 )
-def test_app_state_roundtrip_terminal_configs(tmp_path: Path, config):
-    state_file = tmp_path / "state.json"
+def test_app_state_roundtrip_terminal_configs(tmp_path: Path, config, isolated_state_path: Path):
+    state_file = isolated_state_path
 
-    with patch.object(AppState, "state_path", return_value=state_file):
+    if True:
         AppState(config=config).save()
         loaded = AppState.load()
 
@@ -763,8 +762,8 @@ def test_app_state_roundtrip_terminal_configs(tmp_path: Path, config):
     assert loaded.config.model_dump() == config.model_dump()
 
 
-async def test_setup_idempotent_verified_saved_config_short_circuits_loading(tmp_path: Path):
-    state_file = tmp_path / "state.json"
+async def test_setup_idempotent_verified_saved_config_short_circuits_loading(tmp_path: Path, isolated_state_path: Path):
+    state_file = isolated_state_path
     key_path = tmp_path / "id_ed25519"
     key_path.write_text("PRIVATE")
     key_path.with_suffix(".pub").write_text("ssh-ed25519 AAAA saved@test")
@@ -774,7 +773,6 @@ async def test_setup_idempotent_verified_saved_config_short_circuits_loading(tmp
     )
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new=AsyncMock(side_effect=AssertionError("resume should not rerun auto setup"))), \
-         patch.object(AppState, "state_path", return_value=state_file), \
          patch("cc_sentiment.tui.screens.setup.TranscriptDiscovery.find_transcripts", return_value=()), \
          patch("cc_sentiment.upload.Uploader.probe_credentials", new_callable=AsyncMock, return_value=AuthOk()) as probe:
         state = AppState(config=config)
@@ -790,8 +788,8 @@ async def test_setup_idempotent_verified_saved_config_short_circuits_loading(tmp
             probe.assert_awaited_once_with(config)
 
 
-async def test_setup_resume_pending_from_saved_config_skips_username(tmp_path: Path):
-    state_file = tmp_path / "state.json"
+async def test_setup_resume_pending_from_saved_config_skips_username(tmp_path: Path, isolated_state_path: Path):
+    state_file = isolated_state_path
     config = GPGConfig(
         contributor_type="github",
         contributor_id=ContributorId("testuser"),
@@ -804,7 +802,6 @@ async def test_setup_resume_pending_from_saved_config_skips_username(tmp_path: P
     )
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new=AsyncMock(side_effect=AssertionError("resume should not rerun auto setup"))), \
-         patch.object(AppState, "state_path", return_value=state_file), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=(matching_key,)), \
          patch(
              "cc_sentiment.upload.Uploader.probe_credentials",
@@ -825,8 +822,8 @@ async def test_setup_resume_pending_from_saved_config_skips_username(tmp_path: P
             probe.assert_awaited_once_with(config)
 
 
-async def test_setup_stale_config_missing_key_falls_back_to_username(tmp_path: Path):
-    state_file = tmp_path / "state.json"
+async def test_setup_stale_config_missing_key_falls_back_to_username(tmp_path: Path, isolated_state_path: Path):
+    state_file = isolated_state_path
     missing_key = tmp_path / "missing-key"
     config = SSHConfig(
         contributor_id=ContributorId("testuser"),
@@ -834,7 +831,6 @@ async def test_setup_stale_config_missing_key_falls_back_to_username(tmp_path: P
     )
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)) as auto_setup, \
-         patch.object(AppState, "state_path", return_value=state_file), \
          patch("cc_sentiment.upload.Uploader.probe_credentials", new_callable=AsyncMock) as probe:
         state = AppState(config=config)
         state.save()
@@ -847,16 +843,15 @@ async def test_setup_stale_config_missing_key_falls_back_to_username(tmp_path: P
             probe.assert_not_called()
 
 
-async def test_setup_escape_loading_dismisses_without_partial_save(tmp_path: Path):
-    state_file = tmp_path / "state.json"
+async def test_setup_escape_loading_dismisses_without_partial_save(tmp_path: Path, isolated_state_path: Path):
+    state_file = isolated_state_path
     harness = SetupHarness(AppState())
 
     async def slow_run(*_) -> tuple[bool, str | None]:
         await anyio.sleep(0.5)
         return False, None
 
-    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new=slow_run), \
-         patch.object(AppState, "state_path", return_value=state_file):
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new=slow_run):
         async with harness.run_test(size=(80, 40)) as pilot:
             await pilot.pause(delay=0.05)
 
@@ -870,12 +865,12 @@ async def test_setup_escape_loading_dismisses_without_partial_save(tmp_path: Pat
             assert not state_file.exists()
 
 
-async def test_setup_done_button_dismisses_true(tmp_path: Path, no_auto_setup):
+async def test_setup_done_button_dismisses_true(tmp_path: Path, no_auto_setup, isolated_state_path: Path):
     state = AppState()
-    state_file = tmp_path / "state.json"
+    state_file = isolated_state_path
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
 
-    with patch.object(AppState, "state_path", return_value=state_file):
+    if True:
         harness = SetupHarness(state)
         async with harness.run_test(size=(80, 50)) as pilot:
             await pilot.pause(delay=0.3)
@@ -898,7 +893,6 @@ async def test_setup_honest_end_state_verified_branch_uses_payload_card_and_cont
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
          patch("cc_sentiment.tui.screens.setup.TranscriptDiscovery.find_transcripts", return_value=()):
         async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
             await pilot.pause(delay=0.3)
@@ -933,7 +927,6 @@ async def test_setup_honest_end_state_pending_branch_on_unreachable_hides_contri
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
          patch(
              "cc_sentiment.upload.Uploader.probe_credentials",
              new_callable=AsyncMock,
@@ -961,7 +954,6 @@ async def test_setup_manual_to_pending_routes_without_contribute_cta(tmp_path: P
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
          patch("cc_sentiment.tui.screens.setup.shutil.which", return_value=None), \
          patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"), \
          patch(
@@ -993,7 +985,6 @@ async def test_setup_honest_end_state_failed_branch_retry_button_contract(tmp_pa
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
          patch("cc_sentiment.tui.screens.setup.TranscriptDiscovery.find_transcripts", return_value=()):
         async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
             await pilot.pause(delay=0.3)
@@ -1027,7 +1018,6 @@ async def test_setup_verification_ok_reactive_contribute_visibility(
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
          patch("cc_sentiment.tui.screens.setup.TranscriptDiscovery.find_transcripts", return_value=()):
         async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
             await pilot.pause(delay=0.3)
@@ -1066,7 +1056,6 @@ async def test_setup_rapid_toggle_cta_never_visible_on_non_verified_branch(
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
          patch("cc_sentiment.tui.screens.setup.TranscriptDiscovery.find_transcripts", return_value=()):
         async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
             await pilot.pause(delay=0.3)
@@ -1103,7 +1092,6 @@ async def test_setup_pending_elapsed_ticks_pending_elapsed(tmp_path: Path):
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
          patch("cc_sentiment.tui.screens.setup.monotonic", new=fake_clock), \
-         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
          patch(
              "cc_sentiment.upload.Uploader.probe_credentials",
              new_callable=AsyncMock,
@@ -1139,7 +1127,6 @@ async def test_setup_pending_retry_cadence_auto_polls_pending_retry_cadence(tmp_
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
          patch("cc_sentiment.tui.setup_state.PENDING_RETRY_SECONDS", 0.2), \
-         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
          patch("cc_sentiment.upload.Uploader.probe_credentials", new=probe):
         async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
             await pilot.pause(delay=0.3)
@@ -1161,7 +1148,6 @@ async def test_setup_pending_propagation_window_transitions_to_failed_propagatio
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
          patch("cc_sentiment.tui.screens.setup.monotonic", new=fake_clock), \
          patch("cc_sentiment.tui.setup_state.PENDING_PROPAGATION_WINDOW_SECONDS", 5.0), \
-         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
          patch(
              "cc_sentiment.upload.Uploader.probe_credentials",
              new_callable=AsyncMock,
@@ -1209,8 +1195,7 @@ async def test_setup_pending_verification_action_instructions_cover_surviving_ac
 ):
     state = AppState()
 
-    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"):
+    with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)):
         async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
@@ -1226,14 +1211,13 @@ async def test_setup_pending_verification_action_instructions_cover_surviving_ac
             assert expected[1].lower() in instructions
 
 
-async def test_setup_pending_exit_preserves_state_exit_preserves(tmp_path: Path):
+async def test_setup_pending_exit_preserves_state_exit_preserves(tmp_path: Path, isolated_state_path: Path):
     state = AppState()
-    state_file = tmp_path / "state.json"
+    state_file = isolated_state_path
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
     harness = SetupHarness(state)
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch.object(AppState, "state_path", return_value=state_file), \
          patch(
              "cc_sentiment.upload.Uploader.probe_credentials",
              new_callable=AsyncMock,
@@ -1275,7 +1259,6 @@ async def test_setup_pending_retry_immediate_does_not_reset_elapsed_retry_immedi
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
          patch("cc_sentiment.tui.screens.setup.monotonic", new=fake_clock), \
          patch("cc_sentiment.tui.setup_state.PENDING_RETRY_SECONDS", 60.0), \
-         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
          patch("cc_sentiment.upload.Uploader.probe_credentials", new=probe):
         async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
             await pilot.pause(delay=0.3)
@@ -1309,7 +1292,6 @@ async def test_setup_pending_network_drop_pending_keeps_pending_network_drop_pen
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
          patch(
              "cc_sentiment.upload.Uploader.probe_credentials",
              new=AsyncMock(side_effect=[AuthUnauthorized(status=401), httpx.ConnectError("boom", request=request)]),
@@ -1343,7 +1325,6 @@ async def test_setup_pending_monotonic_clock_ignores_wall_time_skew_monotonic_cl
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
          patch("cc_sentiment.tui.screens.setup.monotonic", new=fake_clock), \
-         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
          patch(
              "cc_sentiment.upload.Uploader.probe_credentials",
              new_callable=AsyncMock,
@@ -1377,8 +1358,7 @@ async def test_setup_verify_result_maps_five_xx_and_network_drop_to_identical_pe
     state = AppState()
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch("cc_sentiment.tui.screens.setup.monotonic", new=fake_clock), \
-         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"):
+         patch("cc_sentiment.tui.screens.setup.monotonic", new=fake_clock):
         async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
             await pilot.pause(delay=0.3)
             screen = pilot.app.screen
@@ -1409,7 +1389,6 @@ async def test_setup_pending_five_xx_retry_can_recover_to_verified(tmp_path: Pat
     probe = AsyncMock(return_value=AuthServerError(status=502))
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
          patch("cc_sentiment.upload.Uploader.probe_credentials", new=probe):
         async with SetupHarness(state).run_test(size=(80, 50)) as pilot:
             await pilot.pause(delay=0.3)
@@ -1450,7 +1429,6 @@ async def test_setup_pending_sentiments_five_xx_unreachable_uses_pending_copy_fi
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
 
     with patch("cc_sentiment.tui.screens.setup.AutoSetup.run", new_callable=AsyncMock, return_value=(False, None)), \
-         patch.object(AppState, "state_path", return_value=tmp_path / "state.json"), \
          patch(
              "cc_sentiment.upload.Uploader.probe_credentials",
              new_callable=AsyncMock,
@@ -2000,13 +1978,12 @@ async def test_setup_generation_ssh_routes_to_remote(tmp_path: Path, no_auto_set
             assert screen.query_one(ContentSwitcher).current == "step-remote"
 
 
-async def test_setup_generation_gist_routes_directly_to_done_verified(tmp_path: Path, no_auto_setup, auth_ok):
+async def test_setup_generation_gist_routes_directly_to_done_verified(tmp_path: Path, no_auto_setup, auth_ok, isolated_state_path: Path):
     state = AppState()
-    state_file = tmp_path / "state.json"
+    state_file = isolated_state_path
     key_path = tmp_path / "id_ed25519"
 
-    with patch.object(AppState, "state_path", return_value=state_file), \
-         patch("cc_sentiment.tui.screens.setup.KeyDiscovery.generate_gist_keypair", return_value=key_path), \
+    with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.generate_gist_keypair", return_value=key_path), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.create_gist", return_value="abcdef1234567890abcd"), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=()), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_gpg_keys", return_value=()), \
@@ -2108,13 +2085,12 @@ async def test_setup_upload_options_gpg_shows_openpgp(no_auto_setup):
             ]
 
 
-async def test_setup_upload_action_github_ssh_failure_routes_to_failed(no_auto_setup, tmp_path: Path):
+async def test_setup_upload_action_github_ssh_failure_routes_to_failed(no_auto_setup, tmp_path: Path, isolated_state_path: Path):
     ssh_key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
     state = AppState()
-    state_file = tmp_path / "state.json"
+    state_file = isolated_state_path
 
     with patch("cc_sentiment.tui.screens.setup.shutil.which", return_value="/usr/bin/gh"), \
-         patch.object(AppState, "state_path", return_value=state_file), \
          patch("cc_sentiment.tui.screens.setup.KeyDiscovery.gh_authenticated", return_value=True), \
          patch("cc_sentiment.tui.screens.setup.SSHBackend.public_key_text", return_value="ssh-ed25519 AAAA key"), \
          patch("cc_sentiment.tui.screens.setup.subprocess.run", return_value=subprocess.CompletedProcess(["gh"], 1, "", "boom")):

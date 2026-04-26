@@ -568,7 +568,7 @@ class CCSentimentApp(App[None]):
 
             if uploaded:
                 assert self.state.config is not None
-                self.run_worker(self._fetch_card(self.state.config), name="card-fetch", exclusive=True, exit_on_error=False)
+                self.run_worker(self._fetch_card(self.state.config), name="card-fetch", exclusive=True, exit_on_error=True)
                 self.run_worker(self._auto_open_dashboard(), name="auto-open-dashboard", exclusive=True, exit_on_error=False)
         finally:
             if build_task is not None:
@@ -613,7 +613,7 @@ class CCSentimentApp(App[None]):
             case "schedule":
                 await self._install_daemon()
 
-    def _on_card_state(self, status: str, elapsed: float, stopped: str) -> None:
+    def _on_card_state(self, status: str, elapsed: float, stopped: str | None) -> None:
         self._set_debug(
             card_last_status=status,
             card_elapsed=elapsed,

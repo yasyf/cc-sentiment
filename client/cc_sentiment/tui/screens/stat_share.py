@@ -31,7 +31,7 @@ MINT_FAILED_LABEL = "Share unavailable"
 class CardFetcher:
     config: SSHConfig | GPGConfig | GistConfig
     on_ready: Callable[[MyStat], None]
-    on_state: Callable[[str, float, str], None] = lambda *_: None
+    on_state: Callable[[str, float, str | None], None] = lambda *_: None
     MAX_ERROR_DETAIL: ClassVar[int] = 80
 
     @classmethod
@@ -40,9 +40,10 @@ class CardFetcher:
 
     async def run(self) -> None:
         started = time.monotonic()
+        self.on_state("fetching", 0.0, None)
         try:
             stat = await Uploader().fetch_my_stat(self.config)
-        except (httpx.HTTPError, httpx.InvalidURL) as exc:
+        except Exception as exc:
             self.on_state(
                 f"error: {self.truncate(f'{exc.__class__.__name__}: {exc}'.strip())}",
                 time.monotonic() - started,

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
 
 from cc_sentiment.models import (
     AppState,
@@ -20,32 +19,28 @@ from tests.helpers import make_record
 
 
 class TestAppState:
-    def test_load_save_roundtrip(self, tmp_path: Path) -> None:
-        state_file = tmp_path / "state.json"
+    def test_load_save_roundtrip(self) -> None:
         state = AppState(
             config=SSHConfig(
                 contributor_id=ContributorId("testuser"),
                 key_path=Path("/home/.ssh/id_ed25519"),
             ),
         )
-        with patch.object(AppState, "state_path", return_value=state_file):
-            state.save()
-            loaded = AppState.load()
+        state.save()
+        loaded = AppState.load()
         assert isinstance(loaded.config, SSHConfig)
         assert loaded.config.contributor_id == ContributorId("testuser")
 
-    def test_load_missing_file_returns_default(self, tmp_path: Path) -> None:
-        with patch.object(AppState, "state_path", return_value=tmp_path / "nope.json"):
-            loaded = AppState.load()
+    def test_load_missing_file_returns_default(self) -> None:
+        loaded = AppState.load()
         assert loaded.config is None
 
-    def test_load_ignores_unknown_legacy_keys(self, tmp_path: Path) -> None:
-        state_file = tmp_path / "state.json"
-        state_file.write_text(
+    def test_load_ignores_unknown_legacy_keys(self, isolated_state_path: Path) -> None:
+        isolated_state_path.parent.mkdir(parents=True, exist_ok=True)
+        isolated_state_path.write_text(
             '{"config": null, "sessions": {"s1": {"records": []}}, "processed_files": {}}'
         )
-        with patch.object(AppState, "state_path", return_value=state_file):
-            loaded = AppState.load()
+        loaded = AppState.load()
         assert loaded.config is None
 
 
@@ -98,25 +93,21 @@ class TestClientConfig:
         restored = GPGConfig.model_validate(data)
         assert restored.contributor_type == "gpg"
 
-    def test_state_roundtrip_with_ssh_config(self, tmp_path: Path) -> None:
-        state_file = tmp_path / "state.json"
+    def test_state_roundtrip_with_ssh_config(self) -> None:
         state = AppState(
             config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")),
         )
-        with patch.object(AppState, "state_path", return_value=state_file):
-            state.save()
-            loaded = AppState.load()
+        state.save()
+        loaded = AppState.load()
         assert isinstance(loaded.config, SSHConfig)
         assert loaded.config.key_path == Path("/home/.ssh/id_ed25519")
 
-    def test_state_roundtrip_with_gpg_config(self, tmp_path: Path) -> None:
-        state_file = tmp_path / "state.json"
+    def test_state_roundtrip_with_gpg_config(self) -> None:
         state = AppState(
             config=GPGConfig(contributor_type="github", contributor_id=ContributorId("testuser"), fpr="ABCDEF1234567890"),
         )
-        with patch.object(AppState, "state_path", return_value=state_file):
-            state.save()
-            loaded = AppState.load()
+        state.save()
+        loaded = AppState.load()
         assert isinstance(loaded.config, GPGConfig)
         assert loaded.config.fpr == "ABCDEF1234567890"
 
@@ -134,8 +125,7 @@ class TestClientConfig:
         assert restored.gist_id == "abcdef1234567890abcd"
         assert restored.key_path == Path("/home/.cc-sentiment/keys/id_ed25519")
 
-    def test_state_roundtrip_with_gist_config(self, tmp_path: Path) -> None:
-        state_file = tmp_path / "state.json"
+    def test_state_roundtrip_with_gist_config(self) -> None:
         state = AppState(
             config=GistConfig(
                 contributor_id=ContributorId("octocat"),
@@ -143,9 +133,8 @@ class TestClientConfig:
                 gist_id="abcdef1234567890abcd",
             ),
         )
-        with patch.object(AppState, "state_path", return_value=state_file):
-            state.save()
-            loaded = AppState.load()
+        state.save()
+        loaded = AppState.load()
         assert isinstance(loaded.config, GistConfig)
         assert loaded.config.gist_id == "abcdef1234567890abcd"
         assert loaded.config.contributor_id == ContributorId("octocat")

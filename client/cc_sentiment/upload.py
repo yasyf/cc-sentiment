@@ -131,6 +131,7 @@ class AuthOk:
 @dataclass(frozen=True)
 class AuthUnauthorized:
     status: int
+    detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -194,6 +195,8 @@ class Uploader:
             return AuthServerError(status=e.response.status_code)
         except (httpx.ConnectError, httpx.TimeoutException) as e:
             return AuthUnreachable(detail=str(e))
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, OSError, AssertionError) as e:
+            return AuthUnauthorized(status=0, detail=f"local signing failed: {e.__class__.__name__}: {e}")
         return AuthOk()
 
     async def upload(

@@ -1,9 +1,21 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+from cc_sentiment.models import AppState
+
+
+@pytest.fixture(autouse=True)
+def isolated_state_path(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[Path]:
+    sandbox = tmp_path_factory.mktemp("cc-sentiment-state") / "state.json"
+    monkeypatch.setattr(AppState, "state_path", classmethod(lambda cls: sandbox))
+    yield sandbox
 
 
 @pytest.fixture(autouse=True)
