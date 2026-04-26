@@ -276,13 +276,11 @@ class Uploader:
             await cls().record_daemon_event(config, event_type)
 
     async def fetch_my_stat(self, config: SSHConfig | GPGConfig | GistConfig) -> MyStat | None:
-        return await anyio.to_thread.run_sync(self.fetch_my_stat_sync, config)
-
-    def fetch_my_stat_sync(self, config: SSHConfig | GPGConfig | GistConfig) -> MyStat | None:
-        with httpx.Client(timeout=15.0) as client:
-            response = client.get(
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
                 f"{self.server_url}/my-stats",
                 params={"contributor_id": config.contributor_id},
+                timeout=15.0,
             )
         match response.status_code:
             case 200:
