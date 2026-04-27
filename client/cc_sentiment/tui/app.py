@@ -38,6 +38,7 @@ from cc_sentiment.hardware import Hardware
 from cc_sentiment.models import (
     CLIENT_VERSION,
     AppState,
+    GistGPGConfig,
     GistConfig,
     GPGConfig,
     MyStat,
@@ -607,7 +608,7 @@ class CCSentimentApp(App[None]):
     def _on_upload_progress_change(self, progress: UploadProgress) -> None:
         self.view.update_upload(progress)
 
-    async def _fetch_card(self, config: SSHConfig | GPGConfig | GistConfig, push_share: bool) -> None:
+    async def _fetch_card(self, config: SSHConfig | GPGConfig | GistConfig | GistGPGConfig, push_share: bool) -> None:
         self._set_debug(share_state="waiting on stat")
         await CardFetcher(
             config=config,

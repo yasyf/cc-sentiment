@@ -54,10 +54,19 @@ class GistConfig(BaseModel, frozen=True):
     gist_id: str
 
 
+class GistGPGConfig(BaseModel, frozen=True):
+    key_type: Literal["gist-gpg"] = "gist-gpg"
+    contributor_type: Literal["gist"] = "gist"
+    contributor_id: ContributorId
+    fpr: str
+    gist_id: str
+
+
 ClientConfig = Annotated[
     Annotated[SSHConfig, Tag("ssh")]
     | Annotated[GPGConfig, Tag("gpg")]
-    | Annotated[GistConfig, Tag("gist")],
+    | Annotated[GistConfig, Tag("gist")]
+    | Annotated[GistGPGConfig, Tag("gist-gpg")],
     Discriminator(lambda v: v.get("key_type", "ssh") if isinstance(v, dict) else v.key_type),
 ]
 
@@ -84,11 +93,15 @@ class PendingSetupModel(BaseModel, frozen=True):
     def _validate_key_fields(self) -> PendingSetupModel:
         match self.key_kind:
             case "ssh":
-                assert self.key_path is not None, "ssh route requires key_path"
-                assert self.key_fpr is None, "ssh route forbids key_fpr"
+                if self.key_path is None:
+                    raise ValueError("ssh route requires key_path")
+                if self.key_fpr is not None:
+                    raise ValueError("ssh route forbids key_fpr")
             case "gpg":
-                assert self.key_fpr is not None, "gpg route requires key_fpr"
-                assert self.key_path is None, "gpg route forbids key_path"
+                if self.key_fpr is None:
+                    raise ValueError("gpg route requires key_fpr")
+                if self.key_path is not None:
+                    raise ValueError("gpg route forbids key_path")
         return self
 
 

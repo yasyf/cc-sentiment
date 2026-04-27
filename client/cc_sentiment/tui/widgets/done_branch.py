@@ -12,7 +12,7 @@ from cc_sentiment.tui.widgets.step_actions import StepActions
 WHAT_GETS_SENT_TEXT = "Timestamp, sentiment score, model, turn count, and aggregate metadata."
 PRIVACY_TEXT = "Stats are aggregated. Your conversations are not uploaded."
 SIGNING_TEXT = "Private key: stored on this device"
-LOOKUP_HELPER_TEXT = "Used only to verify signatures."
+LOOKUP_HELPER_TEXT = "Used only to verify signatures; public stats stay aggregate."
 SETTINGS_PRIMARY_LABEL = "Go to settings"
 
 
@@ -28,12 +28,12 @@ class DoneBranch(Vertical):
     def compose(self) -> ComposeResult:
         yield Card(
             Static(
-                f"Public key location: {self.public_location or 'unknown'}",
+                f"Public key lookup: {self.public_location or 'unknown'}",
                 id="done-location",
                 classes=Tone.SUCCESS.value,
             ),
             Static(
-                f"Lookup value: {self.lookup_value}" if self.lookup_value else "",
+                f"Verification handle: {self.lookup_value}" if self.lookup_value else "",
                 id="done-lookup",
                 classes=Tone.MUTED.value,
             ),

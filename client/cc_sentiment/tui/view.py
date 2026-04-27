@@ -8,7 +8,7 @@ from typing import ClassVar, Literal
 from textual.app import App
 from textual.widgets import Button, Digits, Label, ProgressBar, Static
 
-from cc_sentiment.models import GistConfig, GPGConfig, MyStat, SentimentRecord, SSHConfig
+from cc_sentiment.models import GistGPGConfig, GistConfig, GPGConfig, MyStat, SentimentRecord, SSHConfig
 from cc_sentiment.upload import UploadProgress
 
 from cc_sentiment.tui.format import TimeFormat
@@ -43,7 +43,7 @@ class CtaState:
     )
     SCHEDULE_LABEL: ClassVar[str] = "Schedule daily"
 
-    tweet_config: SSHConfig | GPGConfig | GistConfig | None = None
+    tweet_config: SSHConfig | GPGConfig | GistConfig | GistGPGConfig | None = None
     tweet_stat: MyStat | None = None
     schedule_available: bool = False
     showing: Literal["tweet", "schedule"] = "schedule"
@@ -113,7 +113,7 @@ class ProcessingView:
         self.reset_cta()
 
     def set_tweet(
-        self, config: SSHConfig | GPGConfig | GistConfig, stat: MyStat
+        self, config: SSHConfig | GPGConfig | GistConfig | GistGPGConfig, stat: MyStat
     ) -> None:
         self.cta.tweet_config = config
         self.cta.tweet_stat = stat

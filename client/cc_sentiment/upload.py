@@ -20,6 +20,7 @@ from cc_sentiment.models import (
     DaemonEvent,
     DaemonEventPayload,
     DaemonEventType,
+    GistGPGConfig,
     GistConfig,
     GPGConfig,
     MyStat,
@@ -60,6 +61,8 @@ UPLOAD_BATCH_MAX_AGE_SECONDS = 10.0
 UPLOAD_BATCH_TIMER_TICK_SECONDS = 1.0
 
 NOOP_UPLOAD_PROGRESS: Callable[[float], None] = lambda _: None
+
+Config = SSHConfig | GPGConfig | GistConfig | GistGPGConfig
 
 
 @dataclass
@@ -152,7 +155,7 @@ class Uploader:
         self.server_url = server_url
 
     @staticmethod
-    def backend_from_config(config: SSHConfig | GPGConfig | GistConfig) -> SigningBackend:
+    def backend_from_config(config: Config) -> SigningBackend:
         match config:
             case SSHConfig(key_path=p):
                 return SSHBackend(private_key_path=p)
@@ -160,17 +163,23 @@ class Uploader:
                 return GPGBackend(fpr=f)
             case GistConfig(key_path=p):
                 return SSHBackend(private_key_path=p)
+            case GistGPGConfig(fpr=f):
+                return GPGBackend(fpr=f)
 
     @staticmethod
-    def wire_contributor_id(config: SSHConfig | GPGConfig | GistConfig) -> str:
+    def wire_contributor_id(config: Config) -> str:
         match config:
-            case GistConfig(contributor_id=u, gist_id=g):
+            case GistConfig(contributor_id=u, gist_id=g) | GistGPGConfig(contributor_id=u, gist_id=g):
                 return f"{u}/{g}"
             case _:
                 return config.contributor_id
 
+    @staticmethod
+    def stats_contributor_id(config: Config) -> str:
+        return str(config.contributor_id)
+
     @RETRY_POLICY
-    async def _verify_credentials(self, config: SSHConfig | GPGConfig | GistConfig) -> None:
+    async def _verify_credentials(self, config: Config) -> None:
         backend = self.backend_from_config(config)
         with anyio.fail_after(10):
             signature = await anyio.to_thread.run_sync(PayloadSigner.sign, TEST_PAYLOAD, backend)
@@ -186,7 +195,7 @@ class Uploader:
                 timeout=15.0,
             )).raise_for_status()
 
-    async def probe_credentials(self, config: SSHConfig | GPGConfig | GistConfig) -> AuthResult:
+    async def probe_credentials(self, config: Config) -> AuthResult:
         try:
             await self._verify_credentials(config)
         except httpx.HTTPStatusError as e:
@@ -240,7 +249,7 @@ class Uploader:
 
     async def record_daemon_event(
         self,
-        config: SSHConfig | GPGConfig | GistConfig,
+        config: Config,
         event_type: DaemonEventType,
     ) -> None:
         event = DaemonEvent(
@@ -275,11 +284,11 @@ class Uploader:
         with anyio.fail_after(3.0):
             await cls().record_daemon_event(config, event_type)
 
-    async def fetch_my_stat(self, config: SSHConfig | GPGConfig | GistConfig) -> MyStat | None:
+    async def fetch_my_stat(self, config: Config) -> MyStat | None:
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{self.server_url}/my-stats",
-                params={"contributor_id": config.contributor_id},
+                params={"contributor_id": self.stats_contributor_id(config)},
                 timeout=15.0,
             )
         match response.status_code:
@@ -292,7 +301,7 @@ class Uploader:
                 return None
 
     async def mint_share(
-        self, config: SSHConfig | GPGConfig | GistConfig
+        self, config: Config
     ) -> ShareMintResponse:
         mint_payload = ShareMintPayload(issued_at=datetime.now(timezone.utc))
         canonical = orjson.dumps(

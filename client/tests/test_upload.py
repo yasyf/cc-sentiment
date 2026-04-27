@@ -10,6 +10,7 @@ import pytest
 from cc_sentiment.models import (
     AppState,
     ContributorId,
+    GistGPGConfig,
     GistConfig,
     GPGConfig,
     SessionId,
@@ -269,6 +270,15 @@ class TestWireContributorId:
             gist_id="abcdef1234567890abcd",
         )
         assert Uploader.wire_contributor_id(config) == "octocat/abcdef1234567890abcd"
+
+    def test_gist_gpg_packs_username_and_gist_id(self) -> None:
+        config = GistGPGConfig(
+            contributor_id=ContributorId("octocat"),
+            fpr="ABCDEF1234567890",
+            gist_id="abcdef1234567890abcd",
+        )
+        assert Uploader.wire_contributor_id(config) == "octocat/abcdef1234567890abcd"
+        assert Uploader.stats_contributor_id(config) == "octocat"
 
     def test_ssh_returns_plain_contributor_id(self) -> None:
         config = SSHConfig(

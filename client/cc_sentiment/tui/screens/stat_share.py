@@ -16,7 +16,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Label, Static
 
-from cc_sentiment.models import GistConfig, GPGConfig, MyStat, SSHConfig
+from cc_sentiment.models import GistGPGConfig, GistConfig, GPGConfig, MyStat, SSHConfig
 from cc_sentiment.upload import Uploader
 
 from cc_sentiment.tui.screens.dialog import Dialog
@@ -29,7 +29,7 @@ MINT_FAILED_LABEL = "Share unavailable"
 
 @dataclass
 class CardFetcher:
-    config: SSHConfig | GPGConfig | GistConfig
+    config: SSHConfig | GPGConfig | GistConfig | GistGPGConfig
     on_ready: Callable[[MyStat], None]
     on_state: Callable[[str, float, str | None], None] = lambda *_: None
     MAX_ERROR_DETAIL: ClassVar[int] = 80
@@ -43,7 +43,7 @@ class CardFetcher:
         self.on_state("fetching", 0.0, None)
         try:
             stat = await Uploader().fetch_my_stat(self.config)
-        except Exception as exc:
+        except (httpx.HTTPError, ValidationError) as exc:
             self.on_state(
                 f"error: {self.truncate(f'{exc.__class__.__name__}: {exc}'.strip())}",
                 time.monotonic() - started,
@@ -73,7 +73,7 @@ class StatShareScreen(Dialog[None]):
 
     def __init__(
         self,
-        config: SSHConfig | GPGConfig | GistConfig,
+        config: SSHConfig | GPGConfig | GistConfig | GistGPGConfig,
         stat: MyStat,
         on_share_state: Callable[[str], None] = lambda _: None,
     ) -> None:

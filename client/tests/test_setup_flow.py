@@ -227,6 +227,15 @@ class SetupHarness(App[None]):
         self.dismissed = result
 
 
+async def wait_for_stage(pilot, stage: SetupStage):
+    screen = pilot.app.screen
+    for _ in range(40):
+        await pilot.pause(delay=0.1)
+        if screen.current_stage is stage:
+            return screen
+    return screen
+
+
 @pytest.fixture
 def stub_discovery(monkeypatch):
     discoveries: list[DiscoveryResult] = []
@@ -243,6 +252,15 @@ def stub_discovery(monkeypatch):
         "cc_sentiment.tui.screens.setup.DiscoveryRunner.run", staticmethod(fake_run),
     )
     return push
+
+
+@pytest.fixture(autouse=True)
+def isolated_state_path(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        AppState,
+        "state_path",
+        classmethod(lambda cls: tmp_path / "state.json"),
+    )
 
 
 @pytest.fixture
@@ -310,8 +328,7 @@ async def test_returning_verified_user_lands_on_settings(
         ),
     )
     async with SetupHarness(state).run_test() as pilot:
-        await pilot.pause(delay=0.3)
-        screen = pilot.app.screen
+        screen = await wait_for_stage(pilot, SetupStage.SETTINGS)
         assert screen.current_stage is SetupStage.SETTINGS
         location = str(screen.query_one("#done-location", Static).render())
         assert "GitHub" in location
@@ -327,8 +344,7 @@ async def test_settings_uses_plan_copy_not_dashboard_identity(
         ),
     )
     async with SetupHarness(state).run_test() as pilot:
-        await pilot.pause(delay=0.3)
-        screen = pilot.app.screen
+        screen = await wait_for_stage(pilot, SetupStage.SETTINGS)
         rendered_text = " ".join(
             str(w.render()) for w in screen.query(Static)
         )
@@ -352,8 +368,7 @@ async def test_settings_primary_button_says_go_to_settings(
         ),
     )
     async with SetupHarness(state).run_test() as pilot:
-        await pilot.pause(delay=0.3)
-        screen = pilot.app.screen
+        screen = await wait_for_stage(pilot, SetupStage.SETTINGS)
         btn = screen.query_one("#done-btn", Button)
         assert str(btn.label) == SETTINGS_PRIMARY_LABEL
 
@@ -369,8 +384,7 @@ async def test_no_routes_falls_through_to_tools(auth_unauthorized, stub_discover
     ))
     state = AppState()
     async with SetupHarness(state).run_test() as pilot:
-        await pilot.pause(delay=0.3)
-        screen = pilot.app.screen
+        screen = await wait_for_stage(pilot, SetupStage.TOOLS)
         assert screen.current_stage is SetupStage.TOOLS
 
 
@@ -388,8 +402,7 @@ async def test_propose_screen_shows_recommended_route(
     ))
     state = AppState()
     async with SetupHarness(state).run_test() as pilot:
-        await pilot.pause(delay=0.3)
-        screen = pilot.app.screen
+        screen = await wait_for_stage(pilot, SetupStage.PROPOSE)
         assert screen.current_stage is SetupStage.PROPOSE
         recommendation = str(screen.query_one("#propose-recommendation", Static).render())
         assert route.title == recommendation
@@ -406,8 +419,7 @@ async def test_propose_button_label_matches_route(
     ))
     state = AppState()
     async with SetupHarness(state).run_test() as pilot:
-        await pilot.pause(delay=0.3)
-        screen = pilot.app.screen
+        screen = await wait_for_stage(pilot, SetupStage.PROPOSE)
         btn = screen.query_one("#propose-go", Button)
         assert str(btn.label) == route.primary_label
 
@@ -435,10 +447,12 @@ async def test_managed_gist_flow_completes_to_settings(
     ), patch(
         "cc_sentiment.signing.discovery.KeyDiscovery.create_gist_from_text",
         return_value="abc123def456",
+    ), patch(
+        "cc_sentiment.tui.screens.setup.GistDiscovery.fetch_gist_description",
+        return_value="cc-sentiment public key",
     ):
         async with SetupHarness(state).run_test() as pilot:
-            await pilot.pause(delay=0.3)
-            screen = pilot.app.screen
+            screen = await wait_for_stage(pilot, SetupStage.PROPOSE)
             assert screen.current_stage is SetupStage.PROPOSE
             screen.query_one("#propose-go", Button).press()
             for _ in range(40):
@@ -465,8 +479,7 @@ async def test_resume_pending_sends_user_to_guide(
         ),
     )
     async with SetupHarness(state).run_test() as pilot:
-        await pilot.pause(delay=0.3)
-        screen = pilot.app.screen
+        screen = await wait_for_stage(pilot, SetupStage.GUIDE)
         assert screen.current_stage is SetupStage.GUIDE
         instructions = str(screen.query_one("#guide-instructions", Static).render())
         assert RESUME_COPY in instructions
@@ -476,7 +489,7 @@ async def test_escape_dismisses_setup(stub_discovery):
     state = AppState()
     harness = SetupHarness(state)
     async with harness.run_test() as pilot:
-        await pilot.pause(delay=0.3)
+        await pilot.pause(delay=0.5)
         await pilot.press("escape")
         await pilot.pause()
     assert harness.dismissed is False
@@ -493,8 +506,7 @@ async def test_done_button_dismisses_true(
     )
     harness = SetupHarness(state)
     async with harness.run_test() as pilot:
-        await pilot.pause(delay=0.3)
-        screen = pilot.app.screen
+        screen = await wait_for_stage(pilot, SetupStage.SETTINGS)
         assert screen.current_stage is SetupStage.SETTINGS
         screen.query_one("#done-btn", Button).press()
         await pilot.pause()
@@ -512,8 +524,7 @@ async def test_inline_username_prompt_shows_when_no_identity_but_routes_need_one
     ))
     state = AppState()
     async with SetupHarness(state).run_test() as pilot:
-        await pilot.pause(delay=0.3)
-        screen = pilot.app.screen
+        screen = await wait_for_stage(pilot, SetupStage.DISCOVER)
         assert screen.current_stage is SetupStage.DISCOVER
         assert screen.query_one("#username-input", Input).display
 
@@ -533,8 +544,7 @@ async def test_username_validation_failure_shows_exact_copy(
         return_value="not-found",
     ):
         async with SetupHarness(state).run_test() as pilot:
-            await pilot.pause(delay=0.3)
-            screen = pilot.app.screen
+            screen = await wait_for_stage(pilot, SetupStage.DISCOVER)
             assert screen.current_stage is SetupStage.DISCOVER
             screen.query_one("#username-input", Input).value = "ghost"
             screen.query_one("#username-next", Button).press()
@@ -556,8 +566,7 @@ async def test_propose_alternatives_switch_recommendation(
     ))
     state = AppState()
     async with SetupHarness(state).run_test() as pilot:
-        await pilot.pause(delay=0.3)
-        screen = pilot.app.screen
+        screen = await wait_for_stage(pilot, SetupStage.PROPOSE)
         assert screen.current_stage is SetupStage.PROPOSE
         screen.query_one("#propose-alt", Button).press()
         await pilot.pause(delay=0.1)
@@ -583,8 +592,7 @@ async def test_settings_title_and_body_match_plan(
         ),
     )
     async with SetupHarness(state).run_test() as pilot:
-        await pilot.pause(delay=0.3)
-        screen = pilot.app.screen
+        screen = await wait_for_stage(pilot, SetupStage.SETTINGS)
         rendered = " ".join(str(w.render()) for w in screen.query(Static))
         assert SETTINGS_TITLE in rendered
         assert SETTINGS_BODY in rendered
@@ -612,6 +620,10 @@ def test_what_gets_sent_is_plain_text_not_json():
 
 def test_done_branch_settings_primary_label():
     assert SETTINGS_PRIMARY_LABEL == "Go to settings"
+
+
+def test_tuistory_tests_are_removed():
+    assert not (Path(__file__).parent / "tuistory").exists()
 
 
 # --------------------------------------------------------------------------- #
@@ -732,10 +744,12 @@ async def test_candidate_config_not_committed_until_auth_ok(
     ), patch(
         "cc_sentiment.signing.discovery.KeyDiscovery.create_gist_from_text",
         return_value="abc123def456",
+    ), patch(
+        "cc_sentiment.tui.screens.setup.GistDiscovery.fetch_gist_description",
+        return_value="cc-sentiment public key",
     ):
         async with SetupHarness(state).run_test() as pilot:
-            await pilot.pause(delay=0.3)
-            screen = pilot.app.screen
+            screen = await wait_for_stage(pilot, SetupStage.PROPOSE)
             screen.query_one("#propose-go", Button).press()
             for _ in range(20):
                 await pilot.pause(delay=0.1)

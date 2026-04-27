@@ -4,5 +4,6 @@ commands:
   test-fast: cd client && uv run pytest -x --timeout=30
   test-tui: cd client && uv run pytest tests/test_tui.py tests/test_setup_flow.py -xvs
   setup-dry: cd client && uv run cc-sentiment setup
+  install-mitmproxy: uv tool install mitmproxy
   lint: cd client && uv run --with ruff ruff check cc_sentiment/tui tests
 services: {}

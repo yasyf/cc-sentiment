@@ -41,6 +41,10 @@ ACCOUNT_SSH_WARNING = (
     "This changes your GitHub account keys. Use gist unless you specifically "
     "want this key listed in GitHub settings."
 )
+ACCOUNT_GPG_WARNING = (
+    "This changes your GitHub account keys. Use keys.openpgp.org unless you specifically "
+    "want this key listed in GitHub settings."
+)
 
 
 class Clipboard:
@@ -219,13 +223,13 @@ class SetupRoutePlanner:
 
         if capabilities.gh_authed and capabilities.has_ssh_keygen:
             candidates.append(cls._managed_ssh_gist())
-        elif capabilities.has_gpg and not gpg_keys:
-            candidates.append(cls._managed_gpg_openpgp())
         elif capabilities.has_gpg and gpg_keys:
             candidates.append(cls._existing_gpg_openpgp(gpg_keys[0]))
-        elif capabilities.has_ssh_keygen and username:
+        elif capabilities.has_gpg:
+            candidates.append(cls._managed_gpg_openpgp())
+        elif capabilities.has_ssh_keygen:
             candidates.append(cls._managed_ssh_manual_gist())
-        elif capabilities.has_ssh_keygen and ssh_keys and username:
+        elif ssh_keys:
             candidates.append(cls._existing_ssh_manual_gist(ssh_keys[0]))
 
         for ssh in ssh_keys:
@@ -240,15 +244,18 @@ class SetupRoutePlanner:
             if capabilities.gh_authed and username:
                 candidates.append(cls._existing_gpg_gist(gpg))
             candidates.append(cls._existing_gpg_openpgp(gpg))
+            if capabilities.has_gpg and not gpg.managed:
+                candidates.append(cls._managed_gpg_openpgp())
             if username:
                 candidates.append(cls._existing_gpg_github(gpg))
 
-        seen: set[RouteId] = set()
+        seen: set[tuple[str, str, str]] = set()
         unique: list[SetupRoute] = []
         for route in candidates:
-            if route.route_id in seen:
+            key = cls._route_key(route)
+            if key in seen:
                 continue
-            seen.add(route.route_id)
+            seen.add(key)
             unique.append(route)
 
         if not unique:
@@ -267,6 +274,20 @@ class SetupRoutePlanner:
         ):
             return recommended, ()
         return recommended, alternatives
+
+    @staticmethod
+    def _route_key(route: SetupRoute) -> tuple[str, str, str]:
+        match route.key_plan:
+            case ExistingSSHKey(info=info):
+                return route.route_id.value, route.publish_method.value if route.publish_method else "", str(info.path)
+            case ExistingGPGKey(info=info):
+                return route.route_id.value, route.publish_method.value if route.publish_method else "", info.fpr
+            case GenerateSSHKey():
+                return route.route_id.value, route.publish_method.value if route.publish_method else "", "managed-ssh"
+            case GenerateGPGKey():
+                return route.route_id.value, route.publish_method.value if route.publish_method else "", "managed-gpg"
+            case _:
+                return route.route_id.value, "", ""
 
     @staticmethod
     def _managed_ssh_gist() -> SetupRoute:
@@ -418,6 +439,7 @@ class SetupRoutePlanner:
             publish_method=PublishMethod.GITHUB_GPG,
             key_kind=KeyKind.GPG,
             key_plan=ExistingGPGKey(info=gpg.info, managed=gpg.managed),
+            account_key_warning=ACCOUNT_GPG_WARNING,
             automated=True,
         )
 

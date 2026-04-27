@@ -7,10 +7,10 @@ from typing import Literal
 
 from textual.worker import Worker
 
-from cc_sentiment.models import GistConfig, GPGConfig, SSHConfig
+from cc_sentiment.models import GistGPGConfig, GistConfig, GPGConfig, SSHConfig
 from cc_sentiment.signing import GPGKeyInfo, SSHKeyInfo
 
-CandidateConfig = SSHConfig | GPGConfig | GistConfig
+CandidateConfig = SSHConfig | GPGConfig | GistConfig | GistGPGConfig
 
 PENDING_PROPAGATION_WINDOW_SECONDS = 600.0
 PENDING_RETRY_SECONDS = 10.0
