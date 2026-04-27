@@ -4,6 +4,7 @@ import os
 import plistlib
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 LABEL = "cc.sentiments.agent"
@@ -12,6 +13,10 @@ PATH_ENV = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
 
 class LaunchAgent:
+    @staticmethod
+    def is_supported() -> bool:
+        return sys.platform == "darwin"
+
     @staticmethod
     def plist_path() -> Path:
         return Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"

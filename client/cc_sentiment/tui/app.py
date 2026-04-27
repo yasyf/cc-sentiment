@@ -234,7 +234,9 @@ class CCSentimentApp(App[None]):
         self.repo = await anyio.to_thread.run_sync(Repository.open, self.db_path)
         self.scan_cache = ScanCache(self.repo)
         await self._seed_from_repo()
-        self.view.set_schedule_available(not LaunchAgent.is_installed())
+        self.view.set_schedule_available(
+            LaunchAgent.is_supported() and not LaunchAgent.is_installed()
+        )
         self.set_interval(self.CTA_ROTATE_SECONDS, self.view.rotate_cta)
         self.set_interval(1.0, self._tick_progress_label)
         if self.setup_only:
@@ -650,6 +652,12 @@ class CCSentimentApp(App[None]):
             self._update_status(self._uploaded_status_text())
 
     async def _install_daemon(self) -> None:
+        if not LaunchAgent.is_supported():
+            self._update_status(
+                "[$warning]Background scheduling is only available on macOS.[/] "
+                "[dim]Use cron or your platform's scheduler to run `cc-sentiment run` daily.[/]"
+            )
+            return
         try:
             await anyio.to_thread.run_sync(LaunchAgent.install)
         except subprocess.CalledProcessError as e:

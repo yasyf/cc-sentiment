@@ -54,7 +54,7 @@ cc-sentiment install</code></pre>
 				<ol class="mt-3 space-y-2 pl-5 text-sm text-text-muted list-decimal marker:text-text-dim">
 					<li>Finds your Claude Code transcripts in <code class="rounded bg-bg-code px-1 py-0.5 font-mono text-xs">~/.claude/projects/</code></li>
 					<li>Scores each conversation on-device using Gemma 4 via MLX -- nothing is sent anywhere</li>
-					<li>Links each upload to your GitHub account so uploads are attributable (and nobody else can upload under your name)</li>
+					<li>Signs each upload with a key you control and a public verification handle (GitHub username or GPG fingerprint) so the server can verify the source without learning anything about your sessions</li>
 					<li>Uploads only the numeric scores and timestamps to the <a href="/" class="text-accent hover:text-accent-hover transition-colors">dashboard</a></li>
 				</ol>
 			</section>
@@ -65,7 +65,7 @@ cc-sentiment install</code></pre>
 				<h3 class="text-base font-medium text-text">Privacy</h3>
 				<p class="mt-2 text-sm text-text-muted">
 					Your conversations stay on your machine. The model runs entirely locally.
-					What gets uploaded: a score from 1-5, a timestamp, and your GitHub username.
+					What gets uploaded: a score from 1-5, a timestamp, and a public verification handle (GitHub username or GPG fingerprint) used only to verify signatures.
 					What doesn't: any conversation text, file contents, or code.
 				</p>
 			</section>

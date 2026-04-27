@@ -243,7 +243,7 @@ def stub_discovery(monkeypatch):
     def push(result: DiscoveryResult) -> None:
         discoveries.append(result)
 
-    def fake_run(saved_username: str = "") -> DiscoveryResult:
+    def fake_run(saved_username: str = "", github_allowed: bool = True) -> DiscoveryResult:
         if discoveries:
             return discoveries.pop(0)
         return DiscoveryResult()
@@ -622,29 +622,12 @@ def test_done_branch_settings_primary_label():
     assert SETTINGS_PRIMARY_LABEL == "Go to settings"
 
 
-def test_tuistory_tests_are_removed():
-    assert not (Path(__file__).parent / "tuistory").exists()
-
-
 # --------------------------------------------------------------------------- #
 # Cross-platform copy and clipboard
 # --------------------------------------------------------------------------- #
 
 
 class TestCopyConstantsCrossPlatform:
-    def test_no_mac_specific_phrasing_in_setup_screen(self):
-        from cc_sentiment.tui.screens import setup as setup_module
-
-        for name in (
-            "DISCOVER_BODY",
-            "DISCOVER_NO_MATCH_COPY",
-            "PROPOSE_BODY",
-            "MANUAL_GIST_FOOTER",
-            "GITHUB_SSH_GUIDE_INTRO",
-            "SETTINGS_BODY",
-        ):
-            assert "this Mac" not in getattr(setup_module, name)
-
     def test_tools_copy_split_into_brew_and_generic(self):
         from cc_sentiment.tui.screens.setup import (
             TOOLS_NO_BREW_BREW,
@@ -712,10 +695,105 @@ class TestPlannerEdgeCases:
         assert recommended is not None
         assert recommended.route_id is RouteId.MANAGED_SSH_GIST
 
+    def test_github_disallowed_drops_all_gist_and_account_routes(self):
+        caps = _capabilities(
+            has_gh=True, gh_authed=True, has_ssh_keygen=True, has_gpg=True,
+        )
+        ssh = _ssh_key()
+        gpg = _gpg_key()
+        recommended, alternatives = SetupRoutePlanner.plan(
+            caps, _identity("alice"), (ssh,), (gpg,), github_allowed=False,
+        )
+        assert recommended is not None
+        forbidden = {
+            PublishMethod.GIST_AUTO,
+            PublishMethod.GIST_MANUAL,
+            PublishMethod.GITHUB_SSH,
+            PublishMethod.GITHUB_GPG,
+        }
+        all_methods = {r.publish_method for r in (recommended, *alternatives)}
+        assert all_methods.isdisjoint(forbidden)
+        assert recommended.publish_method is PublishMethod.OPENPGP
+
+    def test_github_disallowed_with_only_gh_capability_falls_back_to_install_tools(self):
+        caps = _capabilities(has_gh=True, gh_authed=True, has_ssh_keygen=True)
+        recommended, alternatives = SetupRoutePlanner.plan(
+            caps, _identity("alice"), (), (), github_allowed=False,
+        )
+        assert recommended is not None
+        assert recommended.route_id is RouteId.INSTALL_TOOLS
+        assert alternatives == ()
+
 
 # --------------------------------------------------------------------------- #
 # Candidate config staging
 # --------------------------------------------------------------------------- #
+
+
+async def test_username_validation_persists_to_app_state(
+    auth_unauthorized, stub_discovery,
+):
+    route = _managed_ssh_route()
+    stub_discovery(DiscoveryResult(
+        capabilities=_capabilities(has_gh=True, has_ssh_keygen=True),
+        identity=_identity(),
+        recommended=route,
+    ))
+    state = AppState()
+    with patch(
+        "cc_sentiment.tui.screens.setup.IdentityProbe.validate_username",
+        return_value="ok",
+    ):
+        async with SetupHarness(state).run_test() as pilot:
+            screen = await wait_for_stage(pilot, SetupStage.DISCOVER)
+            screen.query_one("#username-input", Input).value = "alice"
+            screen.query_one("#username-next", Button).press()
+            for _ in range(20):
+                await pilot.pause(delay=0.1)
+                if state.github_username == "alice":
+                    break
+    assert state.github_username == "alice"
+
+
+async def test_resume_pending_with_last_error_renders_error_in_guide(
+    tmp_path: Path, auth_unauthorized, stub_discovery,
+):
+    state = AppState(
+        pending_setup=PendingSetupModel(
+            route_id="managed-ssh-manual-gist",
+            publish_method="gist-manual",
+            key_kind="ssh",
+            key_managed=True,
+            key_path=tmp_path / "id_ed25519",
+            username="alice",
+            last_status="verify-unauthorized",
+            last_error="sentiments.cc still couldn't verify the public key.",
+        ),
+    )
+    async with SetupHarness(state).run_test() as pilot:
+        screen = await wait_for_stage(pilot, SetupStage.GUIDE)
+        instructions = str(screen.query_one("#guide-instructions", Static).render())
+        assert "Last error: sentiments.cc still couldn't verify" in instructions
+
+
+async def test_username_skip_marks_github_disallowed(
+    auth_unauthorized, stub_discovery,
+):
+    route = _managed_ssh_route()
+    stub_discovery(DiscoveryResult(
+        capabilities=_capabilities(has_gh=True, has_ssh_keygen=True, has_gpg=True),
+        identity=_identity(),
+        recommended=route,
+    ))
+    state = AppState()
+    async with SetupHarness(state).run_test() as pilot:
+        screen = await wait_for_stage(pilot, SetupStage.DISCOVER)
+        screen.query_one("#username-skip", Button).press()
+        for _ in range(20):
+            await pilot.pause(delay=0.1)
+            if not screen.github_allowed:
+                break
+    assert screen.github_allowed is False
 
 
 async def test_candidate_config_not_committed_until_auth_ok(

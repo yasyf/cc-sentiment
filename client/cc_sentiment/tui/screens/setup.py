@@ -42,6 +42,7 @@ from cc_sentiment.signing import (
     SSHBackend,
     SSHKeyInfo,
 )
+from cc_sentiment.signing.discovery import GIST_README_TEMPLATE
 from cc_sentiment.tui.screens.dialog import Dialog
 from cc_sentiment.tui.setup_helpers import (
     GIST_NEW_URL,
@@ -173,12 +174,7 @@ MANUAL_GIST_STEPS = (
     "6. Click Create public gist.",
     "7. Come back here. We'll look for the gist and verify it.",
 )
-MANUAL_GIST_FOOTER = (
-    "README.md content:\n\n"
-    "# cc-sentiment public key\n\n"
-    "The private key stays on this device. Only aggregate sentiment metrics are uploaded. "
-    "Conversation text, file paths, prompts, tool inputs, and tool outputs are not uploaded."
-)
+MANUAL_GIST_FOOTER = f"README.md content:\n\n{GIST_README_TEMPLATE}"
 
 MANUAL_GIST_NOT_FOUND = (
     "We couldn't find the gist automatically. "
@@ -226,6 +222,11 @@ OPENPGP_API_FAILURE = (
 )
 
 RESUME_COPY = "Continuing setup where you left off."
+
+USERNAME_SKIP_GPG_ONLY = (
+    "Continuing without GitHub. You'll be verified by GPG fingerprint instead of "
+    "a GitHub public key location. Stats are still aggregate."
+)
 
 TOOLS_TITLE = "One tool is needed to finish setup"
 TOOLS_BODY = (
@@ -291,6 +292,7 @@ class SetupScreen(Dialog[bool]):
         self.state = state
         self.aggregate = SetupAggregate(verification_poll=VerificationPollState(started_at=monotonic()))
         self.verify_worker: Worker[None] | None = None
+        self.github_allowed: bool = True
 
     @property
     def actions(self) -> SetupActionState:
@@ -512,7 +514,9 @@ class SetupScreen(Dialog[bool]):
     async def _run_discover_phase(self) -> None:
         self._update_status("discover-status", "Looking for keys, GitHub identity, and tools…")
         username_hint = self._best_known_username()
-        result = await anyio.to_thread.run_sync(DiscoveryRunner.run, username_hint)
+        result = await anyio.to_thread.run_sync(
+            DiscoveryRunner.run, username_hint, self.github_allowed,
+        )
         self.aggregate.discovery = result
         self._render_discover_rows(result.rows)
         if (verified := await self._auto_verify(result)) is not None:
@@ -548,13 +552,18 @@ class SetupScreen(Dialog[bool]):
         return replace(discovery, rows=tuple(rows))
 
     def _best_known_username(self) -> str:
+        if self.state.github_username:
+            return self.state.github_username
         match self.state.config:
             case SSHConfig(contributor_id=cid) | GistConfig(contributor_id=cid) | GistGPGConfig(contributor_id=cid):
                 return cid
             case GPGConfig(contributor_type="github", contributor_id=cid):
                 return cid
             case _:
-                return ""
+                pass
+        if self.state.pending_setup is not None and self.state.pending_setup.username:
+            return self.state.pending_setup.username
+        return ""
 
     def _needs_username(self, result: DiscoveryResult) -> bool:
         if (route := result.recommended) is None:
@@ -673,14 +682,19 @@ class SetupScreen(Dialog[bool]):
             case "unreachable":
                 self._update_status("username-status", USERNAME_ERROR_UNREACHABLE, Tone.ERROR)
                 return
+        self.github_allowed = True
         self._set_username(username, UsernameSource.USER)
+        self.state.github_username = username
+        await anyio.to_thread.run_sync(self.state.save)
         self._hide_inline_username_prompt()
         await self._enter_propose()
 
     @on(Button.Pressed, "#username-skip")
     async def on_username_skip(self) -> None:
+        self.github_allowed = False
         self._set_username("", UsernameSource.NONE)
         self._hide_inline_username_prompt()
+        self._update_status("discover-status", USERNAME_SKIP_GPG_ONLY, Tone.MUTED)
         if self.discovery.recommended is None:
             self._render_tools(self.discovery)
             self.transition_to(SetupStage.TOOLS)
@@ -715,6 +729,7 @@ class SetupScreen(Dialog[bool]):
             new_identity,
             self.discovery.existing_ssh,
             self.discovery.existing_gpg,
+            github_allowed=self.github_allowed,
         )
         self.aggregate.discovery = DiscoveryResult(
             capabilities=self.discovery.capabilities,
@@ -1211,6 +1226,10 @@ class SetupScreen(Dialog[bool]):
                 step.detail = error
         self.aggregate.working.failure_text = WORKING_RECOVERABLE_FAILURE.format(error=error)
         self._render_working()
+        if self.state.pending_setup is not None:
+            self.state.pending_setup.last_status = "working-failed"
+            self.state.pending_setup.last_error = error
+            self.state.save()
 
     @on(Button.Pressed, "#working-guide")
     async def on_working_guide(self) -> None:
@@ -1525,7 +1544,7 @@ class SetupScreen(Dialog[bool]):
                 if not ok:
                     self._update_status("tools-status", "gh auth login didn't finish.", Tone.ERROR)
                     return
-            elif caps.has_brew:
+            elif caps.has_brew and sys.platform == "darwin":
                 ok, err = await anyio.to_thread.run_sync(KeyDiscovery.install_with_brew, "gh")
                 if not ok:
                     self._update_status("tools-status", err or "brew install failed", Tone.ERROR)
@@ -1548,6 +1567,7 @@ class SetupScreen(Dialog[bool]):
                     self.discovery.identity,
                     self.discovery.existing_ssh,
                     self.discovery.existing_gpg,
+                    github_allowed=self.github_allowed,
                 )
                 self.aggregate.discovery = replace(
                     self.discovery,
@@ -1557,7 +1577,7 @@ class SetupScreen(Dialog[bool]):
                 )
                 await self._enter_propose()
                 return
-            if caps.has_brew:
+            if caps.has_brew and sys.platform == "darwin":
                 ok, err = await anyio.to_thread.run_sync(KeyDiscovery.install_with_brew, "gnupg")
                 if not ok:
                     self._update_status("tools-status", err or "brew install failed", Tone.ERROR)
@@ -1673,6 +1693,11 @@ class SetupScreen(Dialog[bool]):
         self._stage_pending_candidate(pending)
         route_instructions, gist_visible = self._guide_instructions(route)
         instructions = f"{RESUME_COPY}\n\n{route_instructions}".strip()
+        if pending.last_error:
+            instructions = (
+                f"{instructions}\n\nLast error: {Sanitizer.error(pending.last_error)}"
+            )
+        self.aggregate.guide.last_error = pending.last_error
         with suppress(NoMatches):
             self.query_one("#guide-instructions", Static).update(instructions)
             self.query_one("#guide-gist-url", Input).display = gist_visible and not pending.gist_id
@@ -1808,7 +1833,9 @@ class SetupScreen(Dialog[bool]):
             self._render_guide_status()
 
     def _poll_due(self) -> None:
-        if self.current_stage not in (SetupStage.SETTINGS, SetupStage.GUIDE):
+        if self.current_stage not in (
+            SetupStage.SETTINGS, SetupStage.GUIDE, SetupStage.WORKING,
+        ):
             return
         if self.verify_worker is not None and self.verify_worker.is_running:
             return
@@ -1879,8 +1906,16 @@ class SetupScreen(Dialog[bool]):
                     ):
                         self.aggregate.guide.last_error = MANUAL_GIST_NOT_FOUND
                         self._update_status("guide-error", MANUAL_GIST_NOT_FOUND, Tone.WARNING)
+                        if self.state.pending_setup is not None:
+                            self.state.pending_setup.last_status = "verify-unauthorized"
+                            self.state.pending_setup.last_error = MANUAL_GIST_NOT_FOUND
+                            self.state.save()
                         return
                     self.aggregate.guide.last_error = "sentiments.cc still couldn't verify the public key."
+                    if self.state.pending_setup is not None:
+                        self.state.pending_setup.last_status = "verify-unauthorized"
+                        self.state.pending_setup.last_error = self.aggregate.guide.last_error
+                        self.state.save()
                     self._enter_fix(self.aggregate.guide.last_error)
             case AuthUnreachable() | AuthServerError():
                 self.aggregate.verification_poll.schedule_next(monotonic())

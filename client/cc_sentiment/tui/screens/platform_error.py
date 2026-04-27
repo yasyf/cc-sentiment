@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -16,7 +18,16 @@ from cc_sentiment.tui.widgets import ButtonRow, CommandBox
 
 INSTALL_BREW = "brew install --cask claude-code"
 INSTALL_CURL = "curl -fsSL https://claude.ai/install.sh | bash"
+INSTALL_GENERIC = "Install Claude Code from https://claude.ai/code"
 AUTH_LOGIN = "claude auth login"
+
+
+def install_command(brew_available: bool) -> str:
+    if brew_available:
+        return INSTALL_BREW
+    if sys.platform in ("darwin", "linux"):
+        return INSTALL_CURL
+    return INSTALL_GENERIC
 
 
 class PlatformErrorScreen(Dialog[None]):
@@ -43,7 +54,7 @@ class PlatformErrorScreen(Dialog[None]):
                         "Claude Code installed and signed in. Click a command to copy it.",
                         classes="detail",
                     )
-                    yield CommandBox(INSTALL_BREW if brew else INSTALL_CURL)
+                    yield CommandBox(install_command(brew))
                     yield CommandBox(AUTH_LOGIN)
                 case ClaudeNotAuthenticated():
                     yield Label("Sign in to Claude Code", classes="title")

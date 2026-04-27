@@ -111,6 +111,7 @@ class AppState(BaseModel):
     config: ClientConfig | None = None
     pending_setup: PendingSetupModel | None = None
     has_celebrated_first_upload: bool = False
+    github_username: str = ""
 
     @classmethod
     def state_path(cls) -> Path:

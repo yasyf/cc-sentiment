@@ -38,27 +38,6 @@ class TestKeyDiscovery:
             keys = KeyDiscovery.find_ssh_keys()
             assert keys == ()
 
-    @patch("cc_sentiment.signing.discovery.httpx.get")
-    def test_fetch_github_ssh_keys(self, mock_get: MagicMock) -> None:
-        mock_response = MagicMock()
-        mock_response.text = "ssh-ed25519 AAAA key1\nssh-rsa BBBB key2\n"
-        mock_response.raise_for_status = MagicMock()
-        mock_get.return_value = mock_response
-
-        keys = KeyDiscovery.fetch_github_ssh_keys("testuser")
-        assert len(keys) == 2
-        assert keys[0] == "ssh-ed25519 AAAA key1"
-
-    @patch("cc_sentiment.signing.discovery.httpx.get")
-    def test_fetch_github_ssh_keys_empty(self, mock_get: MagicMock) -> None:
-        mock_response = MagicMock()
-        mock_response.text = ""
-        mock_response.raise_for_status = MagicMock()
-        mock_get.return_value = mock_response
-
-        keys = KeyDiscovery.fetch_github_ssh_keys("testuser")
-        assert keys == ()
-
     def test_has_tool(self) -> None:
         assert KeyDiscovery.has_tool("python3") is True
         assert KeyDiscovery.has_tool("nonexistent_tool_xyz") is False

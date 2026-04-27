@@ -217,36 +217,40 @@ class SetupRoutePlanner:
         identity: IdentityDiscovery,
         ssh_keys: tuple[ExistingSSHKey, ...],
         gpg_keys: tuple[ExistingGPGKey, ...],
+        github_allowed: bool = True,
     ) -> tuple[SetupRoute | None, tuple[SetupRoute, ...]]:
         candidates: list[SetupRoute] = []
         username = identity.github_username
+        gh_publish_allowed = github_allowed and capabilities.gh_authed
 
-        if capabilities.gh_authed and capabilities.has_ssh_keygen:
+        if gh_publish_allowed and capabilities.has_ssh_keygen:
             candidates.append(cls._managed_ssh_gist())
         elif capabilities.has_gpg and gpg_keys:
             candidates.append(cls._existing_gpg_openpgp(gpg_keys[0]))
         elif capabilities.has_gpg:
             candidates.append(cls._managed_gpg_openpgp())
-        elif capabilities.has_ssh_keygen:
+        elif github_allowed and capabilities.has_ssh_keygen:
             candidates.append(cls._managed_ssh_manual_gist())
-        elif ssh_keys:
+        elif github_allowed and ssh_keys:
             candidates.append(cls._existing_ssh_manual_gist(ssh_keys[0]))
 
-        for ssh in ssh_keys:
-            if capabilities.gh_authed and username:
+        if gh_publish_allowed:
+            for ssh in ssh_keys:
                 candidates.append(cls._existing_ssh_gist(ssh))
-            elif username:
-                candidates.append(cls._existing_ssh_manual_gist(ssh))
-            if username:
+            for gpg in gpg_keys:
+                candidates.append(cls._existing_gpg_gist(gpg))
+
+        if github_allowed and username:
+            for ssh in ssh_keys:
+                if not gh_publish_allowed:
+                    candidates.append(cls._existing_ssh_manual_gist(ssh))
                 candidates.append(cls._existing_ssh_github(ssh))
 
         for gpg in gpg_keys:
-            if capabilities.gh_authed and username:
-                candidates.append(cls._existing_gpg_gist(gpg))
             candidates.append(cls._existing_gpg_openpgp(gpg))
             if capabilities.has_gpg and not gpg.managed:
                 candidates.append(cls._managed_gpg_openpgp())
-            if username:
+            if github_allowed and username:
                 candidates.append(cls._existing_gpg_github(gpg))
 
         seen: set[tuple[str, str, str]] = set()
@@ -259,7 +263,7 @@ class SetupRoutePlanner:
             unique.append(route)
 
         if not unique:
-            if capabilities.has_gh and not capabilities.gh_authed:
+            if github_allowed and capabilities.has_gh and not capabilities.gh_authed:
                 unique.append(cls._sign_in_gh())
             else:
                 unique.append(cls._install_tools(capabilities))
@@ -269,8 +273,8 @@ class SetupRoutePlanner:
         alternatives = tuple(unique[1:])
         if (
             recommended.route_id is RouteId.EXISTING_GPG_OPENPGP
-            and not capabilities.gh_authed
-            and not capabilities.has_gh
+            and not gh_publish_allowed
+            and not (github_allowed and capabilities.has_gh)
         ):
             return recommended, ()
         return recommended, alternatives
@@ -525,7 +529,7 @@ class GistDiscovery:
 
 class DiscoveryRunner:
     @classmethod
-    def run(cls, saved_username: str = "") -> DiscoveryResult:
+    def run(cls, saved_username: str = "", github_allowed: bool = True) -> DiscoveryResult:
         capabilities = CapabilityProbe.detect()
         identity = IdentityProbe.detect(saved_username=saved_username)
         if identity.github_username and not identity.email_usable:
@@ -542,6 +546,7 @@ class DiscoveryRunner:
         gpg_keys = LocalKeysProbe.detect_gpg()
         recommended, alternatives = SetupRoutePlanner.plan(
             capabilities, identity, ssh_keys, gpg_keys,
+            github_allowed=github_allowed,
         )
         rows = cls._build_rows(capabilities, identity, ssh_keys, gpg_keys)
         return DiscoveryResult(

@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](client/LICENSE)
 
-An open experiment in Claude Code behavior. Contributors run a CLI that scores their own Claude Code transcripts locally, and uploads the numbers to a shared dashboard at [sentiments.cc](https://sentiments.cc).
+An open experiment in Claude Code behavior. Contributors run a CLI that scores their own Claude Code transcripts locally, and uploads the numbers to a shared dashboard at [sentiments.cc](https://sentiments.cc). Aggregate stats only — uploads are signed by a public key you control so the server can verify the source without learning anything about your sessions.
 
 ![Dashboard](docs/dashboard.png)
 
@@ -37,7 +37,7 @@ The client records the following per 5-minute slice of each conversation.
 | Claude model | Which model produced the assistant turns |
 | `cc_version` | Claude Code CLI version |
 
-Plus your GitHub handle, so uploads are attributable.
+Plus a public verification handle (your GitHub username when GitHub is linked, otherwise your GPG fingerprint) used only to verify signatures.
 
 ## What stays on your machine
 

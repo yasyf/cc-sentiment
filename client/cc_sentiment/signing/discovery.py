@@ -50,22 +50,6 @@ class KeyDiscovery:
         )
 
     @staticmethod
-    def ssh_key_usable(path: Path) -> bool:
-        if not KeyDiscovery.has_tool("ssh-keygen"):
-            return False
-        try:
-            result = subprocess.run(
-                ["ssh-keygen", "-y", "-f", str(path)],
-                capture_output=True,
-                text=True,
-                stdin=subprocess.DEVNULL,
-                timeout=2,
-            )
-        except subprocess.TimeoutExpired:
-            return False
-        return result.returncode == 0
-
-    @staticmethod
     def find_gpg_keys() -> tuple[GPGKeyInfo, ...]:
         if not KeyDiscovery.has_tool("gpg"):
             return ()
@@ -77,27 +61,6 @@ class KeyDiscovery:
             )
             for key in gnupg.GPG().list_keys(True)
         )
-
-    @staticmethod
-    def fetch_github_ssh_keys(username: str) -> tuple[str, ...]:
-        response = httpx.get(f"https://github.com/{username}.keys", timeout=10.0)
-        response.raise_for_status()
-        return tuple(line.strip() for line in response.text.splitlines() if line.strip())
-
-    @staticmethod
-    def fetch_github_gpg_keys(username: str) -> str:
-        response = httpx.get(f"https://github.com/{username}.gpg", timeout=10.0)
-        return response.text if response.status_code == 200 else ""
-
-    @staticmethod
-    def fetch_openpgp_key(fpr: str) -> str | None:
-        response = httpx.get(f"https://keys.openpgp.org/vks/v1/by-fingerprint/{fpr.upper()}", timeout=10.0)
-        if response.status_code == 200:
-            return response.text
-        if response.status_code == 404:
-            return None
-        response.raise_for_status()
-        return None
 
     @staticmethod
     def upload_openpgp_key(armored_key: str) -> tuple[str, dict[str, str]]:
