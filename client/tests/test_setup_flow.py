@@ -755,6 +755,31 @@ async def test_username_validation_persists_to_app_state(
     assert state.github_username == "alice"
 
 
+async def test_manual_gist_guide_appends_url_when_browser_unavailable(
+    auth_unauthorized, stub_discovery,
+):
+    route = SetupRoute(
+        route_id=RouteId.MANAGED_SSH_MANUAL_GIST,
+        title="Publish a managed SSH key in a gist",
+        detail="",
+        primary_label="Open GitHub gist guide",
+        secondary_label="",
+        publish_method=PublishMethod.GIST_MANUAL,
+        key_kind=KeyKind.SSH,
+        key_plan=GenerateSSHKey(),
+    )
+    stub_discovery(DiscoveryResult(
+        capabilities=_capabilities(has_ssh_keygen=True, can_open_browser=False),
+        identity=_identity("alice"),
+        recommended=route,
+    ))
+    state = AppState()
+    async with SetupHarness(state).run_test() as pilot:
+        screen = await wait_for_stage(pilot, SetupStage.PROPOSE)
+        body, _ = screen._guide_instructions(route)
+        assert "Open this URL manually: https://gist.github.com/" in body
+
+
 async def test_resume_pending_with_last_error_renders_error_in_guide(
     tmp_path: Path, auth_unauthorized, stub_discovery,
 ):

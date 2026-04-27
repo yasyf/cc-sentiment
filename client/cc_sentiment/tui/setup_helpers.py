@@ -84,6 +84,13 @@ class Clipboard:
 
 class Browser:
     @staticmethod
+    def available() -> bool:
+        try:
+            return webbrowser.get() is not None
+        except webbrowser.Error:
+            return False
+
+    @staticmethod
     def open(url: str) -> bool:
         try:
             return bool(webbrowser.open(url))
@@ -129,7 +136,7 @@ class CapabilityProbe:
             has_ssh_keygen=KeyDiscovery.has_tool("ssh-keygen"),
             has_brew=KeyDiscovery.has_brew(),
             can_clipboard=Clipboard.available(),
-            can_open_browser=True,
+            can_open_browser=Browser.available(),
         )
 
 

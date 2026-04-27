@@ -1279,21 +1279,32 @@ class SetupScreen(Dialog[bool]):
                 primary.label = "Check now"
 
     def _guide_instructions(self, route: SetupRoute) -> tuple[str, bool]:
+        can_open = self.discovery.capabilities.can_open_browser
         match route.publish_method:
             case PublishMethod.GIST_MANUAL:
                 steps = "\n".join(MANUAL_GIST_STEPS)
-                return f"{MANUAL_GIST_INTRO}\n\n{steps}\n\n{MANUAL_GIST_FOOTER}", False
+                body = f"{MANUAL_GIST_INTRO}\n\n{steps}\n\n{MANUAL_GIST_FOOTER}"
+                return self._maybe_append_url(body, GIST_NEW_URL, can_open), False
             case PublishMethod.GITHUB_SSH:
                 steps = "\n".join(GITHUB_SSH_GUIDE_STEPS)
-                return f"{GITHUB_SSH_GUIDE_INTRO}\n\n{steps}", False
+                return self._maybe_append_url(
+                    f"{GITHUB_SSH_GUIDE_INTRO}\n\n{steps}", GITHUB_SSH_NEW_URL, can_open,
+                ), False
             case PublishMethod.GITHUB_GPG:
                 steps = "\n".join(GITHUB_GPG_GUIDE_STEPS)
-                return f"{GITHUB_GPG_GUIDE_INTRO}\n\n{steps}", False
+                return self._maybe_append_url(
+                    f"{GITHUB_GPG_GUIDE_INTRO}\n\n{steps}", GITHUB_GPG_NEW_URL, can_open,
+                ), False
             case PublishMethod.OPENPGP:
                 email = self._resolved_email()
-                return OPENPGP_BEFORE_SEND.format(email=email or "your address"), False
+                body = OPENPGP_BEFORE_SEND.format(email=email or "your address")
+                return self._maybe_append_url(body, OPENPGP_UPLOAD_URL, can_open), False
             case _:
                 return "", False
+
+    @staticmethod
+    def _maybe_append_url(body: str, url: str, can_open: bool) -> str:
+        return body if can_open else f"{body}\n\nOpen this URL manually: {url}"
 
     async def _guide_clipboard_and_browser(self, route: SetupRoute) -> None:
         match route.publish_method:
