@@ -43,6 +43,7 @@
     "imperative_irritation": 1.0
   },
   "adapter_sha256": "c15b5e53708811d306d9db8fd2088efa4d79d9a99b0bb39ff9e29e2e5cf4e82d",
+  "smoke_eval_sha256": "9232cd0b4a9dc9041468e28cc99e2b7c2fa1b4bdcb581a5ac52ee4a7fa0aedbe",
   "mlx_lm_version": "0.31.3",
   "train_command": "uv run python -m harness.run_cascade --experiment-id c0_cascade_default --seed 1729 --config configs/c0_cascade_default.json",
   "notes": "DSPy optimizer-search cascade: tested bootstrap/copro/mipro/simba; MIPROv2 won val_exact_acc=0.895; LoRA distilled the MIPRO program (instructions+demos) on the base unsloth Gemma. Fixed the 'and again!' \u2192 1 mislabel (imperative_irritation tag: 0.182 \u2192 1.000). Shipped seed 1729 (exact=0.986); seed 42 had session_resume regression to 0.778. SIMBA prompt + DEMOS in protocol.py replaced with MIPRO outputs.",
