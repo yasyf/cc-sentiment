@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -233,8 +233,9 @@ class TestQueryMyStat:
 
     @pytest.mark.asyncio
     async def test_solo_contributor_returns_self_stat(self, db: Database) -> None:
+        recent = datetime.now(timezone.utc) - timedelta(days=1)
         await db.ingest(
-            [make_record(score=2, conv_id=f"c-{i}", bucket=i) for i in range(30)],
+            [make_record(score=2, conv_id=f"c-{i}", bucket=i, t=recent) for i in range(35)],
             "onlyuser",
             "github",
         )

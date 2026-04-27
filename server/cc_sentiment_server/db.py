@@ -342,16 +342,20 @@ class PeerStat(StatCandidate):
 
 @dataclass(frozen=True, slots=True)
 class AngriestHourStat(StatCandidate):
-    MIN_HOUR_RECORDS: ClassVar[int] = 5
+    MIN_HOUR_RECORDS: ClassVar[int] = 30
+    WINDOW_DAYS: ClassVar[int] = 30
+    UCB_Z: ClassVar[float] = 1.645
+    UCB_SIGMA: ClassVar[float] = 0.7
     QUERY: ClassVar[str] = """
     SELECT EXTRACT(HOUR FROM time AT TIME ZONE 'America/Los_Angeles')::int AS hour,
            AVG(sentiment_score)::float AS avg_score,
            COUNT(*)::int AS count
     FROM sentiment
     WHERE contributor_id = %(contributor_id)s
+      AND time > NOW() - make_interval(days => %(window_days)s)
     GROUP BY hour
     HAVING COUNT(*) >= %(min_records)s
-    ORDER BY avg_score ASC, count DESC
+    ORDER BY (AVG(sentiment_score)::float + %(z)s * %(sigma)s / SQRT(COUNT(*))) ASC
     LIMIT 1
     """
     FALLBACK_PRIORITY: ClassVar[float] = -1.0
@@ -375,7 +379,13 @@ class AngriestHourStat(StatCandidate):
     ) -> ScoredStat | None:
         row = await fetch_one(
             self.query,
-            {"contributor_id": contributor_id, "min_records": self.MIN_HOUR_RECORDS},
+            {
+                "contributor_id": contributor_id,
+                "min_records": self.MIN_HOUR_RECORDS,
+                "window_days": self.WINDOW_DAYS,
+                "z": self.UCB_Z,
+                "sigma": self.UCB_SIGMA,
+            },
         )
         match row:
             case (int(hour), float(_), int(count)) if count >= self.MIN_HOUR_RECORDS:

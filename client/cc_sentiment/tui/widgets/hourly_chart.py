@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+from statistics import mean
 from typing import ClassVar
 
 from textual.widgets import Static
@@ -15,21 +18,17 @@ class HourlyChart(Static):
     COLORS: ClassVar[dict[int, str]] = {1: "red", 2: "dark_orange", 3: "yellow", 4: "green", 5: "cyan"}
     Y_TICKS: ClassVar[dict[int, str]] = {5: "😄", 4: "🙂", 3: "😐", 2: "😕", 1: "😡"}
     X_LABELS: ClassVar[dict[int, str]] = {0: "12a", 6: "6a", 12: "12p", 18: "6p", 23: "11p"}
+    WINDOW_DAYS: ClassVar[int] = 30
 
     def update_chart(self, records: list[SentimentRecord]) -> None:
-        counts = [0] * 24
-        frustrated = [0] * 24
+        cutoff = datetime.now(timezone.utc) - timedelta(days=self.WINDOW_DAYS)
+        by_hour: dict[int, list[int]] = defaultdict(list)
         for r in records:
-            h = r.time.astimezone().hour
-            counts[h] += 1
-            if int(r.sentiment_score) <= 2:
-                frustrated[h] += 1
+            if r.time >= cutoff:
+                by_hour[r.time.astimezone().hour].append(int(r.sentiment_score))
 
-        max_f = max(frustrated)
         rows: list[int | None] = [
-            None if counts[h] == 0
-            else 5 if frustrated[h] == 0
-            else max(1, 5 - round(4 * frustrated[h] / max_f))
+            max(1, min(5, round(mean(scores)))) if (scores := by_hour.get(h)) else None
             for h in range(24)
         ]
 
