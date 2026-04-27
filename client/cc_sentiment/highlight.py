@@ -36,6 +36,9 @@ class Highlighter:
     MAX_SNIPPET_CHARS: ClassVar[int] = 60
     MAX_SNAP_DISTANCE: ClassVar[int] = 15
     FALLBACK_MIN_LEN: ClassVar[int] = 3
+    STRONG_NEGATIVE_THRESHOLD: ClassVar[int] = -3
+    NEGATIVE_TONE_MAX: ClassVar[int] = 2
+    POSITIVE_TONE_MIN: ClassVar[int] = 4
     PYTHON_LITERALS: ClassVar[frozenset[str]] = frozenset({"True", "False", "None"})
     PROFANITY_TOKENS: ClassVar[frozenset[str]] = frozenset(
         {
@@ -66,8 +69,9 @@ class Highlighter:
         {"not", "no", "never", "nothing", "hardly", "barely"}
     )
     SENTIMENT_POS: ClassVar[frozenset[str]] = frozenset(
-        {"ADJ", "ADV", "VERB", "INTJ", "NOUN"}
+        {"ADJ", "ADV", "VERB", "INTJ", "NOUN", "PROPN"}
     )
+    NOUN_LIKE_POS: ClassVar[frozenset[str]] = frozenset({"NOUN", "PROPN"})
 
     @classmethod
     def profanity_tokens_in(cls, text: str) -> list[str]:
@@ -96,7 +100,9 @@ class Highlighter:
             score = Lexicon.polarity(lemma)
             if score == 0:
                 continue
-            if tok.pos_ == "NOUN" and lemma not in Lexicon.DOMAIN_OVERRIDES:
+            if (tok.pos_ in cls.NOUN_LIKE_POS
+                and lemma not in Lexicon.DOMAIN_OVERRIDES
+                and score > cls.STRONG_NEGATIVE_THRESHOLD):
                 continue
             if cls.is_negated(tokens, i):
                 score = -score
@@ -133,7 +139,7 @@ class Highlighter:
         score: int,
     ) -> list[HighlightSpan]:
         spans: list[HighlightSpan] = []
-        if score <= 2:
+        if score <= cls.NEGATIVE_TONE_MAX:
             spans.extend(
                 HighlightSpan(m.start(), m.end(), "red", priority=3)
                 for m in FRUSTRATION_PATTERN.finditer(full)
@@ -153,11 +159,17 @@ class Highlighter:
             polarity = Lexicon.polarity(lemma)
             if polarity == 0:
                 continue
-            if tok.pos_ == "NOUN" and lemma not in Lexicon.DOMAIN_OVERRIDES:
+            if (tok.pos_ in cls.NOUN_LIKE_POS
+                and lemma not in Lexicon.DOMAIN_OVERRIDES
+                and polarity > cls.STRONG_NEGATIVE_THRESHOLD):
                 continue
             color = "green" if polarity > 0 else "red"
             if cls.is_negated(tokens, i):
                 color = "red" if color == "green" else "green"
+            if score <= cls.NEGATIVE_TONE_MAX and color == "green":
+                continue
+            if score >= cls.POSITIVE_TONE_MIN and color == "red":
+                continue
             spans.append(HighlightSpan(start, end, color, priority=2))
         return spans
 

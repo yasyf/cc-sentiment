@@ -123,11 +123,41 @@ def test_collect_candidates_tags_profanity_and_lemmas(real_lexicon):
         FakeToken(idx=28, text="is", pos_="AUX", lemma_="be"),
         FakeToken(idx=31, text="broken", pos_="ADJ", lemma_="broken"),
     ]
-    candidates = Highlighter.collect_candidates(full, tokens, score=2)
+    candidates = Highlighter.collect_candidates(full, tokens, score=3)
     colors = {(c.start, c.color) for c in candidates}
     assert (8, "green") in colors
     assert (24, "red") in colors
     assert (31, "red") in colors
+
+
+def test_collect_candidates_tone_gates_positive_words_in_negative_messages(real_lexicon):
+    full = "fix it perfect"
+    tokens = [
+        FakeToken(idx=0, text="fix", pos_="VERB", lemma_="fix"),
+        FakeToken(idx=4, text="it", pos_="PRON", lemma_="it"),
+        FakeToken(idx=7, text="perfect", pos_="ADJ", lemma_="perfect"),
+    ]
+    candidates = Highlighter.collect_candidates(full, tokens, score=1)
+    colors = {(c.start, c.color) for c in candidates}
+    assert (0, "green") not in colors
+    assert (7, "green") not in colors
+
+
+def test_collect_candidates_promotes_strong_negative_nouns(real_lexicon):
+    full = "you are an idiot"
+    tokens = [
+        FakeToken(idx=0, text="you", pos_="PRON", lemma_="you"),
+        FakeToken(idx=4, text="are", pos_="AUX", lemma_="be"),
+        FakeToken(idx=8, text="an", pos_="DET", lemma_="an"),
+        FakeToken(idx=11, text="idiot", pos_="NOUN", lemma_="idiot"),
+    ]
+    candidates = Highlighter.collect_candidates(full, tokens, score=1)
+    colors = {(c.start, c.color) for c in candidates}
+    assert (11, "red") in colors
+
+
+def test_message_polarity_counts_strong_negative_nouns(real_nlp, real_lexicon):
+    assert Highlighter.message_polarity("you are an idiot") <= -3
 
 
 def test_collect_candidates_catches_frustration_pattern_for_low_scores():
@@ -341,5 +371,5 @@ def test_collect_candidates_tags_incorrect_red_from_override(real_lexicon):
         FakeToken(idx=21, text="for", pos_="ADP", lemma_="for"),
         FakeToken(idx=25, text="tqdm", pos_="NOUN", lemma_="tqdm"),
     ]
-    candidates = Highlighter.collect_candidates(full, tokens, score=4)
+    candidates = Highlighter.collect_candidates(full, tokens, score=3)
     assert any(c.start == 11 and c.color == "red" for c in candidates)
