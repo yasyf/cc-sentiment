@@ -239,7 +239,7 @@ class CCSentimentApp(App[None]):
         if self.setup_only:
             await self._dismiss_boot_screen()
             await self.push_screen(
-                SetupScreen(self.state, final_label="Finish setup"),
+                SetupScreen(self.state),
                 lambda _: self.exit(),
             )
             return
@@ -429,7 +429,7 @@ class CCSentimentApp(App[None]):
 
         assert self.repo is not None
 
-        self._set_boot_status("Picking the best way to score on this Mac...")
+        self._set_boot_status("Picking the best way to score on this device...")
         try:
             engine = await anyio.to_thread.run_sync(EngineFactory.resolve, None)
         except ClaudeUnavailable as e:
@@ -470,7 +470,7 @@ class CCSentimentApp(App[None]):
                 if rate and rate > 0:
                     self._update_status(
                         f"[dim]Found [b]{bucket_count:,}[/] moments. "
-                        f"About {TimeFormat.format_duration(bucket_count / rate)} to score on this Mac.[/]"
+                        f"About {TimeFormat.format_duration(bucket_count / rate)} to score on this device.[/]"
                     )
                 else:
                     self._update_status(f"[dim]Found [b]{bucket_count:,}[/] moments.[/]")
@@ -493,7 +493,7 @@ class CCSentimentApp(App[None]):
             if needs_classifier:
                 if build_task is not None:
                     if not build_task.done():
-                        self._set_boot_status("Loading the local model on this Mac...")
+                        self._set_boot_status("Loading the local model on this device...")
                     try:
                         classifier = await build_task
                     except (TimeoutError, OSError, RuntimeError) as exc:

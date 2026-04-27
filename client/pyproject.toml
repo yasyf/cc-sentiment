@@ -63,10 +63,9 @@ debug = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = ["-m", "not slow and not integration"]
+addopts = ["-m", "not slow"]
 markers = [
     "slow: opt-in MLX-backed smoke-eval (requires Apple Silicon and the shipped adapter)",
-    "integration: requires external services (mitmproxy, real API, real LLM); skipped by default, opt-in with -m integration",
 ]
 
 [tool.cibuildwheel]

@@ -1,22 +1,17 @@
 from __future__ import annotations
 
-import json
-import os
-import shutil
 import subprocess
-import tempfile
+import sys
 from contextlib import suppress
-from pathlib import Path
+from dataclasses import replace
 from time import monotonic
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import anyio
 import anyio.to_thread
 import httpx
-from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
-from textual.content import Content
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.css.query import NoMatches
@@ -24,7 +19,6 @@ from textual.reactive import reactive
 from textual.widgets import (
     Button,
     ContentSwitcher,
-    DataTable,
     Input,
     RadioButton,
     RadioSet,
@@ -32,13 +26,12 @@ from textual.widgets import (
 )
 from textual.worker import Worker
 
-from cc_sentiment.engines import EngineFactory
-from cc_sentiment.hardware import Hardware
 from cc_sentiment.models import (
     AppState,
     ContributorId,
     GistConfig,
     GPGConfig,
+    PendingSetupModel,
     SSHConfig,
 )
 from cc_sentiment.signing import (
@@ -48,29 +41,50 @@ from cc_sentiment.signing import (
     SSHBackend,
     SSHKeyInfo,
 )
-from cc_sentiment.tui import setup_state
-from cc_sentiment.tui.format import TimeFormat
 from cc_sentiment.tui.screens.dialog import Dialog
+from cc_sentiment.tui.setup_helpers import (
+    GIST_NEW_URL,
+    GITHUB_GPG_NEW_URL,
+    GITHUB_SSH_NEW_URL,
+    OPENPGP_UPLOAD_URL,
+    Browser,
+    Clipboard,
+    DiscoveryRunner,
+    GistDiscovery,
+    IdentityProbe,
+    IssueUrl,
+    Sanitizer,
+    SetupRoutePlanner,
+)
 from cc_sentiment.tui.setup_state import (
-    DiscoveryState,
-    DoneDisplayState,
-    GenerationMode,
-    RemoteCheckRow,
-    RemoteCheckState,
-    RetryTarget,
+    PENDING_PROPAGATION_WINDOW_SECONDS,
+    DiscoverRow,
+    DiscoverRowState,
+    DiscoveryResult,
+    ExistingGPGKey,
+    ExistingSSHKey,
+    GenerateGPGKey,
+    GenerateSSHKey,
+    IdentityDiscovery,
+    KeyKind,
+    PendingSetup,
+    PublishMethod,
+    ResolvedGPGKey,
+    ResolvedKey,
+    ResolvedSSHKey,
+    RouteId,
     SetupActionState,
+    SetupAggregate,
+    SetupRoute,
     SetupStage,
     Tone,
-    UploadOption,
-    UploadPlanState,
-    VerificationAction,
+    UsernameSource,
     VerificationPollState,
-    VerificationState,
+    WorkStep,
+    WorkStepState,
 )
-from cc_sentiment.tui.status import AutoSetup, StatusEmitter
 from cc_sentiment.tui.widgets import (
     DoneBranch,
-    KeyPreview,
     PendingStatus,
     StepActions,
     StepBody,
@@ -85,66 +99,172 @@ from cc_sentiment.upload import (
     Uploader,
 )
 
-__all__ = ["SetupScreen", "SetupStage", "VerificationState"]
-
+__all__ = ["SetupScreen", "SetupStage"]
 
 Config = SSHConfig | GPGConfig | GistConfig
 
 
-class SetupScreen(Dialog[bool]):
-    REMOTE_TONE_STYLES: ClassVar[dict[Tone, str]] = {
-        Tone.SUCCESS: "$success",
-        Tone.WARNING: "$warning",
-        Tone.MUTED: "dim",
-    }
-    DONE_FOCUS_CHAIN: ClassVar[tuple[str, ...]] = (
-        "#done-btn",
-        "#pending-retry",
-        "#failed-retry",
-        "#pending-exit",
-        "#failed-exit",
-    )
+PUBLIC_LOCATION_LABEL: dict[PublishMethod, str] = {
+    PublishMethod.GIST_AUTO: "GitHub gist",
+    PublishMethod.GIST_MANUAL: "GitHub gist",
+    PublishMethod.GITHUB_SSH: "GitHub SSH keys",
+    PublishMethod.GITHUB_GPG: "GitHub GPG keys",
+    PublishMethod.OPENPGP: "keys.openpgp.org",
+}
 
+DISCOVER_TITLE = "Setting up private signing"
+DISCOVER_BODY = (
+    "cc-sentiment signs uploads so sentiments.cc can verify they came from this device. "
+    "The private key stays here. Public stats are aggregated, "
+    "and your conversations are not uploaded."
+)
+DISCOVER_VERIFIED_COPY = "Found a working public key. No setup needed."
+DISCOVER_NO_MATCH_COPY = (
+    "No public key matched this device yet. We'll suggest the safest way to create or publish one."
+)
+SAVED_KEY_INVALID_COPY_1 = "The saved public key could not be verified anymore."
+SAVED_KEY_INVALID_COPY_2 = "We'll help publish a new public key or choose another local key."
+SAVED_KEY_TEMPORARY_COPY = (
+    "sentiments.cc is having trouble. We'll keep your setup and you can retry later."
+)
+
+USERNAME_TITLE = "GitHub username"
+USERNAME_BODY = (
+    "Optional, but useful for GitHub gist verification. "
+    "It is used only to find a public key; stats stay aggregate."
+)
+USERNAME_PLACEHOLDER = "yasyf"
+USERNAME_ERROR_EMPTY = "Enter a GitHub username, or choose GPG only."
+USERNAME_ERROR_NOT_FOUND = "GitHub user \u201c{user}\u201d wasn't found."
+USERNAME_ERROR_UNREACHABLE = "Couldn't reach GitHub. Retry, or continue with GPG only."
+
+PROPOSE_TITLE = "Recommended setup"
+PROPOSE_BODY = (
+    "We only need a public key that sentiments.cc can read. "
+    "The private key stays on this device, and uploaded stats stay aggregate."
+)
+
+OPENPGP_EMAIL_LABEL = "Verification email"
+OPENPGP_EMAIL_HELP = "keys.openpgp.org sends a one-time email before publishing your public GPG key."
+OPENPGP_EMAIL_INFERRED = "Found {email} from a public commit. Use it only if you can open that inbox."
+OPENPGP_EMAIL_ERROR_EMPTY = "Use an email address you can open now."
+
+WORKING_TITLE = "Finishing setup"
+WORKING_BODY = "This may take a few seconds. We're publishing only the public key."
+WORKING_RECOVERABLE_FAILURE = "That automatic step didn't finish: {error}. We can switch to guided setup."
+
+GUIDE_TITLE = "Finish publishing the public key"
+GUIDE_BODY = (
+    "Complete the steps in your browser, then come back. "
+    "cc-sentiment will keep checking automatically."
+)
+
+MANUAL_GIST_INTRO = (
+    "GitHub does not reliably prefill new gists in every browser. "
+    "We copied the public key to your clipboard and listed the exact fields below."
+)
+MANUAL_GIST_STEPS = (
+    "1. Create a public gist.",
+    "2. Description: cc-sentiment public key",
+    "3. File name: cc-sentiment.pub",
+    "4. Paste the public key from your clipboard.",
+    "5. Add a second file named README.md with the cc-sentiment note below.",
+    "6. Click Create public gist.",
+    "7. Come back here. We'll look for the gist and verify it.",
+)
+MANUAL_GIST_FOOTER = (
+    "README.md content:\n\n"
+    "# cc-sentiment public key\n\n"
+    "The private key stays on this device. Only aggregate sentiment metrics are uploaded. "
+    "Conversation text, file paths, prompts, tool inputs, and tool outputs are not uploaded."
+)
+
+MANUAL_GIST_NOT_FOUND = (
+    "We couldn't find the gist automatically. "
+    "Paste the gist URL and we'll verify it directly."
+)
+MANUAL_GIST_DESCRIPTION_MISMATCH = (
+    "The gist exists, but its description must be exactly "
+    "\u201ccc-sentiment public key\u201d so sentiments.cc knows it is intentional."
+)
+
+GITHUB_SSH_GUIDE_INTRO = (
+    "This adds a public SSH key to your GitHub account. "
+    "Only continue if you're comfortable with that. "
+    "The private key stays on this device."
+)
+GITHUB_SSH_GUIDE_STEPS = (
+    "1. Title: cc-sentiment",
+    "2. Key type: Authentication Key",
+    "3. Paste the public key from your clipboard.",
+    "4. Click Add SSH key.",
+    "5. Return here; verification will continue automatically.",
+)
+
+GITHUB_GPG_GUIDE_INTRO = (
+    "This adds a public GPG key to your GitHub account. "
+    "It is used only so sentiments.cc can find a public verification key."
+)
+GITHUB_GPG_GUIDE_STEPS = (
+    "1. Paste the GPG public key from your clipboard.",
+    "2. Click Add GPG key.",
+    "3. Return here; verification will continue automatically.",
+)
+
+OPENPGP_BEFORE_SEND = (
+    "keys.openpgp.org will email {email}. "
+    "Click the link in that email to publish the public key."
+)
+OPENPGP_AFTER_SEND = (
+    "Verification email sent to {email}. "
+    "Open it, click the verification link, then return here. We'll keep checking."
+)
+OPENPGP_API_FAILURE = (
+    "keys.openpgp.org didn't accept the automatic request: {error}. "
+    "We opened the upload page and copied the public key to your clipboard."
+)
+
+RESUME_COPY = "Continuing setup where you left off."
+
+TOOLS_TITLE = "One tool is needed to finish setup"
+TOOLS_BODY = (
+    "cc-sentiment can do most of setup for you if GitHub CLI or GPG is installed. "
+    "Choose an option below."
+)
+TOOLS_GH_AUTH_DETAIL = (
+    "We'll run gh auth login. After you finish, cc-sentiment can create the gist automatically."
+)
+TOOLS_NO_BREW_BREW = "Install one of these, then return:\n\n  brew install gh\n  brew install gnupg"
+TOOLS_NO_BREW_GENERIC = (
+    "Install GitHub CLI or GPG with your system's package manager, then return."
+)
+
+FIX_TITLE = "Verification is still not working"
+FIX_BODY = (
+    "The public key is not visible yet, or sentiments.cc could not verify the test signature. "
+    "This is usually a propagation delay, a gist description mismatch, or a pasted-key mismatch."
+)
+FIX_HELP = "If this keeps happening, open a GitHub issue or reach out to @yasyf on Twitter/X."
+
+SETTINGS_TITLE = "Setup complete"
+SETTINGS_BODY = (
+    "cc-sentiment can now upload signed, aggregate sentiment metrics. "
+    "Conversation text, file paths, prompts, tool inputs, and tool outputs stay on this device."
+)
+
+
+class SetupScreen(Dialog[bool]):
     DEFAULT_CSS = Dialog.DEFAULT_CSS + """
-    SetupScreen > #dialog-box RadioSet {
-        width: 100%;
+    SetupScreen > #dialog-box RadioSet { width: 100%; }
+    SetupScreen > #dialog-box RadioButton { width: 100%; }
+    SetupScreen > #dialog-box .status-line { width: 100%; min-height: 1; margin: 0 0 1 0; }
+    SetupScreen > #dialog-box .step-card {
+        width: 100%; margin: 0 0 1 0; border: round $surface; padding: 0 1;
     }
-    SetupScreen > #dialog-box RadioButton {
-        width: 100%;
+    SetupScreen > #dialog-box .recommended-card {
+        width: 100%; margin: 0 0 1 0; border: round $accent; padding: 0 1;
     }
-    SetupScreen > #dialog-box #remote-checks,
-    SetupScreen > #dialog-box #done-summary,
-    SetupScreen > #dialog-box #done-payload,
-    SetupScreen > #dialog-box #done-eta {
-        width: 100%;
-    }
-    SetupScreen > #dialog-box #loading-activity {
-        margin: 0 0 1 0;
-    }
-    SetupScreen > #dialog-box #done-branch,
-    SetupScreen > #dialog-box #done-payload-lead,
-    SetupScreen > #dialog-box #done-instructions,
-    SetupScreen > #dialog-box #pending-status,
-    SetupScreen > #dialog-box #done-identify,
-    SetupScreen > #dialog-box #done-process {
-        width: 100%;
-    }
-    SetupScreen > #dialog-box .done-card {
-        width: 100%;
-        margin: 0 0 1 0;
-    }
-    SetupScreen > #dialog-box .done-card.success {
-        border: round $success;
-        border-title-color: $success;
-    }
-    SetupScreen > #dialog-box .done-card.warning {
-        border: round $warning;
-        border-title-color: $warning;
-    }
-    SetupScreen > #dialog-box .done-card.error {
-        border: round $error;
-        border-title-color: $error;
-    }
+    SetupScreen > #dialog-box .copy { width: 100%; }
     """
 
     BINDINGS = [
@@ -153,1265 +273,1387 @@ class SetupScreen(Dialog[bool]):
         Binding("ctrl+c", "cancel", "Quit", priority=True),
     ]
 
-    username: reactive[str] = reactive("")
-    selected_key: reactive[SSHKeyInfo | GPGKeyInfo | None] = reactive(None)
-    verification_state: reactive[VerificationState] = reactive(VerificationState.VERIFIED)
-    verification_ok: reactive[bool] = reactive(True)
+    PRIMARY_FOCUS_BY_STAGE: ClassVar[dict[SetupStage, str]] = {
+        SetupStage.DISCOVER: "#discover-retry",
+        SetupStage.PROPOSE: "#propose-go",
+        SetupStage.WORKING: "#working-guide",
+        SetupStage.GUIDE: "#guide-check",
+        SetupStage.TOOLS: "#tools-primary",
+        SetupStage.FIX: "#fix-retry",
+        SetupStage.SETTINGS: "#done-btn",
+    }
 
-    def __init__(
-        self,
-        state: AppState,
-        final_label: str = "Contribute my stats",
-    ) -> None:
+    is_pending: reactive[bool] = reactive(False)
+
+    def __init__(self, state: AppState) -> None:
         super().__init__()
         self.state = state
-        self.final_label = final_label
-        self.actions = SetupActionState()
-        self.transition_history = [SetupStage.LOADING]
-        self.discovery = DiscoveryState()
-        self.remote_check = RemoteCheckState()
-        self.upload_plan = UploadPlanState()
-        self.done_display = DoneDisplayState()
-        self.verification_poll = VerificationPollState(started_at=monotonic())
+        self.aggregate = SetupAggregate(verification_poll=VerificationPollState(started_at=monotonic()))
         self.verify_worker: Worker[None] | None = None
+
+    @property
+    def actions(self) -> SetupActionState:
+        return self.aggregate.actions
+
+    @property
+    def discovery(self) -> DiscoveryResult:
+        return self.aggregate.discovery
+
+    @property
+    def selected_route(self) -> SetupRoute | None:
+        return self.aggregate.selected_route
+
+    @selected_route.setter
+    def selected_route(self, value: SetupRoute | None) -> None:
+        self.aggregate.selected_route = value
+
+    @property
+    def pending(self) -> PendingSetup | None:
+        return self.aggregate.pending
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog-box"):
-            with ContentSwitcher(initial=SetupStage.LOADING.value):
-                yield from self.compose_loading_step()
-                yield from self.compose_username_step()
-                yield from self.compose_discovery_step()
-                yield from self.compose_remote_step()
-                yield from self.compose_upload_step()
-                yield from self.compose_done_step()
+            with ContentSwitcher(initial=SetupStage.DISCOVER.value):
+                yield from self._compose_discover()
+                yield from self._compose_propose()
+                yield from self._compose_working()
+                yield from self._compose_guide()
+                yield from self._compose_tools()
+                yield from self._compose_fix()
+                yield from self._compose_settings()
 
     @property
     def current_stage(self) -> SetupStage:
         return SetupStage(self.query_one(ContentSwitcher).current)
 
-    @property
-    def transition_history_names(self) -> list[str]:
-        return [stage.name.lower() for stage in self.transition_history]
-
-    def transition_to(self, stage: SetupStage, preserve_remote: bool = False) -> None:
-        previous = self.current_stage
-        if stage is previous:
+    def transition_to(self, stage: SetupStage) -> None:
+        if self.current_stage is stage:
             self.call_after_refresh(self._focus_step_target, stage)
             return
-        match stage:
-            case SetupStage.LOADING:
-                self._reset_discovery_stage()
-                self._reset_remote_stage()
-                self._reset_upload_stage()
-                self._reset_done_stage()
-            case SetupStage.USERNAME | SetupStage.DISCOVERY:
-                self._reset_remote_stage()
-                self._reset_upload_stage()
-                self._reset_done_stage()
-            case SetupStage.REMOTE:
-                if previous is not SetupStage.UPLOAD and not preserve_remote:
-                    self._reset_remote_stage()
-                self._reset_upload_stage()
-                self._reset_done_stage()
-            case SetupStage.UPLOAD:
-                self._reset_upload_stage()
-                self._reset_done_stage()
-            case SetupStage.DONE:
-                pass
         self.query_one(ContentSwitcher).current = stage.value
-        self.transition_history.append(stage)
         self.call_after_refresh(self._focus_step_target, stage)
 
+    def _compose_discover(self) -> ComposeResult:
+        with Vertical(id=SetupStage.DISCOVER.value):
+            yield StepHeader(DISCOVER_TITLE, DISCOVER_BODY)
+            yield StepBody(
+                Static("", id="discover-rows", classes="copy"),
+                Input(placeholder=USERNAME_PLACEHOLDER, id="username-input"),
+                Static("", id="username-status", classes="status-line muted"),
+                Static("", id="discover-status", classes="status-line muted"),
+                StepActions(
+                    Button("Use GPG only", id="username-skip", variant="default"),
+                    Button("Continue", id="username-next", variant="default"),
+                    primary=Button("Try saved key again", id="discover-retry", variant="primary"),
+                ),
+            )
+
+    def _compose_propose(self) -> ComposeResult:
+        with Vertical(id=SetupStage.PROPOSE.value):
+            yield StepHeader(PROPOSE_TITLE, PROPOSE_BODY)
+            yield StepBody(
+                Static("", id="propose-recommendation", classes="copy"),
+                Static("", id="propose-detail", classes="copy"),
+                Static("", id="propose-safety", classes="status-line muted"),
+                Static("", id="propose-warning", classes="status-line warning"),
+                Static("Other options", id="propose-alt-header", classes="copy muted"),
+                RadioSet(id="propose-alternatives"),
+                Static(OPENPGP_EMAIL_LABEL, id="propose-email-label", classes="copy"),
+                Static(OPENPGP_EMAIL_HELP, id="propose-email-help", classes="status-line muted"),
+                Static("", id="propose-email-inferred", classes="status-line muted"),
+                Input(placeholder="email@example.com", id="propose-email"),
+                Static("", id="propose-status", classes="status-line muted"),
+                StepActions(
+                    Button("Use a different key", id="propose-alt", variant="default"),
+                    primary=Button("Continue", id="propose-go", variant="primary"),
+                ),
+            )
+
+    def _compose_working(self) -> ComposeResult:
+        with Vertical(id=SetupStage.WORKING.value):
+            yield StepHeader(WORKING_TITLE, WORKING_BODY)
+            yield StepBody(
+                Static("", id="working-steps", classes="copy"),
+                Static("", id="working-status", classes="status-line muted"),
+                StepActions(
+                    Button("Choose another method", id="working-redo", variant="default"),
+                    Button("Try again", id="working-retry", variant="default"),
+                    primary=Button("Show guided setup", id="working-guide", variant="primary"),
+                ),
+            )
+
+    def _compose_guide(self) -> ComposeResult:
+        with Vertical(id=SetupStage.GUIDE.value):
+            yield StepHeader(GUIDE_TITLE, GUIDE_BODY)
+            yield StepBody(
+                Static("", id="guide-instructions", classes="copy"),
+                Static("", id="guide-status-panel", classes="copy muted"),
+                Input(placeholder="https://gist.github.com/<user>/<id>", id="guide-gist-url"),
+                Static("", id="guide-error", classes="status-line error"),
+                PendingStatus("", id="guide-pending"),
+                StepActions(
+                    Button("Exit, continue later", id="guide-exit", variant="default"),
+                    Button("Choose another method", id="guide-redo", variant="default"),
+                    Button("Open page again", id="guide-open", variant="default"),
+                    primary=Button("Check now", id="guide-check", variant="primary"),
+                ),
+            )
+
+    def _compose_tools(self) -> ComposeResult:
+        with Vertical(id=SetupStage.TOOLS.value):
+            yield StepHeader(TOOLS_TITLE, TOOLS_BODY)
+            yield StepBody(
+                Static("", id="tools-detail", classes="copy"),
+                Static("", id="tools-status", classes="status-line muted"),
+                StepActions(
+                    Button("", id="tools-tertiary", variant="default"),
+                    Button("", id="tools-secondary", variant="default"),
+                    primary=Button("", id="tools-primary", variant="primary"),
+                ),
+            )
+
+    def _compose_fix(self) -> ComposeResult:
+        with Vertical(id=SetupStage.FIX.value):
+            yield StepHeader(FIX_TITLE, FIX_BODY)
+            yield StepBody(
+                Static("", id="fix-error", classes="status-line error"),
+                Static(FIX_HELP, id="fix-help", classes="copy muted"),
+                StepActions(
+                    Button("Choose another method", id="fix-redo", variant="default"),
+                    Button("Open GitHub issue", id="fix-open-issue", variant="default"),
+                    Button("Back to guide", id="fix-back-guide", variant="default"),
+                    primary=Button("Try again", id="fix-retry", variant="primary"),
+                ),
+            )
+
+    def _compose_settings(self) -> ComposeResult:
+        with Vertical(id=SetupStage.SETTINGS.value):
+            yield StepHeader(SETTINGS_TITLE, SETTINGS_BODY)
+            yield StepBody(DoneBranch(id="done-branch"))
+
+    def on_mount(self) -> None:
+        self.query_one("#propose-alternatives", RadioSet).display = False
+        self.query_one("#propose-email", Input).display = False
+        self.query_one("#propose-email-label", Static).display = False
+        self.query_one("#propose-email-help", Static).display = False
+        self.query_one("#propose-email-inferred", Static).display = False
+        self.query_one("#propose-warning", Static).display = False
+        self.query_one("#guide-gist-url", Input).display = False
+        self.query_one("#username-input", Input).display = False
+        self.query_one("#username-next", Button).display = False
+        self.query_one("#username-skip", Button).display = False
+        self.query_one("#discover-retry", Button).display = False
+        self.set_interval(1.0, self._tick_pending)
+        self.set_interval(0.5, self._poll_due)
+        self.start_setup()
+
+    def on_unmount(self) -> None:
+        if self.verify_worker is not None:
+            self.verify_worker.cancel()
+        if self.aggregate.working.worker is not None:
+            self.aggregate.working.worker.cancel()
+
+    def action_activate_primary(self) -> None:
+        with suppress(NoMatches, StopIteration):
+            next(self.query(f"#{self.current_stage.value} Button.-primary").results(Button)).press()
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
     def _focus_widget(self, widget: Input | Button | RadioSet) -> None:
-        if getattr(widget, "disabled", False) or not widget.display:
+        if not widget.display or widget.disabled:
             return
         widget.focus()
 
-    def _focus_step_target(self, stage: SetupStage | str) -> None:
-        target = stage if isinstance(stage, SetupStage) else SetupStage(stage)
-        match target:
-            case SetupStage.USERNAME:
-                self._focus_widget(self.query_one("#username-input", Input))
-            case SetupStage.DISCOVERY:
-                self._focus_widget(self.query_one("#discovery-next", Button))
-            case SetupStage.REMOTE:
-                self._focus_widget(self.query_one("#remote-next", Button))
-            case SetupStage.UPLOAD:
-                self._focus_widget(self.query_one("#upload-go", Button))
-            case SetupStage.DONE:
-                for selector in self.DONE_FOCUS_CHAIN:
-                    with suppress(NoMatches):
-                        self._focus_widget(self.query_one(selector, Button))
-                        return
-
-    def _current_primary_button(self) -> Button | None:
-        with suppress(NoMatches, StopIteration):
-            step = self.query_one(f"#{self.current_stage.value}", Vertical)
-            return next(
-                button
-                for button in step.query(Button).results(Button)
-                if button.variant == "primary"
-            )
-        return None
-
-    def watch_verification_state(self, _: VerificationState) -> None:
-        self._render_done_branch()
-
-    def watch_verification_ok(self, _: bool) -> None:
-        self._render_done_branch()
-
-    def _set_tone(self, widget: Static, text: str | Text, tone: Tone = Tone.MUTED) -> None:
-        for member in Tone:
-            widget.remove_class(member.value)
-        widget.add_class(tone.value)
-        widget.update(text)
-
-    @staticmethod
-    def _display_fingerprint(fingerprint: str) -> str:
-        if not all(c in "0123456789abcdefABCDEF" for c in fingerprint):
-            return fingerprint
-        return (
-            f"{fingerprint[:4]} {fingerprint[4:8]} ... {fingerprint[-8:-4]} {fingerprint[-4:]}"
-            if len(fingerprint) == 40
-            else " ".join(fingerprint[i:i + 4] for i in range(0, len(fingerprint), 4))
-        )
-
-    @classmethod
-    def _config_summary_text(cls, config: Config) -> str:
-        match config:
-            case SSHConfig(contributor_id=cid) | GistConfig(contributor_id=cid):
-                return f"Uploading as @{cid} on the dashboard."
-            case GPGConfig(contributor_type="github", contributor_id=cid):
-                return f"Uploading as @{cid} on the dashboard."
-            case GPGConfig(contributor_type="gpg"):
-                return "Uploading without a GitHub link. The dashboard will identify you by your key."
-
-    def _key_radio_label(self, key: SSHKeyInfo | GPGKeyInfo) -> Text:
-        match key:
-            case SSHKeyInfo(path=path, algorithm=algo, comment=comment):
-                return Text(f"SSH key  ·  {algo}  ·  {comment or path.name}")
-            case GPGKeyInfo(email=email, algo=algo):
-                return Text(f"GPG key  ·  {algo}  ·  {email or 'no email'}")
-
-    def _clear_radio_set(self, radio: RadioSet) -> None:
-        radio._pressed_button = None
-        radio.display = False
-        radio.remove_children()
-
-    def _step_header(self, stage: SetupStage) -> StepHeader:
-        return self.query_one(f"#{stage.value}", Vertical).query_one(StepHeader)
-
-    def _reset_discovery_stage(self) -> None:
-        radio = self.query_one("#key-select", RadioSet)
-        self.discovery.reset()
-        self.selected_key = None
-        self._clear_radio_set(radio)
-        self._set_tone(
-            self.query_one("#discovery-status", Static),
-            "Looking for keys we can use...",
-        )
-        self.query_one("#discovery-help", Static).update("")
-        self.query_one("#discovery-next", Button).disabled = True
-
-    def _reset_remote_stage(self) -> None:
-        self.remote_check.reset()
-        self._step_header(SetupStage.REMOTE).set_content(
-            "Confirming your key works",
-            "We're checking that sentiments.cc can find your key online — that's how it confirms each upload is from you.",
-        )
-        self._render_remote_checks([])
-        self._set_tone(
-            self.query_one("#remote-status", Static),
-            "Checking with sentiments.cc...",
-        )
-        self.query_one("#remote-next", Button).disabled = True
-
-    def _reset_upload_stage(self) -> None:
-        radio = self.query_one("#upload-options", RadioSet)
-        self.upload_plan.reset()
-        self._clear_radio_set(radio)
-        self.query_one("#upload-key-text", KeyPreview).text = ""
-        self._set_tone(self.query_one("#upload-result", Static), "")
-        go_button = self.query_one("#upload-go", Button)
-        go_button.label = "Publish my key"
-        go_button.disabled = True
-
-    def _reset_done_stage(self) -> None:
-        self.done_display.reset()
-        self.verification_poll.restart(monotonic())
-        self._cancel_verify_worker()
-        self._render_done_branch()
-
-    @staticmethod
-    def _format_pending_elapsed(seconds: float) -> str:
-        elapsed = max(0, int(seconds))
-        return f"{elapsed // 60}:{elapsed % 60:02d}"
-
-    def _pending_label(self) -> str:
-        elapsed = self._format_pending_elapsed(monotonic() - self.verification_poll.started_at)
-        return f"Waiting for your key to propagate… {elapsed}"
-
-    def _manual_destination_url(self) -> str:
-        return (
-            "https://github.com/settings/ssh/new"
-            if isinstance(self.selected_key, SSHKeyInfo)
-            else "https://github.com/settings/gpg/new"
-        )
-
-    def _instructions_text(self) -> str:
-        failure_prefix = (
-            f"{self.done_display.upload_failure_text}\n\n"
-            if self.verification_state is VerificationState.FAILED
-            and self.done_display.upload_failure_text
-            else ""
-        )
-        unreachable_prefix = (
-            "sentiments.cc is temporarily unreachable right now. "
-            if self.done_display.verification_detail == "temporarily unreachable"
-            else ""
-        )
-        match self.done_display.verification_action:
-            case VerificationAction.MANUAL:
-                suffix = (
-                    f"Paste your public key at {self._manual_destination_url()}, "
-                    "then retry once GitHub shows it."
-                )
-            case VerificationAction.OPENPGP:
-                suffix = (
-                    "Check your email for the keys.openpgp.org verification link, "
-                    "finish publishing the key, then retry."
-                )
-            case VerificationAction.GITHUB_SSH | VerificationAction.GITHUB_GPG:
-                suffix = "Give GitHub a moment to propagate your public key, then retry."
-            case VerificationAction.GIST:
-                suffix = (
-                    "Keep your cc-sentiment gist public so the dashboard can read the key, "
-                    "then retry."
-                )
-            case _:
-                suffix = "Wait a moment for your public key to propagate, then retry."
-        return failure_prefix + unreachable_prefix + suffix
-
-    def _done_branch(self) -> DoneBranch:
-        return self.query_one("#done-branch", DoneBranch)
-
-    def _visible_verification_state(self) -> VerificationState:
-        return (
-            self.verification_state
-            if self.verification_ok or self.verification_state is not VerificationState.VERIFIED
-            else VerificationState.PENDING
-        )
-
-    def _render_done_branch(self) -> None:
-        with suppress(NoMatches):
-            match self._visible_verification_state():
-                case VerificationState.VERIFIED:
-                    self._step_header(SetupStage.DONE).set_content(
-                        "You're all set",
-                        "Here's how your data flows.",
-                        Tone.SUCCESS,
-                    )
-                case VerificationState.PENDING:
-                    self._step_header(SetupStage.DONE).set_content(
-                        "Waiting for your key",
-                        "The dashboard can see your setup, but it can't verify this key yet.",
-                        Tone.WARNING,
-                    )
-                case VerificationState.FAILED:
-                    self._step_header(SetupStage.DONE).set_content(
-                        "We couldn't verify your key",
-                        "The dashboard still can't read this public key. "
-                        "Check the instructions, then retry.",
-                        Tone.ERROR,
-                    )
-        with suppress(NoMatches):
-            branch = self._done_branch()
-            branch.summary_text = self.done_display.summary_text
-            branch.identify_text = self.done_display.identify_text
-            branch.process_text = self.done_display.process_text
-            branch.eta_text = self.done_display.eta_text
-            branch.instructions_text = self._instructions_text()
-            branch.pending_label = self._pending_label()
-            branch.verification_state = self.verification_state
-            branch.verification_ok = self.verification_ok
-            if self.current_stage is SetupStage.DONE:
-                self.set_timer(0.01, lambda: self._focus_step_target(SetupStage.DONE))
-
-    def _set_verification_branch(
-        self,
-        state: VerificationState,
-        detail: str | None = None,
-    ) -> None:
-        if detail is not None:
-            self.done_display.verification_detail = detail
-        self.verification_state = state
-        self.verification_ok = state is VerificationState.VERIFIED
-        self._render_done_branch()
-
-    def _enter_done(
-        self,
-        state: VerificationState,
-        action: VerificationAction | None = None,
-        *,
-        verify: bool = False,
-        restart_poll: bool = True,
-    ) -> None:
-        if restart_poll:
-            self.verification_poll.restart(monotonic())
-        self.done_display.verification_detail = ""
-        if action is not None:
-            self.done_display.verification_action = action
-        self._set_verification_branch(state)
-        self._populate_done_info()
-        self.transition_to(SetupStage.DONE)
-        self._render_done_branch()
-        if verify:
-            self.verify_server_config()
-
-    def _on_verify_result(self, result: AuthResult) -> None:
-        self.done_display.clear_failure()
-        match result:
-            case AuthOk():
-                self.verification_poll.clear()
-                self._set_verification_branch(VerificationState.VERIFIED)
-            case AuthUnauthorized():
-                if monotonic() - self.verification_poll.started_at < setup_state.PENDING_PROPAGATION_WINDOW_SECONDS:
-                    self.verification_poll.schedule_next(monotonic())
-                    self._set_verification_branch(VerificationState.PENDING)
-                else:
-                    self.verification_poll.clear()
-                    self._set_verification_branch(VerificationState.FAILED)
-            case AuthUnreachable() | AuthServerError():
-                self.done_display.verification_detail = "temporarily unreachable"
-                self.verification_poll.schedule_next(monotonic())
-                self._set_verification_branch(VerificationState.PENDING)
-
-    def _refresh_pending_status(self) -> None:
-        if self._visible_verification_state() is not VerificationState.PENDING:
+    def _focus_step_target(self, stage: SetupStage) -> None:
+        if (selector := self.PRIMARY_FOCUS_BY_STAGE.get(stage)) is None:
             return
         with suppress(NoMatches):
-            self._done_branch().pending_label = self._pending_label()
+            target = self.query_one(selector, Button)
+            self._focus_widget(target)
 
-    def _cancel_verify_worker(self) -> None:
-        if self.verify_worker is not None:
-            self.verify_worker.cancel()
-        self.verify_worker = None
-
-    def _poll_verification_if_due(self) -> None:
-        if self.current_stage is not SetupStage.DONE:
+    @work()
+    async def start_setup(self) -> None:
+        if await self._maybe_resume_pending():
             return
-        if self._visible_verification_state() is not VerificationState.PENDING:
-            return
-        if self.verify_worker is not None and self.verify_worker.is_running:
-            return
-        if not self.verification_poll.due(monotonic()):
-            return
-        self.verification_poll.clear()
-        self.verify_server_config()
-
-    def _mount_discovery_options(self, radio_children: list[RadioButton]) -> None:
-        radio = self.query_one("#key-select", RadioSet)
-        radio.mount_all(radio_children)
-        radio.display = True
-
-    def _cancel_remote_check(self) -> None:
-        self.remote_check.cancel()
-
-    def _remote_check_is_current(
-        self,
-        generation: int,
-        key: SSHKeyInfo | GPGKeyInfo | None,
-    ) -> bool:
-        return generation == self.remote_check.generation and key == self.selected_key
-
-    def _configure_remote_checks_table(self) -> DataTable:
-        table = self.query_one("#remote-checks", DataTable)
-        if not table.ordered_columns:
-            table.add_columns("glyph", "check", "detail")
-        return table
-
-    def _render_remote_checks(self, rows: list[RemoteCheckRow]) -> None:
-        table = self._configure_remote_checks_table()
-        table.clear(columns=False)
-        for row in rows:
-            token = self.REMOTE_TONE_STYLES.get(row.tone, "")
-            table.add_row(*(
-                Content.from_markup(f"[{token}]{value}[/]") if token else value
-                for value in (row.glyph, row.check, row.detail)
-            ))
-
-    def _set_remote_pending(self, generation: int, key: SSHKeyInfo | GPGKeyInfo | None) -> None:
-        if not self._remote_check_is_current(generation, key):
-            return
-        if self.current_stage is SetupStage.REMOTE:
-            self._step_header(SetupStage.REMOTE).set_content(
-                "Confirming your key works",
-                "We're checking that sentiments.cc can find your key online — that's how it confirms each upload is from you.",
-            )
-            self._render_remote_checks([])
-            self._set_tone(
-                self.query_one("#remote-status", Static),
-                "Checking with sentiments.cc...",
-            )
-            self.query_one("#remote-next", Button).disabled = True
-            return
-        self._set_tone(
-            self.query_one("#discovery-status", Static),
-            "Checking with sentiments.cc...",
-        )
-        self.query_one("#discovery-next", Button).disabled = True
-
-    def _apply_remote_results(
-        self,
-        generation: int,
-        key: SSHKeyInfo | GPGKeyInfo | None,
-        results: list[RemoteCheckRow],
-        found: bool,
-        key_on_openpgp: bool,
-    ) -> None:
-        if not self._remote_check_is_current(generation, key):
-            return
-        self.remote_check.worker = None
-        self.remote_check.key_on_openpgp = key_on_openpgp
-        self._render_remote_checks(results)
-        self.remote_check.key_on_remote = found
-        self.actions.discovery_action_running = False
-        if found:
-            self._step_header(SetupStage.REMOTE).set_content(
-                "Your key is ready",
-                "sentiments.cc can already see this key online. You're good.",
-                Tone.SUCCESS,
-            )
-            self._set_tone(
-                self.query_one("#remote-status", Static),
-                "You're set up. Ready to upload.",
-                Tone.SUCCESS,
-            )
-            if self.current_stage is SetupStage.REMOTE:
-                self._enable_remote_next()
+        match await self._verify_saved_state():
+            case "ok":
                 return
-            self._save_and_finish()
-            return
-        if self.current_stage is not SetupStage.REMOTE:
-            self.transition_to(SetupStage.REMOTE, preserve_remote=True)
-        self._step_header(SetupStage.REMOTE).set_content(
-            "Almost there — let's publish your key",
-            "sentiments.cc couldn't find your key in any of the public places it looks. Let's add it to one.",
-            Tone.WARNING,
-        )
-        self._set_tone(
-            self.query_one("#remote-status", Static),
-            "Pick where to publish your key — the dashboard checks these spots.",
-            Tone.WARNING,
-        )
-        self._enable_remote_next()
+            case "temporary":
+                return
+            case "none" | "invalid":
+                pass
+        await self._run_discover_phase()
 
-    def compose_loading_step(self) -> ComposeResult:
-        with Vertical(id="step-loading"):
-            yield StepHeader(
-                "Setting things up...",
-                "We need a way to prove each upload is really from you. Checking for keys you've already set up.",
-            )
-            yield StepBody(
-                PendingStatus("", id="loading-activity"),
-            )
-
-    def compose_username_step(self) -> ComposeResult:
-        with Vertical(id="step-username"):
-            yield StepHeader(
-                "Who are you?",
-                "Tell us your GitHub username so we can find a key you've already published.",
-            )
-            yield StepBody(
-                Input(placeholder="GitHub username", id="username-input"),
-                Static("", id="username-status", classes="status-line muted"),
-                StepActions(
-                    Button("I don't use GitHub", id="username-skip", variant="default"),
-                    primary=Button("Next", id="username-next", variant="primary"),
-                ),
-            )
-
-    def compose_discovery_step(self) -> ComposeResult:
-        with Vertical(id="step-discovery"):
-            yield StepHeader(
-                "Choose a key on this Mac",
-                "Each upload gets a tiny signature so the dashboard knows it's really you. Pick which key to use.",
-            )
-            yield StepBody(
-                RadioSet(id="key-select"),
-                Static("", id="discovery-status", classes="status-line muted"),
-                StepActions(
-                    Button("Back", id="discovery-back", variant="default"),
-                    primary=Button("Next", id="discovery-next", variant="primary", disabled=True),
-                ),
-                Static("", classes="after-actions-rule"),
-                Static("", id="discovery-help", classes="after-actions-copy muted"),
-            )
-
-    def compose_remote_step(self) -> ComposeResult:
-        with Vertical(id="step-remote"):
-            yield StepHeader(
-                "Confirming your key works",
-                "We're checking that sentiments.cc can find your key online — that's how it confirms each upload is from you.",
-            )
-            yield StepBody(
-                DataTable(id="remote-checks"),
-                Static("", id="remote-status", classes="status-line muted"),
-                StepActions(
-                    Button("Back", id="remote-back", variant="default"),
-                    primary=Button("Next", id="remote-next", variant="primary", disabled=True),
-                ),
-            )
-
-    def compose_upload_step(self) -> ComposeResult:
-        with Vertical(id="step-upload"):
-            yield StepHeader(
-                "Publish your key",
-                "Pick where to publish the public half of your key. We never share or upload the private half.",
-            )
-            yield StepBody(
-                RadioSet(id="upload-options"),
-                KeyPreview("", id="upload-key-text"),
-                Static("", id="upload-result", classes="status-line muted"),
-                StepActions(
-                    Button("Back", id="upload-back", variant="default"),
-                    primary=Button("Publish my key", id="upload-go", variant="primary", disabled=True),
-                ),
-            )
-
-    def compose_done_step(self) -> ComposeResult:
-        with Vertical(id="step-done"):
-            yield StepHeader(
-                "You're all set",
-                "Here's how your data flows.",
-            )
-            yield StepBody(
-                DoneBranch(
-                    self.render_sample_payload,
-                    final_label=self.final_label,
-                    id="done-branch",
-                ),
-            )
-
-    def _populate_done_info(self) -> None:
-        match self.state.config:
-            case GistConfig():
-                self.done_display.identify_text = (
-                    "How we know it's you: each upload gets a small signature from this Mac, "
-                    "and the dashboard reads the matching key from your gist."
-                )
-            case _:
-                self.done_display.identify_text = (
-                    "How we know it's you: each upload gets a small signature from this Mac, "
-                    "and the dashboard checks it against the key you published."
-                )
-        match EngineFactory.default():
-            case "mlx":
-                self.done_display.process_text = (
-                    "Where scoring happens: on this Mac. "
-                    "Your conversation text never leaves your machine."
-                )
-            case "claude":
-                self.done_display.process_text = (
-                    "Where scoring happens: through your existing Claude account, billed to you. "
-                    "Your conversation text leaves only as part of that one API call."
-                )
-        self._render_done_branch()
-        self._finalize_done_screen()
-
-    @work()
-    async def _finalize_done_screen(self) -> None:
-        rate = Hardware.estimate_buckets_per_sec(EngineFactory.default())
-        scan_cache = getattr(self.app, "scan_cache", None)
-        if not rate or scan_cache is None:
-            self._render_done_branch()
-            return
-        scan_result = await scan_cache.get()
-        if scan_result.total_new_buckets == 0:
-            self.done_display.eta_text = "All caught up — nothing new to score."
-        else:
-            self.done_display.eta_text = (
-                f"About {TimeFormat.format_duration(scan_result.total_new_buckets / rate)} "
-                f"to score {scan_result.total_new_buckets:,} new moments."
-            )
-        self._render_done_branch()
-
-    @staticmethod
-    def render_sample_payload() -> str:
-        return "\n".join((
-            "{",
-            '  "time": "2026-04-15T14:23:05Z",',
-            '  "conversation_id": "7f3a9b2c-0e4d-4a91-b6f8",',
-            '  "sentiment_score": 4,',
-            '  "claude_model": "claude-haiku-4-5",',
-            '  "turn_count": 14,',
-            '  "read_edit_ratio": 0.71',
-            "}",
-        ))
-
-    def on_mount(self) -> None:
-        self.query_one("#key-select", RadioSet).display = False
-        self._configure_remote_checks_table()
-        self.set_interval(1, self._refresh_pending_status)
-        self.set_interval(0.1, self._poll_verification_if_due)
-        self._render_done_branch()
-        self.try_auto_setup()
-
-    def on_unmount(self) -> None:
-        self._cancel_remote_check()
-        self._cancel_verify_worker()
-        self._persist_transition_history()
-
-    def _persist_transition_history(self) -> None:
-        if "CC_SENTIMENT_TRANSITION_HISTORY_PATH" not in os.environ:
-            return
-        Path(os.environ["CC_SENTIMENT_TRANSITION_HISTORY_PATH"]).write_text(
-            json.dumps(self.transition_history_names)
-        )
-
-    def action_activate_primary(self) -> None:
-        if button := self._current_primary_button():
-            button.press()
-
-    @work()
-    async def try_auto_setup(self) -> None:
-        if await self._resume_saved_config():
-            return
-        emit = StatusEmitter(self.query_one("#loading-activity", PendingStatus))
-        ok, username = await AutoSetup(self.state, emit).run()
-        if ok:
-            self._on_auto_setup_success()
-            return
-        self._on_auto_setup_fail(username)
-
-    async def _resume_saved_config(self) -> bool:
-        match self.state.config:
-            case SSHConfig(contributor_id=cid, key_path=path) as config:
-                if not await anyio.to_thread.run_sync(path.exists):
-                    return False
-                self.username = cid
-                self.done_display.summary_text = self._config_summary_text(config)
-                self.done_display.verification_action = VerificationAction.GITHUB_SSH
-            case GPGConfig(contributor_type=contributor_type, contributor_id=cid, fpr=fpr) as config:
-                gpg_keys = await anyio.to_thread.run_sync(KeyDiscovery.find_gpg_keys)
-                if not (info := next((key for key in gpg_keys if key.fpr == fpr), None)):
-                    return False
-                self.username = cid if contributor_type == "github" else ""
-                self.selected_key = info
-                self.done_display.summary_text = self._config_summary_text(config)
-                self.done_display.verification_action = (
-                    VerificationAction.GITHUB_GPG if contributor_type == "github" else VerificationAction.OPENPGP
-                )
-            case GistConfig(contributor_id=cid, key_path=path) as config:
-                if not await anyio.to_thread.run_sync(path.exists):
-                    return False
-                self.username = cid
-                self.done_display.summary_text = self._config_summary_text(config)
-                self.done_display.verification_action = VerificationAction.GIST
-            case _:
-                return False
-        self._enter_done(VerificationState.PENDING, verify=True)
+    async def _maybe_resume_pending(self) -> bool:
+        pending_model = self.state.pending_setup
+        if pending_model is None:
+            return False
+        self.aggregate.pending = self._pending_from_model(pending_model)
+        await self._enter_guide_for_resume()
         return True
 
-    def _on_auto_setup_success(self) -> None:
-        config = self.state.config
-        assert config is not None
-        self.done_display.summary_text = self._config_summary_text(config)
-        self._enter_done(VerificationState.VERIFIED, restart_poll=False)
+    async def _verify_saved_state(self) -> Literal["ok", "temporary", "none", "invalid"]:
+        if self.state.config is None:
+            return "none"
+        result = await Uploader().probe_credentials(self.state.config)
+        match result:
+            case AuthOk():
+                self._enter_settings_for_saved_config()
+                return "ok"
+            case AuthUnauthorized():
+                self._render_saved_invalid()
+                return "invalid"
+            case _:
+                self._render_saved_temporary()
+                return "temporary"
 
-    def _on_auto_setup_fail(self, username: str | None) -> None:
-        if username:
-            self.query_one("#username-input", Input).value = username
-            self._set_tone(
-                self.query_one("#username-status", Static),
-                f"Auto-detected: {username}",
-            )
-            self.discovery.username_status_snapshot = f"Auto-detected: {username}"
-        else:
-            self.discovery.username_status_snapshot = ""
-        self.transition_to(SetupStage.USERNAME)
-
-    @on(Button.Pressed, "#username-next")
-    def on_username_next(self) -> None:
-        if self.actions.username_validation_running:
+    async def _run_discover_phase(self) -> None:
+        self._update_status("discover-status", "Looking for keys, GitHub identity, and tools…")
+        username_hint = self._best_known_username()
+        result = await anyio.to_thread.run_sync(DiscoveryRunner.run, username_hint)
+        self.aggregate.discovery = result
+        self._render_discover_rows(result.rows)
+        if (verified := await self._auto_verify(result)) is not None:
+            self.aggregate.discovery = self._mark_verify_rows_ok(self.aggregate.discovery)
+            self._render_discover_rows(self.aggregate.discovery.rows)
+            self.state.config = verified
+            await anyio.to_thread.run_sync(self.state.save)
+            self._update_status("discover-status", DISCOVER_VERIFIED_COPY, Tone.SUCCESS)
+            self._enter_settings_for_saved_config()
             return
-        username = self.query_one("#username-input", Input).value.strip()
-        if not username:
-            self._set_tone(
-                self.query_one("#username-status", Static),
-                "Username is required",
-                Tone.ERROR,
-            )
+        self._update_status("discover-status", DISCOVER_NO_MATCH_COPY, Tone.WARNING)
+        if result.recommended is None or result.recommended.route_id in (RouteId.INSTALL_TOOLS, RouteId.SIGN_IN_GH):
+            self._render_tools(result)
+            self.transition_to(SetupStage.TOOLS)
             return
-        self.discovery.username_status_snapshot = str(self.query_one("#username-status", Static).render())
-        self.username = username
-        self.actions.username_validation_running = True
-        self.validate_and_discover()
-
-    @on(Button.Pressed, "#username-skip")
-    def on_username_skip(self) -> None:
-        self.username = ""
-        self._switch_to_discovery()
-
-    @work(thread=True)
-    def validate_and_discover(self) -> None:
-        status = self.query_one("#username-status", Static)
-        call = self.app.call_from_thread
-
-        def finish_with_error(message: str) -> None:
-            call(self._set_tone, status, message, Tone.ERROR)
-            self.actions.username_validation_running = False
-
-        call(self._set_tone, status, f"Validating {self.username}...")
-        try:
-            response = httpx.get(f"https://api.github.com/users/{self.username}", timeout=10.0)
-        except httpx.HTTPError:
-            finish_with_error("Could not reach GitHub API")
+        if not result.identity.github_username and self._needs_username(result):
+            self._show_inline_username_prompt()
             return
-        if response.status_code != 200:
-            finish_with_error(f"GitHub user '{self.username}' not found")
-            return
-        call(self._switch_to_discovery)
-        self.actions.username_validation_running = False
+        await self._enter_propose()
 
-    def _switch_to_discovery(self) -> None:
-        self.actions.discovery_action_running = False
-        self._reset_discovery_stage()
-        self.transition_to(SetupStage.DISCOVERY)
-        self.discover_keys()
+    @staticmethod
+    def _mark_verify_rows_ok(discovery: DiscoveryResult) -> DiscoveryResult:
+        rows = list(discovery.rows)
+        for index in (-2, -1):
+            if -len(rows) <= index < 0 and rows[index].state in (DiscoverRowState.WAITING, DiscoverRowState.SKIPPED):
+                rows[index] = replace(rows[index], state=DiscoverRowState.OK)
+        return replace(discovery, rows=tuple(rows))
 
-    @work(thread=True)
-    def discover_keys(self) -> None:
-        ssh_keys = KeyDiscovery.find_ssh_keys()
-        gpg_keys = KeyDiscovery.find_gpg_keys()
-        self.app.call_from_thread(self._populate_key_table, ssh_keys, gpg_keys)
-
-    def _populate_key_table(
-        self,
-        ssh_keys: tuple[SSHKeyInfo, ...],
-        gpg_keys: tuple[GPGKeyInfo, ...],
-    ) -> None:
-        radio = self.query_one("#key-select", RadioSet)
-        status = self.query_one("#discovery-status", Static)
-        help_text = self.query_one("#discovery-help", Static)
-        next_btn = self.query_one("#discovery-next", Button)
-        self._clear_radio_set(radio)
-
-        all_keys: list[SSHKeyInfo | GPGKeyInfo] = (
-            [*ssh_keys, *gpg_keys] if self.username else list(gpg_keys)
-        )
-        self.discovery.discovered_keys = all_keys
-        self.discovery.generation_mode = self._pick_generation_mode()
-        self.discovery.generation_radio_index = (
-            len(all_keys) if self.discovery.generation_mode is not None else None
-        )
-
-        radio_children = [
-            *(RadioButton(self._key_radio_label(key)) for key in all_keys),
-            *(
-                [RadioButton(self._generation_radio_label())]
-                if self.discovery.generation_radio_index is not None
-                else []
-            ),
-        ]
-
-        if not radio_children:
-            self._set_tone(status, "No keys we can use on this Mac yet.")
-            help_text.update(
-                "Go back and enter a GitHub username, or install gpg "
-                "(brew install gnupg) to use GPG."
-                if not self.username
-                else "To make one for you, install the GitHub CLI (brew install gh) "
-                "or gpg (brew install gnupg)."
-            )
-            next_btn.disabled = True
-            return
-
-        plural = "s" if len(all_keys) != 1 else ""
-        if not all_keys:
-            self._set_tone(status, "No keys we can use on this Mac yet.")
-            help_text.update(self._generation_prompt())
-        elif self.discovery.generation_radio_index is not None:
-            self._set_tone(
-                status,
-                f"Found {len(all_keys)} key{plural} on your machine. "
-                "Pick one — or have us make a fresh one.",
-            )
-            help_text.update(self._generation_prompt())
-        else:
-            hint = " Pick one." if len(all_keys) > 1 else ""
-            self._set_tone(status, f"Found {len(all_keys)} key{plural} on your machine.{hint}")
-            help_text.update("")
-
-        self.call_after_refresh(self._mount_discovery_options, radio_children)
-        next_btn.disabled = False
-        if self.current_stage is SetupStage.DISCOVERY:
-            self._focus_step_target(SetupStage.DISCOVERY)
-
-    def _pick_generation_mode(self) -> GenerationMode | None:
-        if self.username and KeyDiscovery.gh_authenticated():
-            return GenerationMode.GIST
-        if self.username and KeyDiscovery.has_tool("ssh-keygen"):
-            return GenerationMode.SSH
-        if KeyDiscovery.has_tool("gpg"):
-            return GenerationMode.GPG
-        return None
-
-    def _generation_prompt(self) -> str:
-        match self.discovery.generation_mode:
-            case GenerationMode.GIST:
-                return "We can make a key for you and publish the public half as a GitHub gist."
-            case GenerationMode.SSH:
-                return "We'll make an SSH key for you, then help you add the public half to GitHub."
-            case GenerationMode.GPG:
-                return "No problem. We'll create a GPG key for you here."
+    def _best_known_username(self) -> str:
+        match self.state.config:
+            case SSHConfig(contributor_id=cid) | GistConfig(contributor_id=cid):
+                return cid
+            case GPGConfig(contributor_type="github", contributor_id=cid):
+                return cid
             case _:
                 return ""
 
-    def _generation_radio_label(self) -> str:
-        match self.discovery.generation_mode:
-            case GenerationMode.GIST:
-                return "Make a new key for me  ·  we'll publish it to a GitHub Gist"
-            case GenerationMode.SSH:
-                return "Make a new SSH key for me  ·  you'll add it to GitHub after"
-            case GenerationMode.GPG:
-                return "Make a new GPG key for me  ·  stays on this Mac"
-            case _:
-                return "Make a new key for me"
+    def _needs_username(self, result: DiscoveryResult) -> bool:
+        if (route := result.recommended) is None:
+            return False
+        return route.publish_method in (
+            PublishMethod.GIST_AUTO,
+            PublishMethod.GIST_MANUAL,
+            PublishMethod.GITHUB_SSH,
+            PublishMethod.GITHUB_GPG,
+        )
 
-    @on(Button.Pressed, "#discovery-back")
-    def on_discovery_back(self) -> None:
-        self._cancel_remote_check()
-        self.actions.discovery_action_running = False
-        self.query_one("#username-status", Static).update(self.discovery.username_status_snapshot)
-        self.transition_to(SetupStage.USERNAME)
+    def _show_inline_username_prompt(self) -> None:
+        self._update_status("discover-status", "Enter a GitHub username, or pick GPG only.")
+        self.query_one("#username-input", Input).display = True
+        self.query_one("#username-next", Button).display = True
+        self.query_one("#username-skip", Button).display = True
+        self.query_one("#discover-retry", Button).display = False
+        self.call_after_refresh(lambda: self._focus_widget(self.query_one("#username-input", Input)))
 
-    @on(RadioSet.Changed, "#key-select")
-    def on_discovery_selection_changed(self) -> None:
-        self._cancel_remote_check()
-        self.actions.discovery_action_running = False
-        if list(self.query("#key-select RadioButton")):
-            self.query_one("#discovery-next", Button).disabled = False
+    def _render_discover_rows(self, rows: tuple[DiscoverRow, ...]) -> None:
+        markers = {
+            DiscoverRowState.WAITING: "·",
+            DiscoverRowState.OK: "✓",
+            DiscoverRowState.SKIPPED: "—",
+            DiscoverRowState.WARNING: "?",
+            DiscoverRowState.ERROR: "✗",
+        }
+        text = "\n".join(
+            f"  {markers[row.state]} {row.label}{('  ' + row.detail) if row.detail else ''}"
+            for row in rows
+        )
+        with suppress(NoMatches):
+            self.query_one("#discover-rows", Static).update(text)
 
-    @on(Button.Pressed, "#discovery-next")
-    def on_discovery_next(self) -> None:
-        if self.actions.discovery_action_running:
-            return
-        if not self.discovery.discovered_keys:
-            self.actions.discovery_action_running = True
-            self._dispatch_generation()
-            return
-        radio = self.query_one("#key-select", RadioSet)
-        idx = radio.pressed_index if radio.pressed_index >= 0 else 0
-        if self.discovery.generation_radio_index is not None and idx == self.discovery.generation_radio_index:
-            self.actions.discovery_action_running = True
-            self._dispatch_generation()
-            return
-        self.actions.discovery_action_running = True
-        self.selected_key = self.discovery.discovered_keys[idx]
-        self._go_to_remote()
+    def _render_saved_invalid(self) -> None:
+        self._update_status(
+            "discover-status",
+            f"{SAVED_KEY_INVALID_COPY_1}\n{SAVED_KEY_INVALID_COPY_2}",
+            Tone.WARNING,
+        )
+        self.transition_to(SetupStage.DISCOVER)
 
-    def _dispatch_generation(self) -> None:
-        match self.discovery.generation_mode:
-            case GenerationMode.GIST:
-                self.generate_gist_key()
-            case GenerationMode.SSH:
-                self.generate_managed_ssh_key()
-            case GenerationMode.GPG:
-                self.generate_gpg_key()
+    def _render_saved_temporary(self) -> None:
+        self._update_status("discover-status", SAVED_KEY_TEMPORARY_COPY, Tone.WARNING)
+        self.query_one("#discover-retry", Button).display = True
+        self.transition_to(SetupStage.DISCOVER)
 
-    @work(thread=True)
-    def generate_gpg_key(self) -> None:
-        status = self.query_one("#discovery-status", Static)
-        call = self.app.call_from_thread
-        call(self._set_tone, status, "Making a key for you...")
-
-        identity = self.username or "cc-sentiment"
-        email = identity + "@users.noreply.github.com"
-        batch_input = f"""%no-protection
-Key-Type: eddsa
-Key-Curve: ed25519
-Name-Real: {identity}
-Name-Email: {email}
-Expire-Date: 0
-%commit
-"""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt") as f:
-            f.write(batch_input)
-            f.flush()
-            result = subprocess.run(
-                ["gpg", "--batch", "--gen-key", f.name],
-                capture_output=True, text=True, timeout=30,
+    async def _auto_verify(self, result: DiscoveryResult) -> Config | None:
+        username = result.identity.github_username
+        if username:
+            for ssh in result.existing_ssh:
+                config: Config = SSHConfig(
+                    contributor_id=ContributorId(username),
+                    key_path=ssh.info.path,
+                )
+                if isinstance(await Uploader().probe_credentials(config), AuthOk):
+                    return config
+            for gpg in result.existing_gpg:
+                config = GPGConfig(
+                    contributor_type="github",
+                    contributor_id=ContributorId(username),
+                    fpr=gpg.info.fpr,
+                )
+                if isinstance(await Uploader().probe_credentials(config), AuthOk):
+                    return config
+            for ssh in result.existing_ssh:
+                gist_id = await anyio.to_thread.run_sync(GistDiscovery.find_cc_sentiment_gist_id, username)
+                if gist_id is None:
+                    break
+                config = GistConfig(
+                    contributor_id=ContributorId(username),
+                    key_path=ssh.info.path,
+                    gist_id=gist_id,
+                )
+                if isinstance(await Uploader().probe_credentials(config), AuthOk):
+                    return config
+        for gpg in result.existing_gpg:
+            config = GPGConfig(
+                contributor_type="gpg",
+                contributor_id=ContributorId(gpg.info.fpr),
+                fpr=gpg.info.fpr,
             )
+            if isinstance(await Uploader().probe_credentials(config), AuthOk):
+                return config
+        return None
 
-        if result.returncode != 0:
-            call(self._set_tone, status, f"Key generation failed: {result.stderr.strip()}", Tone.ERROR)
-            self.actions.discovery_action_running = False
+    @on(Button.Pressed, "#discover-retry")
+    async def on_discover_retry(self) -> None:
+        await self._run_discover_phase()
+
+    @on(Button.Pressed, "#username-next")
+    async def on_username_next(self) -> None:
+        username = self.query_one("#username-input", Input).value.strip()
+        if not username:
+            self._update_status("username-status", USERNAME_ERROR_EMPTY, Tone.ERROR)
             return
+        self._update_status("username-status", f"Validating {username}…")
+        match await anyio.to_thread.run_sync(IdentityProbe.validate_username, username):
+            case "not-found":
+                self._update_status(
+                    "username-status",
+                    USERNAME_ERROR_NOT_FOUND.format(user=username),
+                    Tone.ERROR,
+                )
+                return
+            case "unreachable":
+                self._update_status("username-status", USERNAME_ERROR_UNREACHABLE, Tone.ERROR)
+                return
+        self._set_username(username, UsernameSource.USER)
+        self._hide_inline_username_prompt()
+        await self._enter_propose()
 
-        new_key = next((k for k in KeyDiscovery.find_gpg_keys() if k.email == email), None)
-        if not new_key:
-            call(self._set_tone, status, "Key generated but not found in keyring", Tone.ERROR)
-            self.actions.discovery_action_running = False
+    @on(Button.Pressed, "#username-skip")
+    async def on_username_skip(self) -> None:
+        self._set_username("", UsernameSource.NONE)
+        self._hide_inline_username_prompt()
+        if self.discovery.recommended is None:
+            self._render_tools(self.discovery)
+            self.transition_to(SetupStage.TOOLS)
             return
+        await self._enter_propose()
 
-        self.selected_key = new_key
-        call(self._set_tone, status, f"Made your key. Fingerprint: {self._display_fingerprint(new_key.fpr)}", Tone.SUCCESS)
-        call(self._go_to_remote)
+    def _hide_inline_username_prompt(self) -> None:
+        self.query_one("#username-input", Input).display = False
+        self.query_one("#username-next", Button).display = False
+        self.query_one("#username-skip", Button).display = False
 
-    @work(thread=True)
-    def generate_managed_ssh_key(self) -> None:
-        status = self.query_one("#discovery-status", Static)
-        call = self.app.call_from_thread
-        call(self._set_tone, status, "Making a key for you...")
-        try:
-            key_path = KeyDiscovery.generate_gist_keypair()
-        except subprocess.CalledProcessError as e:
-            err = (e.stderr.decode() if isinstance(e.stderr, bytes) else e.stderr or str(e)).strip()
-            call(self._set_tone, status, f"Couldn't create the key: {err}", Tone.ERROR)
-            self.actions.discovery_action_running = False
-            return
-        parts = key_path.with_suffix(key_path.suffix + ".pub").read_text().strip().split()
-        self.selected_key = SSHKeyInfo(
-            path=key_path,
-            algorithm=parts[0] if len(parts) >= 2 else "unknown",
-            comment=parts[2] if len(parts) >= 3 else "",
+    def _set_username(self, username: str, source: UsernameSource) -> None:
+        existing = self.discovery.identity
+        new_identity = IdentityDiscovery(
+            github_username=username,
+            username_source=source,
+            github_email=existing.github_email,
+            email_source=existing.email_source,
+            email_usable=existing.email_usable,
         )
-        call(self._set_tone, status, "Created a local key. Let's link it next.", Tone.SUCCESS)
-        call(self._go_to_remote)
-
-    @work(thread=True)
-    def generate_gist_key(self) -> None:
-        status = self.query_one("#discovery-status", Static)
-        call = self.app.call_from_thread
-        call(self._set_tone, status, "Making a key and publishing it to a gist...")
-        try:
-            key_path = KeyDiscovery.generate_gist_keypair()
-            gist_id = KeyDiscovery.create_gist(key_path)
-        except subprocess.CalledProcessError as e:
-            err = (e.stderr.decode() if isinstance(e.stderr, bytes) else e.stderr or str(e)).strip()
-            call(self._set_tone, status, f"Couldn't create the gist: {err}", Tone.ERROR)
-            self.actions.discovery_action_running = False
-            return
-        self.state.config = GistConfig(
-            contributor_id=ContributorId(self.username),
-            key_path=key_path,
-            gist_id=gist_id,
+        if username and not new_identity.email_usable:
+            email, src, usable = IdentityProbe.mine_email(username)
+            new_identity = IdentityDiscovery(
+                github_username=username,
+                username_source=source,
+                github_email=email,
+                email_source=src,
+                email_usable=usable,
+            )
+        recommended, alternatives = SetupRoutePlanner.plan(
+            self.discovery.capabilities,
+            new_identity,
+            self.discovery.existing_ssh,
+            self.discovery.existing_gpg,
         )
-        call(self._set_tone, status, "Published your key as a gist.", Tone.SUCCESS)
-        call(self._finish_gist, gist_id)
+        self.aggregate.discovery = DiscoveryResult(
+            capabilities=self.discovery.capabilities,
+            identity=new_identity,
+            existing_ssh=self.discovery.existing_ssh,
+            existing_gpg=self.discovery.existing_gpg,
+            rows=self.discovery.rows,
+            recommended=recommended,
+            alternatives=alternatives,
+        )
 
-    def _finish_gist(self, gist_id: str) -> None:
-        assert self.state.config is not None
-        self.done_display.summary_text = self._config_summary_text(self.state.config)
-        self.actions.discovery_action_running = False
-        self._enter_done(VerificationState.PENDING, action=VerificationAction.GIST, verify=True)
+    async def _enter_propose(self) -> None:
+        result = self.discovery
+        if result.recommended is None:
+            self._render_tools(result)
+            self.transition_to(SetupStage.TOOLS)
+            return
+        self.selected_route = result.recommended
+        self._render_propose(result.recommended, result.alternatives)
+        self.transition_to(SetupStage.PROPOSE)
 
-    def _go_to_remote(self) -> None:
-        self.remote_check.generation += 1
-        self.remote_check.worker = self.check_remotes(self.remote_check.generation, self.selected_key)
-
-    @work(thread=True)
-    def check_remotes(
+    def _render_propose(
         self,
-        generation: int | None = None,
-        key: SSHKeyInfo | GPGKeyInfo | None = None,
+        recommended: SetupRoute,
+        alternatives: tuple[SetupRoute, ...],
     ) -> None:
-        generation = self.remote_check.generation if generation is None else generation
-        key = self.selected_key if key is None else key
-        results: list[RemoteCheckRow] = []
-        found = False
-        key_on_openpgp = False
-        self.app.call_from_thread(self._set_remote_pending, generation, key)
+        with suppress(NoMatches):
+            self.query_one("#propose-recommendation", Static).update(recommended.title)
+        with suppress(NoMatches):
+            self.query_one("#propose-detail", Static).update(recommended.detail)
+        with suppress(NoMatches):
+            self.query_one("#propose-safety", Static).update(recommended.safety_note)
+        with suppress(NoMatches):
+            warning = self.query_one("#propose-warning", Static)
+            warning.display = bool(recommended.account_key_warning)
+            warning.update(recommended.account_key_warning)
+        with suppress(NoMatches):
+            primary = self.query_one("#propose-go", Button)
+            primary.label = recommended.primary_label
+        with suppress(NoMatches):
+            alt_button = self.query_one("#propose-alt", Button)
+            alt_button.label = recommended.secondary_label
 
-        match key:
-            case SSHKeyInfo(path=p):
-                try:
-                    github_keys = KeyDiscovery.fetch_github_ssh_keys(self.username)
-                except httpx.HTTPError:
-                    results.append(RemoteCheckRow("?", "GitHub", "Couldn't reach GitHub", Tone.MUTED))
-                else:
-                    local_fp = SSHBackend(private_key_path=p).fingerprint()
-                    if any(" ".join(gk.split()[:2]) == local_fp for gk in github_keys):
-                        results.append(RemoteCheckRow("✓", "GitHub", "Found on GitHub", Tone.SUCCESS))
-                        found = True
-                    else:
-                        results.append(RemoteCheckRow("—", "GitHub", "Not on GitHub yet", Tone.WARNING))
+        radio = self.query_one("#propose-alternatives", RadioSet)
+        radio._pressed_button = None
+        radio.remove_children()
+        if alternatives:
+            radio.mount_all(RadioButton(self._alternative_label(alt)) for alt in alternatives)
+            radio.display = False
+        else:
+            radio.display = False
+        with suppress(NoMatches):
+            self.query_one("#propose-alt-header", Static).display = bool(alternatives)
 
-            case GPGKeyInfo(fpr=f):
-                if self.username:
-                    try:
-                        on_github = KeyDiscovery.gpg_key_on_github(self.username, f)
-                    except httpx.HTTPError:
-                        results.append(RemoteCheckRow("?", "GitHub", "Couldn't reach GitHub", Tone.MUTED))
-                    else:
-                        if on_github:
-                            results.append(RemoteCheckRow("✓", "GitHub", "Found on GitHub", Tone.SUCCESS))
-                            found = True
-                        else:
-                            results.append(RemoteCheckRow("—", "GitHub", "Not on GitHub yet", Tone.WARNING))
+        self._render_email_field(recommended)
 
-                try:
-                    armored = KeyDiscovery.fetch_openpgp_key(f)
-                except httpx.HTTPError:
-                    results.append(
-                        RemoteCheckRow("?", "keys.openpgp.org", "Couldn't reach keys.openpgp.org", Tone.WARNING)
-                    )
-                else:
-                    if armored:
-                        results.append(
-                            RemoteCheckRow("✓", "keys.openpgp.org", "Found on keys.openpgp.org", Tone.SUCCESS)
-                        )
-                        found = True
-                        key_on_openpgp = True
-                    else:
-                        results.append(
-                            RemoteCheckRow("—", "keys.openpgp.org", "Not on keys.openpgp.org yet", Tone.WARNING)
-                        )
+    def _alternative_label(self, route: SetupRoute) -> str:
+        match route.key_plan:
+            case GenerateSSHKey():
+                return "Generate cc-sentiment managed key — recommended, only for this app"
+            case GenerateGPGKey():
+                return "Generate cc-sentiment managed GPG key"
+            case ExistingSSHKey(info=info):
+                tag = info.comment or info.path.name
+                return f"SSH key: {tag} — use only if you recognize it"
+            case ExistingGPGKey(info=info):
+                tag = info.email or info.fpr[-8:]
+                return f"GPG key: {tag} — good for email/keyserver verification"
+            case _:
+                return route.title
 
-        self.app.call_from_thread(
-            self._apply_remote_results,
-            generation,
-            key,
-            results,
-            found,
-            key_on_openpgp,
-        )
-
-    def _enable_remote_next(self) -> None:
-        self.query_one("#remote-next", Button).disabled = False
-        if self.current_stage is SetupStage.REMOTE:
-            self._focus_step_target(SetupStage.REMOTE)
-
-    @on(Button.Pressed, "#remote-back")
-    def on_remote_back(self) -> None:
-        self._switch_to_discovery()
-
-    @on(Button.Pressed, "#remote-next")
-    async def on_remote_next(self) -> None:
-        if self.actions.remote_action_running:
-            return
-        self.actions.remote_action_running = True
-        try:
-            if self.remote_check.key_on_remote:
-                self._save_and_finish()
+    def _render_email_field(self, route: SetupRoute) -> None:
+        identity = self.discovery.identity
+        show = route.needs_email and not identity.email_usable
+        for selector in ("#propose-email-label", "#propose-email-help", "#propose-email"):
+            with suppress(NoMatches):
+                self.query_one(selector).display = show
+        with suppress(NoMatches):
+            inferred = self.query_one("#propose-email-inferred", Static)
+            if show and identity.github_email and not identity.email_usable:
+                inferred.update(OPENPGP_EMAIL_INFERRED.format(email=identity.github_email))
+                inferred.display = True
             else:
-                self.transition_to(SetupStage.UPLOAD)
-                await self._populate_upload_options()
+                inferred.display = False
+        with suppress(NoMatches):
+            email_input = self.query_one("#propose-email", Input)
+            if show and identity.github_email:
+                email_input.value = identity.github_email
+
+    def _render_tools(self, result: DiscoveryResult) -> None:
+        caps = result.capabilities
+        primary = self.query_one("#tools-primary", Button)
+        secondary = self.query_one("#tools-secondary", Button)
+        tertiary = self.query_one("#tools-tertiary", Button)
+        if caps.has_gh and not caps.gh_authed:
+            self.query_one("#tools-detail", Static).update(TOOLS_GH_AUTH_DETAIL)
+            primary.label = "Sign in to GitHub CLI"
+            secondary.label = "Continue without GitHub CLI"
+            tertiary.display = False
+            return
+        tertiary.display = True
+        if caps.has_brew and sys.platform == "darwin":
+            self.query_one("#tools-detail", Static).update(TOOLS_BODY)
+            primary.label = "Install GitHub CLI with Homebrew"
+            secondary.label = "Install GPG with Homebrew"
+            tertiary.label = "Show manual setup options"
+            return
+        detail = TOOLS_NO_BREW_BREW if sys.platform == "darwin" else TOOLS_NO_BREW_GENERIC
+        self.query_one("#tools-detail", Static).update(detail)
+        primary.label = "I installed one"
+        secondary.label = "Manual setup"
+        tertiary.display = False
+
+    @on(Button.Pressed, "#propose-go")
+    async def on_propose_go(self) -> None:
+        if self.actions.propose_running:
+            return
+        self.actions.propose_running = True
+        try:
+            await self._confirm_route(self.selected_route)
         finally:
-            self.actions.remote_action_running = False
+            self.actions.propose_running = False
 
-    async def _populate_upload_options(self) -> None:
-        radio = self.query_one("#upload-options", RadioSet)
-        self._clear_radio_set(radio)
-        key = self.selected_key
-        gh_authed = (
-            shutil.which("gh") is not None
-            and await anyio.to_thread.run_sync(KeyDiscovery.gh_authenticated)
+    @on(Button.Pressed, "#propose-alt")
+    def on_propose_alt(self) -> None:
+        radio = self.query_one("#propose-alternatives", RadioSet)
+        radio.display = True
+        if radio.children:
+            radio.children[0].focus()
+
+    @on(RadioSet.Changed, "#propose-alternatives")
+    def on_propose_alt_changed(self, event: RadioSet.Changed) -> None:
+        alternatives = self.discovery.alternatives
+        idx = event.radio_set.pressed_index
+        if idx < 0 or idx >= len(alternatives):
+            return
+        chosen = alternatives[idx]
+        previous = self.selected_route
+        rest = tuple(r for r in alternatives if r.route_id != chosen.route_id)
+        new_alternatives = (previous, *rest) if previous else rest
+        self.aggregate.discovery = DiscoveryResult(
+            capabilities=self.discovery.capabilities,
+            identity=self.discovery.identity,
+            existing_ssh=self.discovery.existing_ssh,
+            existing_gpg=self.discovery.existing_gpg,
+            rows=self.discovery.rows,
+            recommended=chosen,
+            alternatives=new_alternatives,
         )
-        upload_options = self._build_upload_options(gh_authed, key)
-        self.upload_plan.actions = [option.action for option in upload_options]
-        radio_buttons = [RadioButton(option.label) for option in upload_options]
-        radio.mount_all(radio_buttons)
-        if radio_buttons:
-            radio_buttons[0].toggle()
-        radio.display = len(radio_buttons) > 1
-        self.query_one("#upload-go", Button).label = (
-            "Show me the key" if self.upload_plan.actions == [VerificationAction.MANUAL] else "Publish my key"
-        )
+        self.selected_route = chosen
+        self._render_propose(chosen, new_alternatives)
 
-        pub_text = ""
-        match key:
-            case SSHKeyInfo(path=p):
-                pub_text = await anyio.to_thread.run_sync(SSHBackend(private_key_path=p).public_key_text)
-            case GPGKeyInfo(fpr=f):
-                pub_text = await anyio.to_thread.run_sync(GPGBackend(fpr=f).public_key_text)
+    async def _confirm_route(self, route: SetupRoute | None) -> None:
+        if route is None:
+            return
+        if route.needs_email and not self._resolved_email():
+            self._update_status("propose-status", OPENPGP_EMAIL_ERROR_EMPTY, Tone.ERROR)
+            return
+        if route.automated:
+            await self._enter_working(route)
+        else:
+            await self._enter_guide(route)
 
-        self.query_one("#upload-key-text", KeyPreview).text = pub_text
-        self._sync_upload_preview_height()
-        self.query_one("#upload-go", Button).disabled = False
-        if self.current_stage is SetupStage.UPLOAD:
-            self._focus_step_target(SetupStage.UPLOAD)
+    def _resolved_email(self) -> str:
+        ident = self.discovery.identity
+        if ident.email_usable and ident.github_email:
+            return ident.github_email
+        with suppress(NoMatches):
+            value = self.query_one("#propose-email", Input).value.strip()
+            if value:
+                return value
+        return ""
 
-    def _build_upload_options(
-        self,
-        gh_authed: bool,
-        key: SSHKeyInfo | GPGKeyInfo | None,
-    ) -> list[UploadOption]:
-        match key:
-            case SSHKeyInfo():
+    def _resolve_key(self, route: SetupRoute) -> ResolvedKey:
+        if self.aggregate.resolved_key is not None:
+            return self.aggregate.resolved_key
+        match route.key_plan:
+            case ExistingSSHKey(info=info, managed=managed):
+                resolved: ResolvedKey = ResolvedSSHKey(info=info, managed=managed)
+            case ExistingGPGKey(info=info, managed=managed):
+                resolved = ResolvedGPGKey(info=info, managed=managed)
+            case GenerateSSHKey():
+                resolved = ResolvedSSHKey(info=KeyDiscovery.generate_managed_ssh_key(), managed=True)
+            case GenerateGPGKey():
+                email = self._resolved_email()
+                identity = self.discovery.identity.github_username or "cc-sentiment"
+                resolved = ResolvedGPGKey(
+                    info=KeyDiscovery.generate_managed_gpg_key(identity, email),
+                    managed=True,
+                )
+            case _:
+                raise AssertionError("route has no key plan")
+        self.aggregate.resolved_key = resolved
+        return resolved
+
+    async def _enter_working(self, route: SetupRoute) -> None:
+        steps = self._build_working_steps(route)
+        self.aggregate.working.steps = steps
+        self.aggregate.working.failure_text = ""
+        self.aggregate.resolved_key = None
+        self._render_working()
+        self.transition_to(SetupStage.WORKING)
+        self.aggregate.working.worker = self.run_working(route)
+
+    def _build_working_steps(self, route: SetupRoute) -> list[WorkStep]:
+        match route.publish_method:
+            case PublishMethod.GIST_AUTO:
+                steps: list[WorkStep] = []
+                if isinstance(route.key_plan, GenerateSSHKey):
+                    steps.append(WorkStep(label="Creating local cc-sentiment key…"))
+                steps.extend([
+                    WorkStep(label="Creating public GitHub gist…"),
+                    WorkStep(label="Checking that sentiments.cc can read it…"),
+                    WorkStep(label="Verifying a test signature…"),
+                ])
+                return steps
+            case PublishMethod.OPENPGP:
+                steps = []
+                if isinstance(route.key_plan, GenerateGPGKey):
+                    steps.append(WorkStep(label="Creating local GPG key…"))
+                steps.extend([
+                    WorkStep(label="Uploading public key to keys.openpgp.org…"),
+                    WorkStep(label="Requesting email verification…"),
+                    WorkStep(label="Waiting for keyserver publication…"),
+                    WorkStep(label="Verifying a test signature…"),
+                ])
+                return steps
+            case PublishMethod.GITHUB_SSH | PublishMethod.GITHUB_GPG:
                 return [
-                    *([UploadOption(VerificationAction.GITHUB_SSH, "Link via GitHub (gh)")] if gh_authed else []),
-                    UploadOption(VerificationAction.MANUAL, "Show me the key; I'll add it myself"),
-                ]
-            case GPGKeyInfo():
-                return [
-                    *(
-                        [UploadOption(VerificationAction.GITHUB_GPG, "Link via GitHub (gh)")]
-                        if gh_authed and self.username
-                        else []
-                    ),
-                    UploadOption(VerificationAction.OPENPGP, "Publish to keys.openpgp.org"),
-                    UploadOption(VerificationAction.MANUAL, "Show me the key; I'll add it myself"),
+                    WorkStep(label="Adding public key to GitHub account…"),
+                    WorkStep(label="Waiting for GitHub public key list…"),
+                    WorkStep(label="Verifying a test signature…"),
                 ]
             case _:
                 return []
 
-    def _selected_upload_action(self) -> VerificationAction:
-        radio = self.query_one("#upload-options", RadioSet)
-        idx = radio.pressed_index if radio.display and radio.pressed_index >= 0 else 0
-        return self.upload_plan.actions[idx]
-
-    def _sync_upload_preview_height(self) -> None:
-        self.query_one("#upload-key-text", KeyPreview).styles.max_height = (
-            5 if self._selected_upload_action() is VerificationAction.MANUAL else 4
+    def _render_working(self) -> None:
+        markers = {
+            WorkStepState.PENDING: "·",
+            WorkStepState.RUNNING: "…",
+            WorkStepState.SUCCESS: "✓",
+            WorkStepState.WARNING: "—",
+            WorkStepState.ERROR: "✗",
+        }
+        text = "\n".join(
+            f"  {markers[step.state]} {step.label}{('  ' + step.detail) if step.detail else ''}"
+            for step in self.aggregate.working.steps
         )
-
-    @on(RadioSet.Changed, "#upload-options")
-    def on_upload_option_changed(self) -> None:
-        self._sync_upload_preview_height()
-
-    def _apply_selected_config(self) -> None:
-        identity = self.username
-        match self.selected_key:
-            case SSHKeyInfo(path=path):
-                self.state.config = SSHConfig(contributor_id=ContributorId(identity), key_path=path)
-            case GPGKeyInfo(fpr=fpr):
-                self.state.config = (
-                    GPGConfig(contributor_type="github", contributor_id=ContributorId(identity), fpr=fpr)
-                    if identity
-                    else GPGConfig(contributor_type="gpg", contributor_id=ContributorId(fpr), fpr=fpr)
-                )
-            case _:
-                raise AssertionError("selected key required")
-        assert self.state.config is not None
-        self.done_display.summary_text = self._config_summary_text(self.state.config)
-
-    def _save_and_fail_upload(self, action: VerificationAction, message: str) -> None:
-        self._apply_selected_config()
-        self.state.save()
-        self.verification_poll.clear()
-        self.done_display.upload_failure_text = message
-        self.done_display.failed_retry_target = RetryTarget.UPLOAD
-        self.actions.upload_running = False
-        self._enter_done(VerificationState.FAILED, action=action, restart_poll=False)
-
-    @on(Button.Pressed, "#upload-go")
-    def on_upload_go(self) -> None:
-        if self.actions.upload_running:
-            return
-        self.actions.upload_running = True
-        self.run_upload(self._selected_upload_action())
-
-    @on(Button.Pressed, "#upload-back")
-    def on_upload_back(self) -> None:
-        self.transition_to(SetupStage.REMOTE)
-
-    def _run_gh_link(
-        self,
-        action: VerificationAction,
-        command: list[str],
-        pub_path: Path,
-        cleanup: bool,
-    ) -> None:
-        result_label = self.query_one("#upload-result", Static)
-        call = self.app.call_from_thread
-        try:
-            try:
-                result = subprocess.run(command, capture_output=True, text=True, timeout=30)
-            except subprocess.SubprocessError as e:
-                call(self._save_and_fail_upload, action, f"Something went wrong: {e}")
-                return
-            if result.returncode == 0:
-                self.done_display.verification_action = action
-                call(self._set_tone, result_label, "Key linked to GitHub. You're all set.", Tone.SUCCESS)
-                call(self._save_and_finish)
-            else:
-                call(
-                    self._save_and_fail_upload,
-                    action,
-                    f"Something went wrong: {result.stderr.strip()}",
-                )
-        finally:
-            if cleanup:
-                pub_path.unlink(missing_ok=True)
+        with suppress(NoMatches):
+            self.query_one("#working-steps", Static).update(text)
+        with suppress(NoMatches):
+            self.query_one("#working-status", Static).update(
+                self.aggregate.working.failure_text or ""
+            )
+        with suppress(NoMatches):
+            failure = bool(self.aggregate.working.failure_text)
+            self.query_one("#working-guide", Button).display = failure
+            self.query_one("#working-retry", Button).display = failure
+            self.query_one("#working-redo", Button).display = failure
 
     @work(thread=True)
-    def run_upload(self, action: VerificationAction) -> None:
-        result_label = self.query_one("#upload-result", Static)
-        key = self.selected_key
+    def run_working(self, route: SetupRoute) -> None:
         call = self.app.call_from_thread
+        try:
+            self._execute_route(route, call)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, OSError, AssertionError, httpx.HTTPError) as exc:
+            call(self._on_working_failure, route, Sanitizer.error(str(exc)))
 
-        match action:
-            case VerificationAction.GITHUB_SSH:
-                assert isinstance(key, SSHKeyInfo)
-                pub_path = key.path.with_suffix(key.path.suffix + ".pub")
-                self._run_gh_link(
-                    VerificationAction.GITHUB_SSH,
-                    ["gh", "ssh-key", "add", str(pub_path), "-t", "cc-sentiment"],
-                    pub_path,
-                    cleanup=False,
+    def _execute_route(self, route: SetupRoute, call) -> None:
+        match route.publish_method:
+            case PublishMethod.GIST_AUTO:
+                self._execute_gist_auto(route, call)
+            case PublishMethod.OPENPGP:
+                self._execute_openpgp(route, call)
+            case PublishMethod.GITHUB_SSH:
+                self._execute_github_ssh(route, call)
+            case PublishMethod.GITHUB_GPG:
+                self._execute_github_gpg(route, call)
+            case _:
+                pass
+
+    def _step_running(self, idx: int) -> None:
+        self.aggregate.working.steps[idx].state = WorkStepState.RUNNING
+        self._render_working()
+
+    def _step_success(self, idx: int, detail: str = "") -> None:
+        self.aggregate.working.steps[idx].state = WorkStepState.SUCCESS
+        if detail:
+            self.aggregate.working.steps[idx].detail = detail
+        self._render_working()
+
+    def _execute_gist_auto(self, route: SetupRoute, call) -> None:
+        idx = 0
+        if isinstance(route.key_plan, GenerateSSHKey | GenerateGPGKey):
+            call(self._step_running, idx)
+            resolved = self._resolve_key(route)
+            detail = (
+                "managed"
+                if isinstance(resolved, ResolvedSSHKey) and resolved.managed
+                else resolved.info.fpr[-8:]
+                if isinstance(resolved, ResolvedGPGKey)
+                else ""
+            )
+            call(self._step_success, idx, detail)
+            idx += 1
+        else:
+            self._resolve_key(route)
+
+        resolved = self.aggregate.resolved_key
+        assert resolved is not None
+        call(self._step_running, idx)
+        match resolved:
+            case ResolvedSSHKey(info=info):
+                pub_text = SSHBackend(private_key_path=info.path).public_key_text()
+                fpr: str | None = None
+            case ResolvedGPGKey(info=info):
+                pub_text = GPGBackend(fpr=info.fpr).public_key_text()
+                fpr = info.fpr
+        gist_id = KeyDiscovery.create_gist_from_text(pub_text)
+        call(self._step_success, idx, gist_id[:8])
+        idx += 1
+
+        username = self.discovery.identity.github_username
+        if isinstance(resolved, ResolvedSSHKey):
+            config: Config = GistConfig(
+                contributor_id=ContributorId(username),
+                key_path=resolved.info.path,
+                gist_id=gist_id,
+            )
+        else:
+            config = GPGConfig(
+                contributor_type="gist",
+                contributor_id=ContributorId(f"{username}/{gist_id}"),
+                fpr=resolved.info.fpr,
+            )
+
+        call(self._step_running, idx)
+        call(self._step_success, idx)
+        idx += 1
+
+        call(self._step_running, idx)
+        location = "GitHub gist"
+        lookup = (
+            f"@{username} · gist {gist_id[:8]}"
+            if isinstance(resolved, ResolvedSSHKey)
+            else f"GPG {fpr[-8:]} · gist {gist_id[:8]}"
+        )
+        call(self._on_working_complete, route, config, location, lookup)
+
+    def _execute_openpgp(self, route: SetupRoute, call) -> None:
+        idx = 0
+        if isinstance(route.key_plan, GenerateGPGKey):
+            call(self._step_running, idx)
+            self._resolve_key(route)
+            resolved = self.aggregate.resolved_key
+            assert isinstance(resolved, ResolvedGPGKey)
+            call(self._step_success, idx, resolved.info.fpr[-8:])
+            idx += 1
+        else:
+            self._resolve_key(route)
+            resolved = self.aggregate.resolved_key
+            assert isinstance(resolved, ResolvedGPGKey)
+
+        call(self._step_running, idx)
+        armor = GPGBackend(fpr=resolved.info.fpr).public_key_text()
+        try:
+            token, statuses = KeyDiscovery.upload_openpgp_key(armor)
+        except httpx.HTTPError as exc:
+            call(self._on_openpgp_api_failure, route, resolved, armor, Sanitizer.error(str(exc)))
+            return
+        call(self._step_success, idx)
+        idx += 1
+
+        emails = [e for e, s in statuses.items() if s == "unpublished"] or [self._resolved_email() or resolved.info.email]
+        emails = [e for e in emails if e]
+        call(self._step_running, idx)
+        if emails:
+            try:
+                KeyDiscovery.request_openpgp_verify(token, emails)
+            except httpx.HTTPError as exc:
+                call(self._on_openpgp_api_failure, route, resolved, armor, Sanitizer.error(str(exc)))
+                return
+        call(self._step_success, idx, ", ".join(emails))
+        idx += 1
+
+        config: Config = GPGConfig(
+            contributor_type="gpg",
+            contributor_id=ContributorId(resolved.info.fpr),
+            fpr=resolved.info.fpr,
+        )
+
+        location = "keys.openpgp.org"
+        lookup = f"GPG {resolved.info.fpr[-8:]}"
+        instructions = OPENPGP_AFTER_SEND.format(email=", ".join(emails))
+        call(self._on_working_pending, route, config, location, lookup, instructions)
+
+    def _on_openpgp_api_failure(
+        self,
+        route: SetupRoute,
+        resolved: ResolvedGPGKey,
+        armor: str,
+        error: str,
+    ) -> None:
+        Clipboard.copy(armor)
+        Browser.open(OPENPGP_UPLOAD_URL)
+        config: Config = GPGConfig(
+            contributor_type="gpg",
+            contributor_id=ContributorId(resolved.info.fpr),
+            fpr=resolved.info.fpr,
+        )
+        instructions = OPENPGP_API_FAILURE.format(error=error)
+        location = "keys.openpgp.org"
+        lookup = f"GPG {resolved.info.fpr[-8:]}"
+        self._on_working_pending(route, config, location, lookup, instructions)
+
+    def _execute_github_ssh(self, route: SetupRoute, call) -> None:
+        self._resolve_key(route)
+        resolved = self.aggregate.resolved_key
+        assert isinstance(resolved, ResolvedSSHKey)
+        idx = 0
+        call(self._step_running, idx)
+        if not KeyDiscovery.upload_github_ssh_key(resolved.info):
+            raise AssertionError("gh ssh-key add failed")
+        call(self._step_success, idx)
+        idx += 1
+        username = self.discovery.identity.github_username
+        config: Config = SSHConfig(contributor_id=ContributorId(username), key_path=resolved.info.path)
+        call(self._step_success, idx)
+        idx += 1
+        call(self._step_running, idx)
+        call(self._on_working_pending, route, config, "GitHub SSH keys", f"@{username}", "")
+
+    def _execute_github_gpg(self, route: SetupRoute, call) -> None:
+        self._resolve_key(route)
+        resolved = self.aggregate.resolved_key
+        assert isinstance(resolved, ResolvedGPGKey)
+        idx = 0
+        call(self._step_running, idx)
+        if not KeyDiscovery.upload_github_gpg_key(resolved.info):
+            raise AssertionError("gh gpg-key add failed")
+        call(self._step_success, idx)
+        idx += 1
+        username = self.discovery.identity.github_username
+        config: Config = GPGConfig(
+            contributor_type="github",
+            contributor_id=ContributorId(username),
+            fpr=resolved.info.fpr,
+        )
+        call(self._step_success, idx)
+        idx += 1
+        call(self._step_running, idx)
+        call(self._on_working_pending, route, config, "GitHub GPG keys", f"@{username}", "")
+
+    def _on_working_complete(
+        self,
+        route: SetupRoute,
+        config: Config,
+        location: str,
+        lookup: str,
+    ) -> None:
+        self.aggregate.working.steps[-1].state = WorkStepState.SUCCESS
+        self._render_working()
+        self.aggregate.candidate.stage(config, location, lookup)
+        self.aggregate.verification_poll.restart(monotonic())
+        self.verify_server_config()
+
+    def _on_working_pending(
+        self,
+        route: SetupRoute,
+        config: Config,
+        location: str,
+        lookup: str,
+        instructions: str,
+    ) -> None:
+        self.aggregate.working.steps[-1].state = WorkStepState.WARNING
+        self._render_working()
+        self.aggregate.candidate.stage(config, location, lookup)
+        self._persist_pending(route, location, "")
+        self.aggregate.verification_poll.restart(monotonic())
+        self.aggregate.guide.reset(monotonic())
+        with suppress(NoMatches):
+            self.query_one("#guide-instructions", Static).update(instructions)
+        self._render_guide_status()
+        self.transition_to(SetupStage.GUIDE)
+        self._render_guide_buttons(route)
+        self.verify_server_config()
+
+    def _on_working_failure(self, route: SetupRoute, error: str) -> None:
+        for step in self.aggregate.working.steps:
+            if step.state is WorkStepState.RUNNING:
+                step.state = WorkStepState.ERROR
+                step.detail = error
+        self.aggregate.working.failure_text = WORKING_RECOVERABLE_FAILURE.format(error=error)
+        self._render_working()
+
+    @on(Button.Pressed, "#working-guide")
+    async def on_working_guide(self) -> None:
+        if self.selected_route is None:
+            return
+        await self._enter_guide(self.selected_route)
+
+    @on(Button.Pressed, "#working-retry")
+    async def on_working_retry(self) -> None:
+        if self.selected_route is None:
+            return
+        await self._enter_working(self.selected_route)
+
+    @on(Button.Pressed, "#working-redo")
+    async def on_working_redo(self) -> None:
+        self._clear_pending_candidate()
+        await self._enter_propose()
+
+    async def _enter_guide(self, route: SetupRoute) -> None:
+        self.selected_route = route
+        self.aggregate.guide.reset(monotonic())
+        instructions, gist_url_visible = self._guide_instructions(route)
+        with suppress(NoMatches):
+            self.query_one("#guide-instructions", Static).update(instructions)
+        with suppress(NoMatches):
+            self.query_one("#guide-gist-url", Input).display = gist_url_visible
+        with suppress(NoMatches):
+            self.query_one("#guide-error", Static).update("")
+        self._render_guide_status()
+        self.transition_to(SetupStage.GUIDE)
+        await self._guide_clipboard_and_browser(route)
+        self._guide_apply_temp_config(route)
+        self._persist_pending(route, PUBLIC_LOCATION_LABEL.get(route.publish_method, ""), "")
+        self._render_guide_buttons(route)
+        if route.publish_method is not PublishMethod.OPENPGP:
+            self.verify_server_config()
+
+    def _render_guide_buttons(self, route: SetupRoute) -> None:
+        with suppress(NoMatches):
+            primary = self.query_one("#guide-check", Button)
+            if (
+                route.publish_method is PublishMethod.OPENPGP
+                and not self.aggregate.guide.openpgp_email_sent
+            ):
+                primary.label = "Send verification email"
+            else:
+                primary.label = "Check now"
+
+    def _guide_instructions(self, route: SetupRoute) -> tuple[str, bool]:
+        match route.publish_method:
+            case PublishMethod.GIST_MANUAL:
+                steps = "\n".join(MANUAL_GIST_STEPS)
+                return f"{MANUAL_GIST_INTRO}\n\n{steps}\n\n{MANUAL_GIST_FOOTER}", True
+            case PublishMethod.GITHUB_SSH:
+                steps = "\n".join(GITHUB_SSH_GUIDE_STEPS)
+                return f"{GITHUB_SSH_GUIDE_INTRO}\n\n{steps}", False
+            case PublishMethod.GITHUB_GPG:
+                steps = "\n".join(GITHUB_GPG_GUIDE_STEPS)
+                return f"{GITHUB_GPG_GUIDE_INTRO}\n\n{steps}", False
+            case PublishMethod.OPENPGP:
+                email = self._resolved_email()
+                return OPENPGP_BEFORE_SEND.format(email=email or "your address"), False
+            case _:
+                return "", False
+
+    async def _guide_clipboard_and_browser(self, route: SetupRoute) -> None:
+        match route.publish_method:
+            case PublishMethod.GIST_MANUAL:
+                resolved = self._resolve_key(route)
+                Clipboard.copy(self._public_key_text(resolved))
+                Browser.open(GIST_NEW_URL)
+            case PublishMethod.GITHUB_SSH:
+                resolved = self._resolve_key(route)
+                Clipboard.copy(self._public_key_text(resolved))
+                Browser.open(GITHUB_SSH_NEW_URL)
+            case PublishMethod.GITHUB_GPG:
+                resolved = self._resolve_key(route)
+                Clipboard.copy(self._public_key_text(resolved))
+                Browser.open(GITHUB_GPG_NEW_URL)
+            case PublishMethod.OPENPGP:
+                Browser.open(OPENPGP_UPLOAD_URL)
+            case _:
+                pass
+
+    @staticmethod
+    def _public_key_text(resolved: ResolvedKey) -> str:
+        match resolved:
+            case ResolvedSSHKey(info=info):
+                return SSHBackend(private_key_path=info.path).public_key_text()
+            case ResolvedGPGKey(info=info):
+                return GPGBackend(fpr=info.fpr).public_key_text()
+
+    def _guide_apply_temp_config(self, route: SetupRoute) -> None:
+        username = self.discovery.identity.github_username
+        match route.publish_method:
+            case PublishMethod.GITHUB_SSH:
+                resolved = self._resolve_key(route)
+                assert isinstance(resolved, ResolvedSSHKey)
+                self.aggregate.candidate.stage(
+                    SSHConfig(
+                        contributor_id=ContributorId(username),
+                        key_path=resolved.info.path,
+                    ),
+                    "GitHub SSH keys",
+                    f"@{username}",
                 )
-
-            case VerificationAction.GITHUB_GPG:
-                assert isinstance(key, GPGKeyInfo)
-                pub_text = GPGBackend(fpr=key.fpr).public_key_text()
-                with tempfile.NamedTemporaryFile(mode="w", suffix=".asc", delete=False) as f:
-                    f.write(pub_text)
-                    tmp_path = Path(f.name)
-                self._run_gh_link(
-                    VerificationAction.GITHUB_GPG,
-                    ["gh", "gpg-key", "add", str(tmp_path)],
-                    tmp_path,
-                    cleanup=True,
+            case PublishMethod.GITHUB_GPG:
+                resolved = self._resolve_key(route)
+                assert isinstance(resolved, ResolvedGPGKey)
+                self.aggregate.candidate.stage(
+                    GPGConfig(
+                        contributor_type="github",
+                        contributor_id=ContributorId(username),
+                        fpr=resolved.info.fpr,
+                    ),
+                    "GitHub GPG keys",
+                    f"@{username}",
                 )
-
-            case VerificationAction.OPENPGP:
-                assert isinstance(key, GPGKeyInfo)
-                call(self._set_tone, result_label, "Publishing to keys.openpgp.org...")
-                try:
-                    pub_text = GPGBackend(fpr=key.fpr).public_key_text()
-                    token, statuses = KeyDiscovery.upload_openpgp_key(pub_text)
-                    emails = [e for e, s in statuses.items() if s == "unpublished"]
-                    if emails:
-                        KeyDiscovery.request_openpgp_verify(token, emails)
-                        call(
-                            self._set_tone,
-                            result_label,
-                            f"Almost done. Check your email ({', '.join(emails)}) "
-                            "for a verification link.",
-                            Tone.WARNING,
-                        )
-                    else:
-                        call(
-                            self._set_tone,
-                            result_label,
-                            "Key already published. You're all set.",
-                            Tone.SUCCESS,
-                        )
-                    self.done_display.verification_action = VerificationAction.OPENPGP
-                    call(self._save_and_finish)
-                except httpx.HTTPError as e:
-                    call(self._set_tone, result_label, f"Couldn't reach keys.openpgp.org: {e}", Tone.ERROR)
-                    self.actions.upload_running = False
-
-            case VerificationAction.MANUAL:
-                assert key is not None
-                self.done_display.verification_action = VerificationAction.MANUAL
-                call(
-                    self._set_tone,
-                    result_label,
-                    f"Paste your public key at:\n{self._manual_destination_url()}",
+            case PublishMethod.OPENPGP:
+                resolved = self._resolve_key(route)
+                assert isinstance(resolved, ResolvedGPGKey)
+                self.aggregate.candidate.stage(
+                    GPGConfig(
+                        contributor_type="gpg",
+                        contributor_id=ContributorId(resolved.info.fpr),
+                        fpr=resolved.info.fpr,
+                    ),
+                    "keys.openpgp.org",
+                    f"GPG {resolved.info.fpr[-8:]}",
                 )
-                call(self._save_and_finish)
+            case _:
+                pass
 
-    def _save_and_finish(self) -> None:
-        self.done_display.upload_failure_text = ""
-        self.done_display.failed_retry_target = None
-        self._apply_selected_config()
-        action = self.done_display.verification_action or VerificationAction.MANUAL
-        self.actions.upload_running = False
-        self._enter_done(VerificationState.PENDING, action=action, verify=True)
+    def _render_guide_status(self) -> None:
+        guide = self.aggregate.guide
+        elapsed = max(0, int(monotonic() - guide.started_at)) if guide.started_at else 0
+        last_checked = "never"
+        if guide.last_checked_at:
+            last_checked = "just now" if monotonic() - guide.last_checked_at < 5 else f"{int(monotonic() - guide.last_checked_at)}s ago"
+        rows = [
+            f"  Public key: {'found' if guide.public_key_found else 'waiting'}",
+            f"  sentiments.cc verification: "
+            f"{'verified' if guide.server_verified else ('failed' if guide.last_error else 'waiting')}",
+            f"  Last checked: {last_checked}",
+            f"  Elapsed: {elapsed // 60}:{elapsed % 60:02d}",
+        ]
+        with suppress(NoMatches):
+            self.query_one("#guide-status-panel", Static).update("\n".join(rows))
+        with suppress(NoMatches):
+            self.query_one("#guide-error", Static).update(
+                Sanitizer.error(guide.last_error) if guide.last_error else ""
+            )
+        with suppress(NoMatches):
+            self.query_one("#guide-pending", PendingStatus).label = (
+                "Verification verified."
+                if guide.server_verified
+                else f"Waiting for the public key to propagate… {elapsed // 60}:{elapsed % 60:02d}"
+            )
+
+    @on(Button.Pressed, "#guide-check")
+    async def on_guide_check(self) -> None:
+        if (
+            self.selected_route is not None
+            and self.selected_route.publish_method is PublishMethod.OPENPGP
+            and not self.aggregate.guide.openpgp_email_sent
+        ):
+            await self._openpgp_send_email()
+            return
+        self.aggregate.guide.last_checked_at = monotonic()
+        self.verify_server_config()
+
+    async def _openpgp_send_email(self) -> None:
+        route = self.selected_route
+        assert route is not None
+        resolved = self._resolve_key(route)
+        assert isinstance(resolved, ResolvedGPGKey)
+        armor = await anyio.to_thread.run_sync(
+            lambda: GPGBackend(fpr=resolved.info.fpr).public_key_text()
+        )
+        try:
+            token, statuses = await anyio.to_thread.run_sync(KeyDiscovery.upload_openpgp_key, armor)
+        except httpx.HTTPError as exc:
+            self._update_status("guide-error", Sanitizer.error(str(exc)), Tone.ERROR)
+            return
+        emails = [e for e, s in statuses.items() if s == "unpublished"] or [
+            self._resolved_email() or resolved.info.email,
+        ]
+        emails = [e for e in emails if e]
+        if emails:
+            try:
+                await anyio.to_thread.run_sync(KeyDiscovery.request_openpgp_verify, token, emails)
+            except httpx.HTTPError as exc:
+                self._update_status("guide-error", Sanitizer.error(str(exc)), Tone.ERROR)
+                return
+        self.aggregate.guide.openpgp_email_sent = True
+        with suppress(NoMatches):
+            self.query_one("#guide-instructions", Static).update(
+                OPENPGP_AFTER_SEND.format(email=", ".join(emails))
+            )
+        self._render_guide_buttons(route)
+
+    @on(Button.Pressed, "#guide-open")
+    def on_guide_open(self) -> None:
+        if self.selected_route is None:
+            return
+        match self.selected_route.publish_method:
+            case PublishMethod.GIST_MANUAL:
+                Browser.open(GIST_NEW_URL)
+            case PublishMethod.GITHUB_SSH:
+                Browser.open(GITHUB_SSH_NEW_URL)
+            case PublishMethod.GITHUB_GPG:
+                Browser.open(GITHUB_GPG_NEW_URL)
+            case PublishMethod.OPENPGP:
+                Browser.open(OPENPGP_UPLOAD_URL)
+            case _:
+                pass
+
+    @on(Button.Pressed, "#guide-redo")
+    async def on_guide_redo(self) -> None:
+        self._clear_pending_candidate()
+        await self._enter_propose()
+
+    @on(Button.Pressed, "#guide-exit")
+    def on_guide_exit(self) -> None:
+        self.dismiss(False)
+
+    @on(Input.Submitted, "#guide-gist-url")
+    async def on_guide_gist_url(self, event: Input.Submitted) -> None:
+        url = event.value.strip()
+        if "/" not in url:
+            return
+        gist_id = GistDiscovery.parse_gist_id(url)
+        if not gist_id:
+            return
+        username = self.discovery.identity.github_username
+        resolved = self.aggregate.resolved_key
+        if resolved is None or username == "":
+            return
+        description = await anyio.to_thread.run_sync(GistDiscovery.fetch_gist_description, gist_id)
+        if description is None:
+            self._update_status("guide-error", MANUAL_GIST_NOT_FOUND, Tone.WARNING)
+            return
+        if description.strip() != "cc-sentiment public key":
+            self._update_status("guide-error", MANUAL_GIST_DESCRIPTION_MISMATCH, Tone.WARNING)
+            return
+        candidate: Config = (
+            GistConfig(
+                contributor_id=ContributorId(username),
+                key_path=resolved.info.path,
+                gist_id=gist_id,
+            )
+            if isinstance(resolved, ResolvedSSHKey)
+            else GPGConfig(
+                contributor_type="gist",
+                contributor_id=ContributorId(f"{username}/{gist_id}"),
+                fpr=resolved.info.fpr,
+            )
+        )
+        self.aggregate.candidate.stage(
+            candidate, "GitHub gist", f"@{username} · gist {gist_id[:8]}",
+        )
+        if self.aggregate.pending is not None:
+            self.aggregate.pending.gist_id = gist_id
+            self._persist_pending_from_state(self.aggregate.pending)
+        self.verify_server_config()
+
+    @on(Button.Pressed, "#tools-primary")
+    async def on_tools_primary(self) -> None:
+        if self.actions.tools_running:
+            return
+        self.actions.tools_running = True
+        try:
+            caps = self.discovery.capabilities
+            if caps.has_gh and not caps.gh_authed:
+                ok = await anyio.to_thread.run_sync(KeyDiscovery.gh_auth_login_interactive)
+                if not ok:
+                    self._update_status("tools-status", "gh auth login didn't finish.", Tone.ERROR)
+                    return
+            elif caps.has_brew:
+                ok, err = await anyio.to_thread.run_sync(KeyDiscovery.install_with_brew, "gh")
+                if not ok:
+                    self._update_status("tools-status", err or "brew install failed", Tone.ERROR)
+                    return
+            await self._run_discover_phase()
+        finally:
+            self.actions.tools_running = False
+
+    @on(Button.Pressed, "#tools-secondary")
+    async def on_tools_secondary(self) -> None:
+        if self.actions.tools_running:
+            return
+        self.actions.tools_running = True
+        try:
+            caps = self.discovery.capabilities
+            if caps.has_gh and not caps.gh_authed:
+                # "Continue without GitHub CLI"
+                await self._run_discover_phase()
+                return
+            if caps.has_brew:
+                ok, err = await anyio.to_thread.run_sync(KeyDiscovery.install_with_brew, "gnupg")
+                if not ok:
+                    self._update_status("tools-status", err or "brew install failed", Tone.ERROR)
+                    return
+                await self._run_discover_phase()
+                return
+            await self._enter_propose()
+        finally:
+            self.actions.tools_running = False
+
+    @on(Button.Pressed, "#tools-tertiary")
+    async def on_tools_tertiary(self) -> None:
+        await self._enter_propose()
+
+    def _persist_pending(self, route: SetupRoute, location: str, gist_id: str) -> None:
+        if route.key_kind is None or route.publish_method is None:
+            return
+        resolved = self._resolve_key(route)
+        username = self.discovery.identity.github_username
+        email = self._resolved_email()
+        match resolved:
+            case ResolvedSSHKey(info=info, managed=managed):
+                key_path = info.path
+                key_fpr = None
+                key_kind = KeyKind.SSH
+                key_managed = managed
+            case ResolvedGPGKey(info=info, managed=managed):
+                key_path = None
+                key_fpr = info.fpr
+                key_kind = KeyKind.GPG
+                key_managed = managed
+        pending = PendingSetup(
+            route_id=route.route_id,
+            publish_method=route.publish_method,
+            key_kind=key_kind,
+            key_managed=key_managed,
+            key_path=key_path,
+            key_fpr=key_fpr,
+            username=username,
+            email=email,
+            public_location=location,
+            gist_id=gist_id,
+            started_at=self.aggregate.guide.started_at or monotonic(),
+            updated_at=monotonic(),
+        )
+        self.aggregate.pending = pending
+        self._persist_pending_from_state(pending)
+
+    def _persist_pending_from_state(self, pending: PendingSetup) -> None:
+        self.state.pending_setup = PendingSetupModel(
+            route_id=pending.route_id.value,
+            publish_method=pending.publish_method.value,
+            key_kind=pending.key_kind.value,
+            key_managed=pending.key_managed,
+            key_path=pending.key_path,
+            key_fpr=pending.key_fpr,
+            username=pending.username,
+            email=pending.email,
+            public_location=pending.public_location,
+            gist_id=pending.gist_id,
+            last_status=pending.last_status,
+            last_error=pending.last_error,
+            started_at=pending.started_at,
+            updated_at=pending.updated_at,
+        )
+        self.state.save()
+
+    @staticmethod
+    def _pending_from_model(model: PendingSetupModel) -> PendingSetup:
+        return PendingSetup(
+            route_id=RouteId(model.route_id),
+            publish_method=PublishMethod(model.publish_method),
+            key_kind=KeyKind(model.key_kind),
+            key_managed=model.key_managed,
+            key_path=model.key_path,
+            key_fpr=model.key_fpr,
+            username=model.username,
+            email=model.email,
+            public_location=model.public_location,
+            gist_id=model.gist_id,
+            last_status=model.last_status,
+            last_error=model.last_error,
+            started_at=model.started_at,
+            updated_at=model.updated_at,
+        )
+
+    async def _enter_guide_for_resume(self) -> None:
+        pending = self.aggregate.pending
+        assert pending is not None
+        match pending.key_kind:
+            case KeyKind.SSH:
+                assert pending.key_path is not None
+                self.aggregate.resolved_key = ResolvedSSHKey(
+                    info=self._rehydrate_ssh_info(pending.key_path),
+                    managed=pending.key_managed,
+                )
+            case KeyKind.GPG:
+                assert pending.key_fpr is not None
+                self.aggregate.resolved_key = ResolvedGPGKey(
+                    info=self._rehydrate_gpg_info(pending.key_fpr, pending.email),
+                    managed=pending.key_managed,
+                )
+        instructions = RESUME_COPY
+        with suppress(NoMatches):
+            self.query_one("#guide-instructions", Static).update(instructions)
+        self.aggregate.guide.reset(monotonic())
+        self._render_guide_status()
+        self.transition_to(SetupStage.GUIDE)
+        self.verify_server_config()
+
+    @staticmethod
+    def _rehydrate_ssh_info(key_path) -> SSHKeyInfo:
+        pub = key_path.with_suffix(key_path.suffix + ".pub")
+        if pub.exists() and (parts := pub.read_text().strip().split(maxsplit=2)):
+            algorithm = parts[0] if parts else ""
+            comment = parts[2] if len(parts) >= 3 else ""
+            return SSHKeyInfo(path=key_path, algorithm=algorithm, comment=comment)
+        return SSHKeyInfo(path=key_path, algorithm="", comment="")
+
+    @staticmethod
+    def _rehydrate_gpg_info(fpr: str, fallback_email: str) -> GPGKeyInfo:
+        return GPGKeyInfo(fpr=fpr, email=fallback_email, algo="")
+
+    def _enter_settings_for_saved_config(self) -> None:
+        location, lookup = self._derive_location(self.state.config)
+        self._set_done_branch(location, lookup)
+        self.transition_to(SetupStage.SETTINGS)
+
+    def _set_done_branch(self, location: str, lookup: str) -> None:
+        with suppress(NoMatches):
+            branch = self.query_one("#done-branch", DoneBranch)
+            branch.public_location = location
+            branch.lookup_value = lookup
+
+    def _derive_location(self, config: Config | None) -> tuple[str, str]:
+        match config:
+            case SSHConfig(contributor_id=cid):
+                return "GitHub SSH keys", f"@{cid}"
+            case GistConfig(contributor_id=cid, gist_id=gid):
+                return "GitHub gist", f"@{cid} · gist {gid[:8]}"
+            case GPGConfig(contributor_type="github", contributor_id=cid):
+                return "GitHub GPG keys", f"@{cid}"
+            case GPGConfig(contributor_type="gpg", fpr=fpr):
+                return "keys.openpgp.org", f"GPG {fpr[-8:]}"
+            case GPGConfig(contributor_type="gist", contributor_id=cid):
+                user, _, gid = cid.partition("/")
+                return "GitHub gist", f"@{user} · gist {gid[:8]}"
+            case _:
+                return "unknown", ""
+
+    def _tick_pending(self) -> None:
+        if self.current_stage is SetupStage.GUIDE:
+            self._render_guide_status()
+
+    def _poll_due(self) -> None:
+        if self.current_stage not in (SetupStage.SETTINGS, SetupStage.GUIDE):
+            return
+        if self.verify_worker is not None and self.verify_worker.is_running:
+            return
+        if not self.aggregate.verification_poll.due(monotonic()):
+            return
+        self.aggregate.verification_poll.clear()
+        self.verify_server_config()
 
     def verify_server_config(self) -> None:
         if self.verify_worker is not None and self.verify_worker.is_running:
@@ -1424,41 +1666,114 @@ Expire-Date: 0
 
     async def _verify_server_config(self) -> None:
         try:
-            await anyio.to_thread.run_sync(self.state.save)
-            assert self.state.config is not None
+            target = self.aggregate.candidate.config or self.state.config
+            if target is None:
+                return
             try:
-                result = await Uploader().probe_credentials(self.state.config)
-            except httpx.HTTPError as error:
-                result = AuthUnreachable(detail=str(error))
+                result = await Uploader().probe_credentials(target)
+            except httpx.HTTPError as e:
+                result = AuthUnreachable(detail=str(e))
             self._on_verify_result(result)
         finally:
             self.verify_worker = None
+
+    def _on_verify_result(self, result: AuthResult) -> None:
+        match result:
+            case AuthOk():
+                self.aggregate.verification_poll.clear()
+                self.aggregate.guide.server_verified = True
+                self.aggregate.guide.last_error = ""
+                self.aggregate.pending = None
+                self.state.pending_setup = None
+                candidate = self.aggregate.candidate
+                if candidate.config is not None:
+                    self.state.config = candidate.config
+                derived = self._derive_location(self.state.config)
+                location = candidate.location or derived[0]
+                lookup = candidate.lookup or derived[1]
+                candidate.clear()
+                self.state.save()
+                self._set_done_branch(location, lookup)
+                if self.current_stage is not SetupStage.SETTINGS:
+                    self.transition_to(SetupStage.SETTINGS)
+            case AuthUnauthorized():
+                if monotonic() - self.aggregate.verification_poll.started_at < PENDING_PROPAGATION_WINDOW_SECONDS:
+                    self.aggregate.verification_poll.schedule_next(monotonic())
+                    self.aggregate.guide.last_checked_at = monotonic()
+                    self._render_guide_status()
+                else:
+                    self.aggregate.verification_poll.clear()
+                    if (
+                        self.selected_route is not None
+                        and self.selected_route.publish_method is PublishMethod.GIST_MANUAL
+                    ):
+                        self.aggregate.guide.last_error = MANUAL_GIST_NOT_FOUND
+                        self._update_status("guide-error", MANUAL_GIST_NOT_FOUND, Tone.WARNING)
+                        return
+                    self.aggregate.guide.last_error = "sentiments.cc still couldn't verify the public key."
+                    self._enter_fix(self.aggregate.guide.last_error)
+            case AuthUnreachable() | AuthServerError():
+                self.aggregate.verification_poll.schedule_next(monotonic())
+                self.aggregate.guide.last_checked_at = monotonic()
+                self._render_guide_status()
+
+    def _enter_fix(self, error: str) -> None:
+        self.aggregate.fix.last_error = error
+        with suppress(NoMatches):
+            self.query_one("#fix-error", Static).update(f"Last error: {Sanitizer.error(error)}")
+        self.transition_to(SetupStage.FIX)
+
+    @on(Button.Pressed, "#fix-retry")
+    async def on_fix_retry(self) -> None:
+        if self.selected_route is None:
+            return
+        self.aggregate.verification_poll.restart(monotonic())
+        if self.selected_route.automated:
+            await self._enter_working(self.selected_route)
+        else:
+            await self._enter_guide(self.selected_route)
+
+    @on(Button.Pressed, "#fix-back-guide")
+    async def on_fix_back_guide(self) -> None:
+        if self.selected_route is None:
+            return
+        await self._enter_guide(self.selected_route)
+
+    @on(Button.Pressed, "#fix-redo")
+    async def on_fix_redo(self) -> None:
+        self._clear_pending_candidate()
+        await self._enter_propose()
+
+    def _clear_pending_candidate(self) -> None:
+        self.aggregate.candidate.clear()
+        self.aggregate.pending = None
+        self.aggregate.resolved_key = None
+        if self.state.pending_setup is not None:
+            self.state.pending_setup = None
+            self.state.save()
+
+    @on(Button.Pressed, "#fix-open-issue")
+    def on_fix_open_issue(self) -> None:
+        route = self.selected_route
+        location = (
+            PUBLIC_LOCATION_LABEL.get(route.publish_method, "unknown")
+            if route and route.publish_method
+            else "unknown"
+        )
+        Browser.open(IssueUrl.build(
+            route.route_id.value if route else "",
+            location,
+            self.aggregate.fix.last_error or "no detail",
+        ))
 
     @on(Button.Pressed, "#done-btn")
     def on_done(self) -> None:
         self.dismiss(True)
 
-    def _retry_verification(self) -> None:
-        self._cancel_verify_worker()
-        self._set_verification_branch(VerificationState.PENDING)
-        self.verify_server_config()
-
-    @on(Button.Pressed, "#pending-retry")
-    def on_pending_retry(self) -> None:
-        self._retry_verification()
-
-    @on(Button.Pressed, "#failed-retry")
-    async def on_failed_retry(self) -> None:
-        if self.done_display.failed_retry_target is RetryTarget.UPLOAD:
-            self.transition_to(SetupStage.UPLOAD)
-            await self._populate_upload_options()
-            return
-        self._retry_verification()
-
-    @on(Button.Pressed, "#pending-exit")
-    @on(Button.Pressed, "#failed-exit")
-    def on_exit(self) -> None:
-        self.dismiss(False)
-
-    def action_cancel(self) -> None:
-        self.dismiss(False)
+    def _update_status(self, widget_id: str, text: str, tone: Tone = Tone.MUTED) -> None:
+        with suppress(NoMatches):
+            widget = self.query_one(f"#{widget_id}", Static)
+            for member in Tone:
+                widget.remove_class(member.value)
+            widget.add_class(tone.value)
+            widget.update(text)

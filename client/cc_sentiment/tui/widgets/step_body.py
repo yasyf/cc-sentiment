@@ -28,9 +28,6 @@ class StepBody(Vertical):
         width: 100%;
         margin: 0 0 1 0;
     }
-    StepBody > KeyPreview {
-        margin: 0 0 1 0;
-    }
     StepBody > .status-line {
         width: 100%;
         min-height: 1;

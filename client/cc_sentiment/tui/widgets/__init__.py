@@ -6,7 +6,6 @@ from cc_sentiment.tui.widgets.command_box import CommandBox
 from cc_sentiment.tui.widgets.debug_section import DebugSection
 from cc_sentiment.tui.widgets.done_branch import DoneBranch
 from cc_sentiment.tui.widgets.hourly_chart import HourlyChart
-from cc_sentiment.tui.widgets.key_preview import KeyPreview
 from cc_sentiment.tui.widgets.pending_status import PendingStatus
 from cc_sentiment.tui.widgets.progress_row import ProgressRow
 from cc_sentiment.tui.widgets.section import Section
@@ -23,7 +22,6 @@ __all__ = [
     "DebugSection",
     "DoneBranch",
     "HourlyChart",
-    "KeyPreview",
     "PendingStatus",
     "ProgressRow",
     "Section",

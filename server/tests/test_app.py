@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -45,6 +45,7 @@ def verifier() -> AsyncMock:
     v = AsyncMock()
     v.verify_signature.return_value = True
     v.resolve_avatar_url.return_value = "https://github.com/octocat.png?size=400"
+    v.parse_gist_id = MagicMock(side_effect=lambda combined: tuple(combined.split("/", 1)))
     return v
 
 

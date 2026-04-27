@@ -3,11 +3,33 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated, Literal, NewType
 
-from pydantic import BaseModel, Discriminator, Tag
+from pydantic import BaseModel, Discriminator, Tag, model_validator
 
 ContributorId = NewType("ContributorId", str)
 
 ContributorType = Literal["github", "gpg", "gist"]
+
+RouteIdLiteral = Literal[
+    "managed-ssh-gist",
+    "managed-gpg-openpgp",
+    "managed-ssh-manual-gist",
+    "existing-ssh-gist",
+    "existing-ssh-github",
+    "existing-ssh-manual-gist",
+    "existing-gpg-gist",
+    "existing-gpg-openpgp",
+    "existing-gpg-github",
+]
+
+PublishMethodLiteral = Literal[
+    "gist-auto",
+    "gist-manual",
+    "github-ssh",
+    "github-gpg",
+    "openpgp",
+]
+
+KeyKindLiteral = Literal["ssh", "gpg"]
 
 
 class SSHConfig(BaseModel, frozen=True):
@@ -40,10 +62,41 @@ ClientConfig = Annotated[
 ]
 
 
+class PendingSetupModel(BaseModel, frozen=True):
+    model_config = {"extra": "forbid"}
+
+    route_id: RouteIdLiteral
+    publish_method: PublishMethodLiteral
+    key_kind: KeyKindLiteral
+    key_managed: bool
+    key_path: Path | None = None
+    key_fpr: str | None = None
+    username: str = ""
+    email: str = ""
+    public_location: str = ""
+    gist_id: str = ""
+    last_status: str = ""
+    last_error: str = ""
+    started_at: float = 0.0
+    updated_at: float = 0.0
+
+    @model_validator(mode="after")
+    def _validate_key_fields(self) -> PendingSetupModel:
+        match self.key_kind:
+            case "ssh":
+                assert self.key_path is not None, "ssh route requires key_path"
+                assert self.key_fpr is None, "ssh route forbids key_fpr"
+            case "gpg":
+                assert self.key_fpr is not None, "gpg route requires key_fpr"
+                assert self.key_path is None, "gpg route forbids key_path"
+        return self
+
+
 class AppState(BaseModel):
     model_config = {"extra": "ignore"}
 
     config: ClientConfig | None = None
+    pending_setup: PendingSetupModel | None = None
     has_celebrated_first_upload: bool = False
 
     @classmethod

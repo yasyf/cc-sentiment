@@ -23,7 +23,7 @@ class CostReviewScreen(Dialog[bool]):
         with Vertical(id="dialog-box"):
             yield Label("Use Claude to score?", classes="title")
             yield Static(
-                f"This Mac can't run scoring locally, so we'll use Claude through your account "
+                f"This device can't run scoring locally, so we'll use Claude through your account "
                 f"to score [b]{self.bucket_count}[/] new conversations.",
                 classes="detail",
             )
@@ -33,7 +33,7 @@ class CostReviewScreen(Dialog[bool]):
             )
             yield Static(
                 "Billed by Anthropic to your existing Claude account. "
-                "Your conversation text leaves this Mac only for that one API call.",
+                "Your conversation text leaves this device only for that one API call.",
                 classes="detail",
             )
             yield ButtonRow(

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
 import re
 import subprocess
 import tempfile
@@ -52,6 +51,13 @@ class ModalKeyCache(KeyCache):
 class Verifier:
     key_cache: KeyCache | None = None
 
+    @staticmethod
+    def parse_gist_id(combined_id: str) -> tuple[str, str]:
+        username, _, gist_id = combined_id.partition("/")
+        if not username or not gist_id:
+            raise ValueError(f"Invalid gist contributor id: {combined_id!r}")
+        return username, gist_id
+
     async def fetch_github_ssh_keys(self, username: str) -> list[str]:
         async with httpx.AsyncClient() as client:
             response = await client.get(f"https://github.com/{username}.keys", timeout=10.0)
@@ -85,10 +91,10 @@ class Verifier:
                                payload: str, signature: str) -> bool:
         match contributor_type:
             case "github":
-                match signature.split("\n", 1)[0].strip():
-                    case s if "SSH" in s:
+                match self.signature_kind(signature):
+                    case "ssh":
                         return await self.verify_github_ssh(contributor_id, payload, signature)
-                    case s if "PGP" in s:
+                    case "pgp":
                         return await self.verify_github_gpg(contributor_id, payload, signature)
                     case _:
                         raise ValueError("Unknown signature format")
@@ -98,6 +104,24 @@ class Verifier:
                 return await self.verify_gist(contributor_id, payload, signature)
             case _:
                 raise ValueError(f"Unknown contributor type: {contributor_type!r}")
+
+    @staticmethod
+    def signature_kind(signature: str) -> str:
+        first = signature.split("\n", 1)[0].strip()
+        if "SSH" in first:
+            return "ssh"
+        if "PGP" in first:
+            return "pgp"
+        return "unknown"
+
+    @staticmethod
+    def pubkey_kind(content: str) -> str:
+        stripped = (content or "").strip()
+        if stripped.startswith("-----BEGIN PGP PUBLIC KEY BLOCK-----"):
+            return "pgp"
+        if stripped.startswith(("ssh-rsa", "ssh-ed25519", "ssh-dss", "ecdsa-sha2-")):
+            return "ssh"
+        return "unknown"
 
     async def verify_github_ssh(self, username: str, payload: str, signature: str) -> bool:
         if not USERNAME_PATTERN.fullmatch(username):
@@ -193,15 +217,10 @@ class Verifier:
                 None,
             )
 
-    def github_headers(self) -> dict[str, str]:
-        token = os.environ.get("GITHUB_TOKEN")
-        return {"Authorization": f"Bearer {token}"} if token else {}
-
     async def fetch_gist(self, gist_id: str) -> dict:
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"https://api.github.com/gists/{gist_id}",
-                headers=self.github_headers(),
                 timeout=10.0,
             )
             if response.status_code == 404:
@@ -218,9 +237,7 @@ class Verifier:
         return gist.get("files", {}).get(GIST_PUB_FILENAME, {}).get("content", "").strip()
 
     async def verify_gist(self, combined_id: str, payload: str, signature: str) -> bool:
-        username, _, gist_id = combined_id.partition("/")
-        if not username or not gist_id:
-            raise ValueError(f"Invalid gist contributor id: {combined_id!r}")
+        username, gist_id = self.parse_gist_id(combined_id)
         if not USERNAME_PATTERN.fullmatch(username):
             raise ValueError(f"Invalid GitHub username: {username!r}")
         if not GIST_ID_PATTERN.fullmatch(gist_id):
@@ -229,7 +246,7 @@ class Verifier:
         cached_key: str = await self.get_or_fetch(
             f"gist:{gist_id}", self.fetch_gist_pubkey, gist_id, username,
         )
-        if cached_key and await self.verify_with_ssh_key(username, cached_key, payload, signature):
+        if cached_key and await self.verify_with_gist_pubkey(username, cached_key, payload, signature):
             return True
 
         if self.key_cache is None:
@@ -239,8 +256,19 @@ class Verifier:
             f"gist:{gist_id}", self.fetch_gist_pubkey, gist_id, username, force=True,
         )
         if fresh_key and fresh_key != cached_key:
-            return await self.verify_with_ssh_key(username, fresh_key, payload, signature)
+            return await self.verify_with_gist_pubkey(username, fresh_key, payload, signature)
         return False
+
+    async def verify_with_gist_pubkey(
+        self, username: str, pubkey: str, payload: str, signature: str
+    ) -> bool:
+        match self.pubkey_kind(pubkey):
+            case "ssh":
+                return await self.verify_with_ssh_key(username, pubkey, payload, signature)
+            case "pgp":
+                return await self.check_gpg_signature(pubkey, payload, signature)
+            case _:
+                raise ValueError("Unknown gist public key format")
 
     async def check_gpg_signature(self, public_key_armor: str, payload: str, signature: str) -> bool:
         return await asyncio.to_thread(self._check_gpg_signature, public_key_armor, payload, signature)

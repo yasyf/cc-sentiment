@@ -216,7 +216,7 @@ def create_app(
             return JSONResponse({"detail": "Signature verification failed"}, status_code=401)
 
         db_contributor_id = (
-            payload.contributor_id.split("/", 1)[0]
+            verifier.parse_gist_id(payload.contributor_id)[0]
             if payload.contributor_type == "gist"
             else payload.contributor_id
         )
@@ -245,7 +245,7 @@ def create_app(
             return JSONResponse({"detail": "Signature verification failed"}, status_code=401)
 
         db_contributor_id = (
-            payload.contributor_id.split("/", 1)[0]
+            verifier.parse_gist_id(payload.contributor_id)[0]
             if payload.contributor_type == "gist"
             else payload.contributor_id
         )
@@ -278,7 +278,7 @@ def create_app(
             return JSONResponse({"detail": "Stale or future issued_at"}, status_code=400)
 
         db_contributor_id = (
-            body.contributor_id.split("/", 1)[0]
+            verifier.parse_gist_id(body.contributor_id)[0]
             if body.contributor_type == "gist"
             else body.contributor_id
         )

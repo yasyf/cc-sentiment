@@ -8,7 +8,7 @@ from pathlib import Path
 import gnupg
 import httpx
 
-from cc_sentiment.signing.backends import GPGBackend, GPGKeyInfo, SSHBackend, SSHKeyInfo
+from cc_sentiment.signing.backends import GPGKeyInfo, SSHKeyInfo
 
 SSH_DIR = Path.home() / ".ssh"
 SSH_KEY_CANDIDATES = ("id_ed25519", "id_rsa")
@@ -22,10 +22,11 @@ GIST_README_TEMPLATE = """\
 # cc-sentiment public key
 
 This gist holds the public signing key for [cc-sentiment](https://github.com/yasyf/cc-sentiment),
-a local tool that scores Claude Code conversations and uploads a tiny summary row per conversation.
+a local tool that scores Claude Code conversations.
 
-The server reads this public key from here to verify that uploads came from this GitHub account.
-The matching private key stays on one machine and never leaves it.
+The private key stays on the device that generated it. Only aggregate sentiment metrics are uploaded.
+Conversation text, file paths, prompts, tool inputs, and tool outputs are not uploaded.
+GitHub/GPG details are used only so sentiments.cc can find a public key and verify signatures.
 
 If you didn't set this up, you can safely delete this gist.
 """
@@ -120,20 +121,6 @@ class KeyDiscovery:
         return response.json()["status"]
 
     @staticmethod
-    def generate_ssh_key() -> SSHKeyInfo:
-        path = SSH_DIR / "id_ed25519"
-        subprocess.run(
-            ["ssh-keygen", "-t", "ed25519", "-f", str(path), "-N", "", "-C", "cc-sentiment"],
-            check=True, capture_output=True, timeout=10,
-        )
-        parts = path.with_suffix(path.suffix + ".pub").read_text().strip().split()
-        return SSHKeyInfo(
-            path=path,
-            algorithm=parts[0] if len(parts) >= 2 else "unknown",
-            comment=parts[2] if len(parts) >= 3 else "",
-        )
-
-    @staticmethod
     def upload_github_ssh_key(info: SSHKeyInfo) -> bool:
         pub_path = info.path.with_suffix(info.path.suffix + ".pub")
         result = subprocess.run(
@@ -159,19 +146,6 @@ class KeyDiscovery:
         finally:
             tmp_path.unlink(missing_ok=True)
 
-    @classmethod
-    def match_ssh_key(cls, username: str) -> SSHBackend | None:
-        github_keys = cls.fetch_github_ssh_keys(username)
-        if not github_keys:
-            return None
-        for info in cls.find_ssh_keys():
-            if not cls.ssh_key_usable(info.path):
-                continue
-            local_fp = SSHBackend(private_key_path=info.path).fingerprint()
-            if any(" ".join(gk.split()[:2]) == local_fp for gk in github_keys):
-                return SSHBackend(private_key_path=info.path)
-        return None
-
     @staticmethod
     def gh_authenticated() -> bool:
         if not KeyDiscovery.has_tool("gh"):
@@ -183,31 +157,115 @@ class KeyDiscovery:
         return result.returncode == 0
 
     @staticmethod
+    def gh_login() -> str | None:
+        if not KeyDiscovery.has_tool("gh"):
+            return None
+        result = subprocess.run(
+            ["gh", "api", "user", "--jq", ".login"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip() or None
+
+    @staticmethod
+    def gh_primary_email() -> str | None:
+        if not KeyDiscovery.has_tool("gh"):
+            return None
+        result = subprocess.run(
+            [
+                "gh", "api", "user/emails",
+                "--jq", ".[] | select(.primary and .verified) | .email",
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        return next((line.strip() for line in result.stdout.splitlines() if line.strip()), None)
+
+    @staticmethod
+    def gh_auth_login_interactive() -> bool:
+        if not KeyDiscovery.has_tool("gh"):
+            return False
+        result = subprocess.run(["gh", "auth", "login"], timeout=600)
+        return result.returncode == 0
+
+    @staticmethod
+    def has_brew() -> bool:
+        return KeyDiscovery.has_tool("brew")
+
+    @staticmethod
+    def install_with_brew(package: str) -> tuple[bool, str]:
+        result = subprocess.run(
+            ["brew", "install", package],
+            capture_output=True, text=True, timeout=600,
+        )
+        return result.returncode == 0, (result.stderr or result.stdout).strip()
+
+    @staticmethod
+    def is_noreply_email(email: str) -> bool:
+        return "noreply.github.com" in (email or "").lower()
+
+    @staticmethod
+    def fetch_latest_public_repo(username: str) -> str | None:
+        response = httpx.get(
+            f"https://api.github.com/users/{username}/repos",
+            params={"sort": "pushed", "per_page": "5", "type": "owner"},
+            timeout=10.0,
+        )
+        if response.status_code != 200:
+            return None
+        return next(
+            (repo["name"] for repo in response.json() if not repo.get("fork") and not repo.get("private")),
+            None,
+        )
+
+    @staticmethod
+    def fetch_commit_email(username: str, repo: str) -> str | None:
+        response = httpx.get(
+            f"https://api.github.com/repos/{username}/{repo}/commits",
+            params={"author": username, "per_page": "10"},
+            timeout=10.0,
+        )
+        if response.status_code != 200:
+            return None
+        for commit in response.json():
+            email = commit.get("commit", {}).get("author", {}).get("email", "")
+            if email and not KeyDiscovery.is_noreply_email(email):
+                return email
+        return None
+
+    @staticmethod
     def find_gist_keypair() -> Path | None:
         key = CC_SENTIMENT_KEY_DIR / GIST_KEY_NAME
         pub = key.with_suffix(key.suffix + ".pub")
         return key if key.exists() and pub.exists() else None
 
     @staticmethod
-    def generate_gist_keypair() -> Path:
+    def generate_managed_ssh_key() -> SSHKeyInfo:
         if (existing := KeyDiscovery.find_gist_keypair()) is not None:
-            return existing
-        CC_SENTIMENT_KEY_DIR.mkdir(parents=True, exist_ok=True)
-        path = CC_SENTIMENT_KEY_DIR / GIST_KEY_NAME
-        subprocess.run(
-            ["ssh-keygen", "-t", "ed25519", "-f", str(path), "-N", "", "-C", "cc-sentiment"],
-            check=True, capture_output=True, timeout=10,
+            path = existing
+        else:
+            CC_SENTIMENT_KEY_DIR.mkdir(parents=True, exist_ok=True)
+            path = CC_SENTIMENT_KEY_DIR / GIST_KEY_NAME
+            subprocess.run(
+                ["ssh-keygen", "-t", "ed25519", "-f", str(path), "-N", "", "-C", "cc-sentiment"],
+                check=True, capture_output=True, timeout=10,
+            )
+        parts = path.with_suffix(path.suffix + ".pub").read_text().strip().split()
+        return SSHKeyInfo(
+            path=path,
+            algorithm=parts[0] if len(parts) >= 2 else "unknown",
+            comment=parts[2] if len(parts) >= 3 else "cc-sentiment",
         )
-        return path
 
     @staticmethod
-    def create_gist(key_path: Path) -> str:
-        pub_text = key_path.with_suffix(key_path.suffix + ".pub").read_text()
+    def create_gist_from_text(pub_text: str) -> str:
         with tempfile.TemporaryDirectory(prefix="cc-sentiment-gist-") as tmpdir:
             tmp = Path(tmpdir)
             pub_file = tmp / GIST_PUB_FILENAME
             readme_file = tmp / GIST_README_FILENAME
-            pub_file.write_text(pub_text)
+            pub_file.write_text(pub_text if pub_text.endswith("\n") else pub_text + "\n")
             readme_file.write_text(GIST_README_TEMPLATE)
             result = subprocess.run(
                 ["gh", "gist", "create", "--public", "-d", GIST_DESCRIPTION, str(pub_file), str(readme_file)],
@@ -217,45 +275,24 @@ class KeyDiscovery:
         return url.rsplit("/", 1)[-1]
 
     @staticmethod
-    def find_cc_sentiment_gist_id() -> str | None:
-        if not KeyDiscovery.has_tool("gh"):
-            return None
-        result = subprocess.run(
-            ["gh", "gist", "list", "--limit", "100"],
-            capture_output=True, text=True, timeout=15,
+    def generate_managed_gpg_key(identity: str, email: str) -> GPGKeyInfo:
+        before = {key.fpr for key in KeyDiscovery.find_gpg_keys()}
+        batch = (
+            "%no-protection\n"
+            "Key-Type: eddsa\n"
+            "Key-Curve: ed25519\n"
+            f"Name-Real: {identity}\n"
+            f"Name-Email: {email}\n"
+            "Expire-Date: 0\n"
+            "%commit\n"
         )
-        if result.returncode != 0:
-            return None
-        return next(
-            (
-                gist_id
-                for line in result.stdout.splitlines()
-                if len(cols := [col.strip() for col in line.split("\t")]) >= 2
-                and (gist_id := cols[0])
-                and cols[1] == GIST_DESCRIPTION
-            ),
-            None,
-        )
-
-    @staticmethod
-    def parse_armored_fingerprints(armor: str) -> frozenset[str]:
-        with tempfile.TemporaryDirectory(prefix="cc-sentiment-gpg-") as home:
-            return frozenset(
-                gnupg.GPG(gnupghome=home).scan_keys_mem(armor).fingerprints
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt") as f:
+            f.write(batch)
+            f.flush()
+            subprocess.run(
+                ["gpg", "--batch", "--gen-key", f.name],
+                check=True, capture_output=True, text=True, timeout=60,
             )
-
-    @classmethod
-    def match_gpg_key(cls, username: str) -> GPGBackend | None:
-        armor = cls.fetch_github_gpg_keys(username)
-        if not armor:
-            return None
-        github_fprs = cls.parse_armored_fingerprints(armor)
-        return next(
-            (GPGBackend(fpr=info.fpr) for info in cls.find_gpg_keys() if info.fpr in github_fprs),
-            None,
-        )
-
-    @classmethod
-    def gpg_key_on_github(cls, username: str, fpr: str) -> bool:
-        armor = cls.fetch_github_gpg_keys(username)
-        return bool(armor) and fpr in cls.parse_armored_fingerprints(armor)
+        new_keys = [key for key in KeyDiscovery.find_gpg_keys() if key.fpr not in before]
+        assert new_keys, "GPG key generated but not found in keyring"
+        return new_keys[0]

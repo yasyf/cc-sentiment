@@ -33,7 +33,7 @@ class CtaState:
     SNAPSHOT_TITLE: ClassVar[str] = "Your cc-sentiment snapshot"
     TWEET_DETAIL: ClassVar[str] = (
         "We'll share a card with your GitHub avatar and this stat. "
-        "Posts to Twitter; nothing else leaves your Mac."
+        "Posts to Twitter; nothing else leaves your device."
     )
     TWEET_LABEL: ClassVar[str] = "Tweet it"
     SCHEDULE_TITLE: ClassVar[str] = "Keep this fresh every day?"
@@ -269,7 +269,7 @@ class ProcessingView:
         if self.stats.rate > 0:
             lines.append(self.stats_row(
                 "pace",
-                f"[b $accent]{self.stats.rate:.1f}[/] [dim]moments per second on this Mac[/]",
+                f"[b $accent]{self.stats.rate:.1f}[/] [dim]moments per second on this device[/]",
             ))
         peaks = self.peaks_phrase()
         if peaks:

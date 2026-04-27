@@ -300,8 +300,7 @@ class TestFetchGist:
         mock_response.raise_for_status = MagicMock()
         mock_response.json = MagicMock(return_value={"owner": {"login": "octocat"}, "description": "cc-sentiment public key"})
 
-        with patch("cc_sentiment_server.verify.httpx.AsyncClient", return_value=_mock_httpx_client(mock_response)), \
-             patch.dict("os.environ", {}, clear=False):
+        with patch("cc_sentiment_server.verify.httpx.AsyncClient", return_value=_mock_httpx_client(mock_response)):
             result = await Verifier().fetch_gist("abcdef1234567890abcd")
 
         assert result["owner"]["login"] == "octocat"
@@ -316,34 +315,54 @@ class TestFetchGist:
                 await Verifier().fetch_gist("abcdef1234567890abcd")
 
     @pytest.mark.asyncio
-    async def test_includes_auth_header_when_token_set(self) -> None:
+    async def test_no_auth_header_sent(self) -> None:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
         mock_response.json = MagicMock(return_value={})
 
         client = _mock_httpx_client(mock_response)
-        with patch("cc_sentiment_server.verify.httpx.AsyncClient", return_value=client), \
-             patch.dict("os.environ", {"GITHUB_TOKEN": "ghp_testtoken"}):
+        with patch("cc_sentiment_server.verify.httpx.AsyncClient", return_value=client):
             await Verifier().fetch_gist("abcdef1234567890abcd")
 
-        call_kwargs = client.get.call_args.kwargs
-        assert call_kwargs["headers"] == {"Authorization": "Bearer ghp_testtoken"}
+        assert "headers" not in client.get.call_args.kwargs
+
+
+class TestVerifyWithGistPubkey:
+    @pytest.mark.asyncio
+    async def test_dispatches_ssh_pubkey_to_ssh_verify(self) -> None:
+        verifier = Verifier()
+        with patch.object(
+            verifier, "verify_with_ssh_key", new_callable=AsyncMock, return_value=True,
+        ) as mock_ssh:
+            result = await verifier.verify_with_gist_pubkey(
+                "octocat",
+                "ssh-ed25519 AAAA cc-sentiment",
+                "{}",
+                "sig",
+            )
+        assert result is True
+        mock_ssh.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_no_auth_header_when_token_absent(self) -> None:
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json = MagicMock(return_value={})
+    async def test_dispatches_pgp_pubkey_to_gpg_verify(self) -> None:
+        verifier = Verifier()
+        armor = "-----BEGIN PGP PUBLIC KEY BLOCK-----\nblob\n"
+        with patch.object(
+            verifier, "check_gpg_signature", new_callable=AsyncMock, return_value=True,
+        ) as mock_gpg:
+            result = await verifier.verify_with_gist_pubkey(
+                "octocat", armor, "{}", "sig",
+            )
+        assert result is True
+        mock_gpg.assert_called_once()
 
-        client = _mock_httpx_client(mock_response)
-        env = {k: v for k, v in __import__("os").environ.items() if k != "GITHUB_TOKEN"}
-        with patch("cc_sentiment_server.verify.httpx.AsyncClient", return_value=client), \
-             patch.dict("os.environ", env, clear=True):
-            await Verifier().fetch_gist("abcdef1234567890abcd")
-
-        assert client.get.call_args.kwargs["headers"] == {}
+    @pytest.mark.asyncio
+    async def test_unknown_pubkey_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unknown gist public key format"):
+            await Verifier().verify_with_gist_pubkey(
+                "octocat", "garbage", "{}", "sig",
+            )
 
 
 class TestFetchGistPubkey:
@@ -457,3 +476,29 @@ class TestGistKeyCache:
 
         assert result is True
         assert cache.d["gist:abcdef1234567890abcd"] == "ssh-ed25519 NEW cc-sentiment"
+
+
+class TestParseGistId:
+    def test_splits_username_and_gist_id(self) -> None:
+        assert Verifier.parse_gist_id("octocat/abc123def456") == ("octocat", "abc123def456")
+
+    def test_missing_slash_raises(self) -> None:
+        with pytest.raises(ValueError, match="Invalid gist contributor id"):
+            Verifier.parse_gist_id("octocat")
+
+    def test_empty_username_raises(self) -> None:
+        with pytest.raises(ValueError, match="Invalid gist contributor id"):
+            Verifier.parse_gist_id("/abc123")
+
+    def test_empty_gist_id_raises(self) -> None:
+        with pytest.raises(ValueError, match="Invalid gist contributor id"):
+            Verifier.parse_gist_id("octocat/")
+
+
+class TestPubkeyKindMultiArmor:
+    def test_concat_pgp_armor_blocks_recognized(self) -> None:
+        concat = (
+            "-----BEGIN PGP PUBLIC KEY BLOCK-----\nblock-a\n-----END PGP PUBLIC KEY BLOCK-----\n"
+            "-----BEGIN PGP PUBLIC KEY BLOCK-----\nblock-b\n-----END PGP PUBLIC KEY BLOCK-----\n"
+        )
+        assert Verifier.pubkey_kind(concat) == "pgp"
