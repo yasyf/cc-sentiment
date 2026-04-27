@@ -12,8 +12,8 @@ class ProgressRow(Horizontal):
     ProgressRow { height: 1; }
     ProgressRow.inactive { display: none; }
     ProgressRow > .row-label { width: 12; color: $text-muted; }
+    ProgressRow > .row-context { width: 26; margin: 0 1 0 0; color: $text-muted; }
     ProgressRow > ProgressBar { width: 1fr; }
-    ProgressRow > .row-context { width: auto; min-width: 24; margin: 0 0 0 2; color: $text-muted; }
     """
 
     def __init__(self, *, label: str, bar_id: str, context_id: str, **kwargs) -> None:
@@ -24,5 +24,5 @@ class ProgressRow(Horizontal):
 
     def compose(self) -> ComposeResult:
         yield Static(self.label_text, classes="row-label")
-        yield ProgressBar(id=self.bar_widget_id, total=100, show_eta=False, show_percentage=True)
         yield Label("", id=self.context_widget_id, classes="row-context")
+        yield ProgressBar(id=self.bar_widget_id, total=100, show_eta=False, show_percentage=True)
