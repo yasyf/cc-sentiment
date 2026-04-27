@@ -1,31 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import ClassVar
-
-
-@dataclass(frozen=True)
-class VerdictResult:
-    text: str
-    token: str
-
-
-class Verdict:
-    THRESHOLDS: ClassVar[tuple[tuple[float, str, str], ...]] = (
-        (2.0, "Developers are frustrated.", "$error"),
-        (2.5, "Developers are struggling.", "$error"),
-        (3.5, "Developers are getting by.", "$warning"),
-        (4.0, "Developers are happy.", "$success"),
-        (float("inf"), "Developers are thriving.", "$success"),
-    )
-
-    @classmethod
-    def for_avg(cls, avg: float) -> VerdictResult:
-        return next(
-            VerdictResult(text=text, token=token)
-            for cutoff, text, token in cls.THRESHOLDS
-            if avg < cutoff
-        )
 
 
 class ScoreEmoji:

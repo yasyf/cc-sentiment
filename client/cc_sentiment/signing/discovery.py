@@ -19,16 +19,11 @@ GIST_PUB_FILENAME = "cc-sentiment.pub"
 GIST_README_FILENAME = "README.md"
 GIST_DESCRIPTION = "cc-sentiment public key"
 GIST_README_TEMPLATE = """\
-# cc-sentiment public key
+# cc-sentiment signing key
 
-This gist holds the public signing key for [cc-sentiment](https://github.com/yasyf/cc-sentiment),
-a local tool that scores Claude Code conversations.
+This gist lets sentiments.cc verify uploads from [cc-sentiment](https://github.com/yasyf/cc-sentiment).
 
-The private key stays on this device. Only aggregate sentiment metrics are uploaded to sentiments.cc.
-Conversation text, file paths, prompts, tool inputs, and tool outputs are not uploaded.
-GitHub/GPG details are used only to find a public key and verify signatures.
-
-If you didn't set this up, you can safely delete this gist.
+If you didn't set this up, you can delete this gist.
 """
 
 

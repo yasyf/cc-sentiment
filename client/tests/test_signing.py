@@ -39,11 +39,12 @@ class TestKeyDiscovery:
         assert KeyDiscovery.has_tool("python3") is True
         assert KeyDiscovery.has_tool("nonexistent_tool_xyz") is False
 
-    def test_gist_readme_includes_privacy_promises(self) -> None:
+    def test_gist_readme_is_concise(self) -> None:
         lowered = GIST_README_TEMPLATE.lower()
-        assert "private key stays on this device" in lowered
-        assert "aggregate sentiment metrics are uploaded to sentiments.cc" in lowered
-        assert "conversation text, file paths, prompts, tool inputs, and tool outputs are not uploaded" in lowered
+        assert "signing key" in lowered
+        assert "sentiments.cc" in lowered
+        assert "delete this gist" in lowered
+        assert len(GIST_README_TEMPLATE.splitlines()) <= 6
 
     def test_gist_description_constant(self) -> None:
         assert GIST_DESCRIPTION == "cc-sentiment public key"

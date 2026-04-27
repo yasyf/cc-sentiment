@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+
+from rich.syntax import Syntax
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.reactive import reactive
@@ -9,11 +12,20 @@ from cc_sentiment.tui.setup_state import Tone
 from cc_sentiment.tui.widgets.card import Card
 from cc_sentiment.tui.widgets.step_actions import StepActions
 
-WHAT_GETS_SENT_TEXT = "Timestamp, sentiment score, model, turn count, and aggregate metadata."
-PRIVACY_TEXT = "Stats are aggregated. Your conversations are not uploaded."
-SIGNING_TEXT = "Private key: stored on this device"
-LOOKUP_HELPER_TEXT = "Used only to verify signatures; public stats stay aggregate."
-SETTINGS_PRIMARY_LABEL = "Go to settings"
+PAYLOAD_SAMPLE = json.dumps(
+    {
+        "time": "2026-04-15T14:23:05Z",
+        "sentiment_score": 4,
+        "claude_model": "claude-haiku-4-5",
+        "turn_count": 14,
+        "tool_calls_per_turn": 3.2,
+        "read_edit_ratio": 0.71,
+    },
+    indent=2,
+)
+PAYLOAD_EXCLUSION_TEXT = "No transcript text, prompts, tool inputs, tool outputs, or code."
+WHAT_GETS_SENT_TEXT = PAYLOAD_EXCLUSION_TEXT
+SETTINGS_PRIMARY_LABEL = "Start ingesting"
 
 
 class DoneBranch(Vertical):
@@ -22,25 +34,14 @@ class DoneBranch(Vertical):
     DoneBranch Button.-primary:focus { text-style: bold; }
     """
 
-    public_location: reactive[str] = reactive("", recompose=True)
-    lookup_value: reactive[str] = reactive("", recompose=True)
+    verification: reactive[str] = reactive("", recompose=True)
 
     def compose(self) -> ComposeResult:
         yield Card(
             Static(
-                f"Public key location: {self.public_location or 'unknown'}",
-                id="done-location",
+                self.verification or "Verification: ready",
+                id="done-verification",
                 classes=Tone.SUCCESS.value,
-            ),
-            Static(
-                f"Lookup value: {self.lookup_value}" if self.lookup_value else "",
-                id="done-lookup",
-                classes=Tone.MUTED.value,
-            ),
-            Static(
-                LOOKUP_HELPER_TEXT,
-                id="done-verify",
-                classes=Tone.MUTED.value,
             ),
             title="Verification",
             id="done-verification-card",
@@ -48,28 +49,12 @@ class DoneBranch(Vertical):
         )
         yield Card(
             Static(
-                PRIVACY_TEXT,
-                id="done-privacy",
-                classes=Tone.MUTED.value,
+                Syntax(PAYLOAD_SAMPLE, "json", theme="ansi_dark", background_color="default"),
+                id="done-payload-sample",
             ),
-            title="Privacy",
-            id="done-privacy-card",
-            classes="done-card",
-        )
-        yield Card(
             Static(
-                SIGNING_TEXT,
-                id="done-signing",
-                classes=Tone.MUTED.value,
-            ),
-            title="Signing",
-            id="done-signing-card",
-            classes="done-card",
-        )
-        yield Card(
-            Static(
-                WHAT_GETS_SENT_TEXT,
-                id="done-payload",
+                PAYLOAD_EXCLUSION_TEXT,
+                id="done-payload-exclusion",
                 classes=Tone.MUTED.value,
             ),
             title="What gets sent",

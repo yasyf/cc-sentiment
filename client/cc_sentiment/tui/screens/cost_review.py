@@ -23,17 +23,16 @@ class CostReviewScreen(Dialog[bool]):
         with Vertical(id="dialog-box"):
             yield Label("Use Claude to score?", classes="title")
             yield Static(
-                f"This device can't run scoring locally, so we'll use Claude through your account "
-                f"to score [b]{self.bucket_count}[/] new conversations.",
+                f"This device can't score locally. Use Claude to score "
+                f"[b]{self.bucket_count}[/] new conversations?",
                 classes="detail",
             )
             yield Static(
-                f"About [b]${self.cost:.2f}[/]. Real cost is usually lower thanks to caching.",
+                f"Estimated cost: [b]${self.cost:.2f}[/]. Caching usually lowers this.",
                 classes="emphasis",
             )
             yield Static(
-                "Billed by Anthropic to your existing Claude account. "
-                "Your conversation text leaves this device only for that one API call.",
+                "Charged to your Claude account. Claude receives the conversations it scores.",
                 classes="detail",
             )
             yield ButtonRow(

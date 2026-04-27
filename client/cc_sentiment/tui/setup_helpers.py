@@ -40,14 +40,8 @@ OPENPGP_UPLOAD_URL = "https://keys.openpgp.org/upload"
 ISSUES_URL = "https://github.com/yasyf/cc-sentiment/issues"
 GITHUB_API_USERS_URL = "https://api.github.com/users"
 
-ACCOUNT_SSH_WARNING = (
-    "This changes your GitHub account keys. Use gist unless you specifically "
-    "want this key listed in GitHub settings."
-)
-ACCOUNT_GPG_WARNING = (
-    "This changes your GitHub account keys. Use keys.openpgp.org unless you specifically "
-    "want this key listed in GitHub settings."
-)
+ACCOUNT_SSH_WARNING = "Adds this key to your GitHub account settings."
+ACCOUNT_GPG_WARNING = "Adds this key to your GitHub account settings."
 
 
 class Clipboard:
@@ -312,17 +306,14 @@ class SetupRoutePlanner:
     def _managed_ssh_gist() -> SetupRoute:
         return SetupRoute(
             route_id=RouteId.MANAGED_SSH_GIST,
-            title="Create a cc-sentiment key and public gist",
-            detail=(
-                "Fastest option. We'll create a key used only by cc-sentiment, "
-                "then create a public GitHub gist containing the public key and a short cc-sentiment note."
-            ),
-            primary_label="Create key and public gist",
-            secondary_label="Use a different key",
+            title="Verify with a new cc-sentiment key",
+            detail="Creates a dedicated key and publishes the public part in a gist.",
+            primary_label="Create key",
+            secondary_label="Choose another method",
             publish_method=PublishMethod.GIST_AUTO,
             key_kind=KeyKind.SSH,
             key_plan=GenerateSSHKey(),
-            safety_note="This does not add an SSH login key to your GitHub account.",
+            safety_note="Doesn't add a login key to your GitHub account.",
             automated=True,
         )
 
@@ -330,12 +321,9 @@ class SetupRoutePlanner:
     def _managed_gpg_openpgp() -> SetupRoute:
         return SetupRoute(
             route_id=RouteId.MANAGED_GPG_OPENPGP,
-            title="Create a cc-sentiment GPG key and verify by email",
-            detail=(
-                "Best option without GitHub CLI. We'll create a GPG key for this app, "
-                "send the public key to keys.openpgp.org, and ask them to email you a verification link."
-            ),
-            primary_label="Create key and send email",
+            title="Verify by email",
+            detail="Creates a dedicated GPG key and sends a one-time verification email.",
+            primary_label="Create key",
             secondary_label="Use GitHub instead",
             publish_method=PublishMethod.OPENPGP,
             key_kind=KeyKind.GPG,
@@ -348,13 +336,10 @@ class SetupRoutePlanner:
     def _managed_ssh_manual_gist() -> SetupRoute:
         return SetupRoute(
             route_id=RouteId.MANAGED_SSH_MANUAL_GIST,
-            title="Create a cc-sentiment key and public gist",
-            detail=(
-                "We'll create a key used only by cc-sentiment, open GitHub's gist page, "
-                "copy the public key for you, and guide you through creating the gist."
-            ),
-            primary_label="Create key and open GitHub",
-            secondary_label="Install GitHub CLI for automatic setup",
+            title="Verify with a new cc-sentiment key",
+            detail="Creates a dedicated key, then guides you through publishing the public part.",
+            primary_label="Create key",
+            secondary_label="Install GitHub CLI instead",
             publish_method=PublishMethod.GIST_MANUAL,
             key_kind=KeyKind.SSH,
             key_plan=GenerateSSHKey(),
@@ -365,17 +350,13 @@ class SetupRoutePlanner:
     def _existing_ssh_gist(ssh: ExistingSSHKey) -> SetupRoute:
         return SetupRoute(
             route_id=RouteId.EXISTING_SSH_GIST,
-            title="Publish this SSH public key in a gist",
-            detail=(
-                "Recommended because it does not add this key to your GitHub account. "
-                "sentiments.cc only reads the public key from the gist."
-            ),
-            primary_label="Create gist with this key",
-            secondary_label="Add SSH key to GitHub account",
+            title="Verify with this SSH key",
+            detail="Publishes the public key in a gist without changing GitHub account keys.",
+            primary_label="Create gist",
+            secondary_label="Add to GitHub instead",
             publish_method=PublishMethod.GIST_AUTO,
             key_kind=KeyKind.SSH,
             key_plan=ExistingSSHKey(info=ssh.info, managed=ssh.managed),
-            safety_note="The private key never leaves this device.",
             automated=True,
         )
 
@@ -383,17 +364,13 @@ class SetupRoutePlanner:
     def _existing_ssh_manual_gist(ssh: ExistingSSHKey) -> SetupRoute:
         return SetupRoute(
             route_id=RouteId.EXISTING_SSH_MANUAL_GIST,
-            title="Publish this SSH public key in a gist",
-            detail=(
-                "Recommended because it does not add this key to your GitHub account. "
-                "sentiments.cc only reads the public key from the gist."
-            ),
-            primary_label="Open GitHub gist guide",
-            secondary_label="Add SSH key to GitHub account",
+            title="Verify with this SSH key",
+            detail="Publishes the public key in a gist without changing GitHub account keys.",
+            primary_label="Create gist",
+            secondary_label="Add to GitHub instead",
             publish_method=PublishMethod.GIST_MANUAL,
             key_kind=KeyKind.SSH,
             key_plan=ExistingSSHKey(info=ssh.info, managed=ssh.managed),
-            safety_note="The private key never leaves this device.",
             automated=False,
         )
 
@@ -401,13 +378,10 @@ class SetupRoutePlanner:
     def _existing_ssh_github(ssh: ExistingSSHKey) -> SetupRoute:
         return SetupRoute(
             route_id=RouteId.EXISTING_SSH_GITHUB,
-            title="Add this SSH key to your GitHub account",
-            detail=(
-                "Adds the public SSH key to your GitHub account so sentiments.cc can find it. "
-                "Use gist unless you want this key listed under GitHub settings."
-            ),
-            primary_label="Add SSH key to GitHub",
-            secondary_label="Use a public gist instead",
+            title="Verify with GitHub SSH",
+            detail="Adds this public SSH key to your GitHub account.",
+            primary_label="Add SSH key",
+            secondary_label="Use gist instead",
             publish_method=PublishMethod.GITHUB_SSH,
             key_kind=KeyKind.SSH,
             key_plan=ExistingSSHKey(info=ssh.info, managed=ssh.managed),
@@ -419,13 +393,10 @@ class SetupRoutePlanner:
     def _existing_gpg_gist(gpg: ExistingGPGKey) -> SetupRoute:
         return SetupRoute(
             route_id=RouteId.EXISTING_GPG_GIST,
-            title="Publish this public GPG key in a gist",
-            detail=(
-                "We'll publish this public GPG key in a gist so sentiments.cc can verify signatures. "
-                "This does not change your GitHub account keys."
-            ),
-            primary_label="Create gist with this key",
-            secondary_label="Verify with keys.openpgp.org",
+            title="Verify with this GPG key",
+            detail="Publishes the public key in a gist without changing GitHub account keys.",
+            primary_label="Create gist",
+            secondary_label="Verify by email",
             publish_method=PublishMethod.GIST_AUTO,
             key_kind=KeyKind.GPG,
             key_plan=ExistingGPGKey(info=gpg.info, managed=gpg.managed),
@@ -436,9 +407,9 @@ class SetupRoutePlanner:
     def _existing_gpg_openpgp(gpg: ExistingGPGKey) -> SetupRoute:
         return SetupRoute(
             route_id=RouteId.EXISTING_GPG_OPENPGP,
-            title="Publish this GPG public key with keys.openpgp.org",
-            detail="keys.openpgp.org will email you before making the public key searchable.",
-            primary_label="Send verification email",
+            title="Verify this GPG key by email",
+            detail="Sends a one-time email before publishing the public key.",
+            primary_label="Send email",
             secondary_label="Choose another key",
             publish_method=PublishMethod.OPENPGP,
             key_kind=KeyKind.GPG,
@@ -451,10 +422,10 @@ class SetupRoutePlanner:
     def _existing_gpg_github(gpg: ExistingGPGKey) -> SetupRoute:
         return SetupRoute(
             route_id=RouteId.EXISTING_GPG_GITHUB,
-            title="Add this GPG key to your GitHub account",
-            detail="Uses the existing GPG key as your GitHub-published verification key.",
-            primary_label="Add GPG key to GitHub",
-            secondary_label="Use keys.openpgp.org instead",
+            title="Verify with GitHub GPG",
+            detail="Adds this public GPG key to your GitHub account.",
+            primary_label="Add GPG key",
+            secondary_label="Use email instead",
             publish_method=PublishMethod.GITHUB_GPG,
             key_kind=KeyKind.GPG,
             key_plan=ExistingGPGKey(info=gpg.info, managed=gpg.managed),
@@ -573,11 +544,11 @@ class DiscoveryRunner:
             else DiscoverRowState.SKIPPED
         )
         gh_detail = (
-            f"GitHub CLI signed in as @{identity.github_username}."
+            f"@{identity.github_username} signed in"
             if capabilities.gh_authed and identity.github_username
-            else "GitHub CLI installed but not signed in."
+            else "Installed, not signed in"
             if capabilities.has_gh
-            else "GitHub CLI not installed."
+            else "Not installed"
         )
         username_state = (
             DiscoverRowState.OK if identity.github_username
@@ -593,28 +564,28 @@ class DiscoveryRunner:
         )
         local_detail = (
             f"{len(ssh_keys)} SSH, {len(gpg_keys)} GPG"
-            if ssh_keys or gpg_keys else "None found yet."
+            if ssh_keys or gpg_keys else "None found"
         )
         return (
-            DiscoverRow("Checking GitHub CLI…", gh_state, gh_detail),
+            DiscoverRow("GitHub CLI", gh_state, gh_detail),
             DiscoverRow(
-                "Looking for a GitHub username…",
+                "GitHub",
                 username_state,
-                identity.github_username or "Not found.",
+                identity.github_username or "Not found",
             ),
             DiscoverRow(
-                "Looking for an email only if keyserver verification is needed…",
+                "Email",
                 email_state,
-                identity.github_email if identity.email_usable else "Not needed yet.",
+                identity.github_email if identity.email_usable else "Not needed",
             ),
-            DiscoverRow("Finding local SSH and GPG keys…", local_state, local_detail),
+            DiscoverRow("Local keys", local_state, local_detail),
             DiscoverRow(
-                "Checking public key locations…",
+                "Public key",
                 DiscoverRowState.WAITING,
                 "",
             ),
             DiscoverRow(
-                "Testing verification with sentiments.cc…",
+                "Verification",
                 DiscoverRowState.WAITING,
                 "",
             ),

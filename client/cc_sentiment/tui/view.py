@@ -32,16 +32,15 @@ class StatsState:
 class CtaState:
     SNAPSHOT_TITLE: ClassVar[str] = "Your cc-sentiment snapshot"
     TWEET_DETAIL: ClassVar[str] = (
-        "We'll share a card with your GitHub avatar and this stat. "
-        "Posts to Twitter; nothing else leaves your device."
+        "Creates a share card with this stat and your GitHub avatar."
     )
-    TWEET_LABEL: ClassVar[str] = "Tweet it"
-    SCHEDULE_TITLE: ClassVar[str] = "Keep this fresh every day?"
+    TWEET_LABEL: ClassVar[str] = "Share on X"
+    SCHEDULE_TITLE: ClassVar[str] = "Update aggregate stats daily?"
     SCHEDULE_DETAIL: ClassVar[str] = (
-        "We'll re-scan your conversations and update your dashboard once a day in the background. "
+        "Runs cc-sentiment once a day in the background. "
         "Stop any time with [b]cc-sentiment uninstall[/]."
     )
-    SCHEDULE_LABEL: ClassVar[str] = "Schedule daily"
+    SCHEDULE_LABEL: ClassVar[str] = "Run daily"
 
     tweet_config: SSHConfig | GPGConfig | GistConfig | GistGPGConfig | None = None
     tweet_stat: MyStat | None = None

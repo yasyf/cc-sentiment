@@ -9,7 +9,7 @@
 			{page.error?.message ?? 'Something went wrong.'}
 		</p>
 		<a href="/" class="mt-6 inline-block text-sm text-accent hover:text-accent-hover transition-colors">
-			Back to dashboard
+			Back to stats
 		</a>
 	</div>
 </div>

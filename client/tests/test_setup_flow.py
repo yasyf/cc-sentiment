@@ -53,9 +53,8 @@ from cc_sentiment.tui.setup_state import (
     ToolCapabilities,
 )
 from cc_sentiment.tui.widgets.done_branch import (
-    PRIVACY_TEXT,
+    PAYLOAD_EXCLUSION_TEXT,
     SETTINGS_PRIMARY_LABEL,
-    SIGNING_TEXT,
     WHAT_GETS_SENT_TEXT,
 )
 from cc_sentiment.upload import AuthOk, AuthUnauthorized
@@ -115,7 +114,7 @@ class TestPlanner:
         assert recommended.route_id is RouteId.MANAGED_SSH_GIST
         assert recommended.publish_method is PublishMethod.GIST_AUTO
         assert isinstance(recommended.key_plan, GenerateSSHKey)
-        assert "does not add an SSH login key" in recommended.safety_note
+        assert "Doesn't add a login key" in recommended.safety_note
 
     def test_no_gh_with_gpg_recommends_managed_gpg_openpgp(self):
         caps = _capabilities(has_gpg=True)
@@ -384,8 +383,8 @@ async def test_returning_verified_user_lands_on_settings(
     async with SetupHarness(state).run_test() as pilot:
         screen = await wait_for_stage(pilot, SetupStage.SETTINGS)
         assert screen.current_stage is SetupStage.SETTINGS
-        location = str(screen.query_one("#done-location", Static).render())
-        assert "GitHub" in location
+        verification = str(screen.query_one("#done-verification", Static).render())
+        assert "Verification: @alice" in verification
 
 
 async def test_settings_uses_plan_copy_not_dashboard_identity(
@@ -402,17 +401,17 @@ async def test_settings_uses_plan_copy_not_dashboard_identity(
         rendered_text = " ".join(
             str(w.render()) for w in screen.query(Static)
         )
-        assert "Used only to verify signatures" in rendered_text
-        assert WHAT_GETS_SENT_TEXT in rendered_text
-        assert PRIVACY_TEXT in rendered_text
-        assert SIGNING_TEXT in rendered_text
+        assert PAYLOAD_EXCLUSION_TEXT in rendered_text
+        assert "Verification: @alice" in rendered_text
         # Forbidden phrases
         assert "Uploading as" not in rendered_text
         assert "Dashboard identity" not in rendered_text
         assert "Good if you want the dashboard tied to" not in rendered_text
+        assert "Public key location" not in rendered_text
+        assert "Private key:" not in rendered_text
 
 
-async def test_settings_primary_button_says_go_to_settings(
+async def test_settings_primary_button_says_start_ingesting(
     tmp_path: Path, auth_ok, stub_discovery,
 ):
     state = AppState(
@@ -470,7 +469,7 @@ async def test_saved_invalid_copy_survives_discovery(
     async with SetupHarness(state).run_test() as pilot:
         screen = await wait_for_stage(pilot, SetupStage.TOOLS)
         status = str(screen.query_one("#discover-status", Static).render())
-        assert "The saved public key could not be verified anymore." in status
+        assert "Saved verification no longer works." in status
 
 
 async def test_propose_screen_shows_recommended_route(
@@ -709,28 +708,25 @@ async def test_settings_title_and_body_match_plan(
         assert SETTINGS_BODY in rendered
 
 
-def test_manual_gist_steps_are_seven_exact_lines():
-    assert len(MANUAL_GIST_STEPS) == 7
-    assert "Description: cc-sentiment public key" in MANUAL_GIST_STEPS[1]
-    assert "File name: cc-sentiment.pub" in MANUAL_GIST_STEPS[2]
+def test_manual_gist_steps_are_six_exact_lines():
+    assert len(MANUAL_GIST_STEPS) == 6
+    assert "description: cc-sentiment public key" in MANUAL_GIST_STEPS[1]
+    assert "cc-sentiment.pub" in MANUAL_GIST_STEPS[2]
 
 
 def test_fix_screen_constants_match_plan():
-    assert FIX_TITLE == "Verification is still not working"
-    assert "propagation delay" in FIX_BODY
-    assert "@yasyf" in FIX_HELP
+    assert FIX_TITLE == "Verification still isn't working"
+    assert "Try again" in FIX_BODY
+    assert "GitHub issue" in FIX_HELP
 
 
-def test_what_gets_sent_is_plain_text_not_json():
-    assert WHAT_GETS_SENT_TEXT == (
-        "Timestamp, sentiment score, model, turn count, and aggregate metadata."
-    )
-    assert "{" not in WHAT_GETS_SENT_TEXT
-    assert "\"" not in WHAT_GETS_SENT_TEXT
+def test_what_gets_sent_is_payload_exclusion_text():
+    assert WHAT_GETS_SENT_TEXT == PAYLOAD_EXCLUSION_TEXT
+    assert "transcript text" in WHAT_GETS_SENT_TEXT
 
 
 def test_done_branch_settings_primary_label():
-    assert SETTINGS_PRIMARY_LABEL == "Go to settings"
+    assert SETTINGS_PRIMARY_LABEL == "Start ingesting"
 
 
 # --------------------------------------------------------------------------- #
@@ -746,7 +742,7 @@ class TestCopyConstantsCrossPlatform:
         )
 
         assert "brew install gh" in TOOLS_NO_BREW_BREW
-        assert "package manager" in TOOLS_NO_BREW_GENERIC
+        assert "Install GitHub CLI" in TOOLS_NO_BREW_GENERIC
 
 
 class TestClipboardPlatformRouting:
@@ -907,10 +903,10 @@ async def test_manual_gist_guide_shows_copy_and_open_fallbacks(
             screen.query_one("#propose-go", Button).press()
             screen = await wait_for_stage(pilot, SetupStage.GUIDE)
             instructions = str(screen.query_one("#guide-instructions", Static).render())
-            assert "Open this URL manually: https://gist.github.com/" in instructions
-            assert "Copy this public key manually:" in instructions
+            assert "Open manually: https://gist.github.com/" in instructions
+            assert "Copy this public key:" in instructions
             assert "ssh-ed25519 AAAA cc-sentiment" in instructions
-            assert "We copied the public key to your clipboard" not in instructions
+            assert "Copied your public key" not in instructions
 
 
 async def test_browser_failure_does_not_overwrite_copied_public_key(
@@ -941,8 +937,8 @@ async def test_browser_failure_does_not_overwrite_copied_public_key(
             screen.query_one("#propose-go", Button).press()
             screen = await wait_for_stage(pilot, SetupStage.GUIDE)
             instructions = str(screen.query_one("#guide-instructions", Static).render())
-            assert "Open this URL manually: https://gist.github.com/" in instructions
-            assert "Copy this public key manually:" not in instructions
+            assert "Open manually: https://gist.github.com/" in instructions
+            assert "Copy this public key:" not in instructions
     copy_mock.assert_called_once_with("ssh-ed25519 AAAA cc-sentiment")
 
 
@@ -1021,9 +1017,9 @@ async def test_openpgp_api_failure_uses_manual_upload_fallback(
                 if state.pending_setup and state.pending_setup.last_status == "manual-openpgp-upload":
                     break
             instructions = str(screen.query_one("#guide-instructions", Static).render())
-            assert "keys.openpgp.org didn't accept the automatic request" in instructions
-            assert "Open this URL manually: https://keys.openpgp.org/upload" in instructions
-            assert "Copy this public key manually:" in instructions
+            assert "Automatic verification failed" in instructions
+            assert "Open manually: https://keys.openpgp.org/upload" in instructions
+            assert "Copy this public key:" in instructions
     assert state.pending_setup is not None
     assert state.pending_setup.last_status == "manual-openpgp-upload"
 
@@ -1110,7 +1106,7 @@ async def test_resume_pending_with_last_error_renders_error_in_guide(
     async with SetupHarness(state).run_test() as pilot:
         screen = await wait_for_stage(pilot, SetupStage.GUIDE)
         instructions = str(screen.query_one("#guide-instructions", Static).render())
-        assert "Last error: sentiments.cc still couldn't verify" in instructions
+        assert "Last issue: sentiments.cc still couldn't verify" in instructions
 
 
 async def test_resume_choose_another_method_uses_fresh_discovery(

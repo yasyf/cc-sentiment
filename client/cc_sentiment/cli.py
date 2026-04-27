@@ -119,8 +119,7 @@ def run(ctx: typer.Context) -> None:
             raise typer.Exit(2)
         case HeadlessClaudeEngineBlocked():
             typer.echo(
-                "The claude engine needs interactive cost confirmation. "
-                "Run `cc-sentiment` instead.",
+                "Claude scoring needs confirmation. Run `cc-sentiment` instead.",
                 err=True,
             )
             raise typer.Exit(2)

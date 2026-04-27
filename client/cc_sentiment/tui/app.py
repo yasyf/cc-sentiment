@@ -136,7 +136,7 @@ class CCSentimentApp(App[None]):
         ("q", "quit", "Quit"),
         ("escape", "quit", "Quit"),
         ("r", "rescan", "Rescan"),
-        ("o", "open_dashboard", "Open dashboard"),
+        ("o", "open_dashboard", "Open stats"),
     ]
 
     scored: reactive[int] = reactive(0)
@@ -362,7 +362,7 @@ class CCSentimentApp(App[None]):
                 self.view.show_stats(0, 0, 0)
                 self._update_status(
                     "[$success]All set. No conversations yet. Come back after using Claude Code.[/] "
-                    "[dim]Press O to browse the dashboard.[/]"
+                    "[dim]Press O to open aggregate stats.[/]"
                 )
                 self._maybe_prewarm()
             case IdleCaughtUp(total_buckets=b, total_sessions=s, total_files=f):
@@ -371,7 +371,7 @@ class CCSentimentApp(App[None]):
                     f"[$success]All caught up.[/] "
                     f"{s} chat{'s' if s != 1 else ''}, "
                     f"{b} moment{'s' if b != 1 else ''} scored. "
-                    f"[dim]Press R to rescan, O to open dashboard.[/]"
+                    f"[dim]Press R to rescan, O to open aggregate stats.[/]"
                 )
                 self._maybe_prewarm()
             case IdleAfterUpload(total_buckets=b, total_sessions=s, total_files=f):
@@ -390,7 +390,7 @@ class CCSentimentApp(App[None]):
         suffix = (
             "[dim]Building your shareable card...[/]"
             if polling
-            else "[dim]Press O to open your dashboard.[/]"
+            else "[dim]Press O to open aggregate stats.[/]"
         )
         return (
             "[$success]Uploaded to[/] "
@@ -412,7 +412,7 @@ class CCSentimentApp(App[None]):
                     return True
                 case AuthUnauthorized():
                     self._update_status(
-                        "[$warning]sentiments.cc doesn't recognize this key. Let's redo setup.[/]"
+                        "[$warning]sentiments.cc couldn't verify this key. Let's redo setup.[/]"
                     )
                     self.state.config = None
                     await anyio.to_thread.run_sync(self.state.save)
@@ -423,7 +423,7 @@ class CCSentimentApp(App[None]):
                     return False
                 case AuthServerError(status=s):
                     self._debug(f"AuthServerError: status={s}")
-                    self.stage = Error(f"[$error]sentiments.cc had an error verifying your key (HTTP {s}).[/]")
+                    self.stage = Error(f"[$error]sentiments.cc had an error checking verification (HTTP {s}).[/]")
                     return False
 
     @work()
@@ -562,7 +562,7 @@ class CCSentimentApp(App[None]):
                 case httpx.HTTPStatusError() as e if e.response.status_code in (401, 403):
                     self.stage = Error(
                         f"[red bold]Server rejected upload ({e.response.status_code}).[/] "
-                        "Run [b]cc-sentiment setup[/] again, or upload your key to GitHub/keys.openpgp.org."
+                        "Run [b]cc-sentiment setup[/] again."
                     )
                     return
                 case httpx.HTTPStatusError() as e:
@@ -668,7 +668,7 @@ class CCSentimentApp(App[None]):
             return
         self.view.set_schedule_available(False)
         self._update_status(
-            "[$success]Scheduled.[/] It'll refresh your numbers daily in the background. "
+            "[$success]Scheduled.[/] cc-sentiment will run daily. "
             "[dim]Undo with `cc-sentiment uninstall`.[/]"
         )
 
@@ -694,7 +694,7 @@ class CCSentimentApp(App[None]):
 
     async def action_open_dashboard(self) -> None:
         await anyio.to_thread.run_sync(webbrowser.open, DASHBOARD_URL)
-        self._update_status(f"[dim]Opened {DASHBOARD_URL}.[/]")
+        self._update_status(f"[dim]Opened aggregate stats: {DASHBOARD_URL}.[/]")
         self.set_timer(3.0, lambda: self.watch_stage(self.stage))
 
     async def _auto_open_dashboard(self) -> None:

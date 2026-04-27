@@ -119,167 +119,111 @@ PUBLIC_LOCATION_LABEL: dict[PublishMethod, str] = {
     PublishMethod.OPENPGP: "keys.openpgp.org",
 }
 
-DISCOVER_TITLE = "Setting up private signing"
-DISCOVER_BODY = (
-    "cc-sentiment signs uploads so sentiments.cc can verify they came from this device. "
-    "The private key stays on this device. Only aggregate sentiment metrics are uploaded to sentiments.cc. "
-    "Conversation text, file paths, prompts, tool inputs, and tool outputs are not uploaded. "
-    "GitHub/GPG details are used only to find a public key and verify signatures."
-)
-DISCOVER_VERIFIED_COPY = "Found a working public key. No setup needed."
-DISCOVER_NO_MATCH_COPY = (
-    "No public key matched this device yet. We'll suggest the safest way to create or publish one."
-)
-SAVED_KEY_INVALID_COPY_1 = "The saved public key could not be verified anymore."
-SAVED_KEY_INVALID_COPY_2 = "We'll help publish a new public key or choose another local key."
-SAVED_KEY_TEMPORARY_COPY = (
-    "sentiments.cc is having trouble. We'll keep your setup and you can retry later."
-)
+DISCOVER_TITLE = "Set up verification"
+DISCOVER_BODY = "cc-sentiment needs a signing key before it can upload."
+DISCOVER_VERIFIED_COPY = "Verification is ready."
+DISCOVER_NO_MATCH_COPY = "No working signing key found. We'll help set one up."
+SAVED_KEY_INVALID_COPY_1 = "Saved verification no longer works."
+SAVED_KEY_INVALID_COPY_2 = "Choose or create a new signing key."
+SAVED_KEY_TEMPORARY_COPY = "sentiments.cc is unreachable. Keep this setup and retry later."
 PENDING_SSH_KEY_MISSING_COPY = (
-    "The previously saved private key on this device is no longer available. "
-    "We'll start setup again from scratch."
+    "The saved key is missing from this device. Starting setup again."
 )
 
 USERNAME_TITLE = "GitHub username"
-USERNAME_BODY = (
-    "Optional, but useful for GitHub gist verification. "
-    "It is used only to find a public key; stats stay aggregate."
-)
+USERNAME_BODY = "Used to verify uploads as @you on GitHub. Skip to use GPG."
 USERNAME_PLACEHOLDER = "yasyf"
-USERNAME_ERROR_EMPTY = "Enter a GitHub username, or choose GPG only."
+USERNAME_ERROR_EMPTY = "Enter a GitHub username, or use GPG instead."
 USERNAME_ERROR_NOT_FOUND = "GitHub user \u201c{user}\u201d wasn't found."
-USERNAME_ERROR_UNREACHABLE = "Couldn't reach GitHub. Retry, or continue with GPG only."
+USERNAME_ERROR_UNREACHABLE = "Couldn't reach GitHub. Retry, or use GPG instead."
 
-PROPOSE_TITLE = "Recommended setup"
-PROPOSE_BODY = (
-    "We only need a public key that sentiments.cc can read. "
-    "The private key stays on this device, and only aggregate sentiment metrics are uploaded."
-)
+PROPOSE_TITLE = "Choose verification"
+PROPOSE_BODY = "Pick how cc-sentiment should verify future uploads."
 
 OPENPGP_EMAIL_LABEL = "Verification email"
-OPENPGP_EMAIL_HELP = "keys.openpgp.org sends a one-time email before publishing your public GPG key."
-OPENPGP_EMAIL_INFERRED = "Found {email} from a public commit. Use it only if you can open that inbox."
+OPENPGP_EMAIL_HELP = "We'll send a one-time verification link."
+OPENPGP_EMAIL_INFERRED = "Found {email}. Use it only if you can open that inbox."
 OPENPGP_EMAIL_ERROR_EMPTY = "Use an email address you can open now."
 
 WORKING_TITLE = "Finishing setup"
-WORKING_BODY = "This may take a few seconds. We're publishing only the public key."
-WORKING_RECOVERABLE_FAILURE = "That automatic step didn't finish: {error}. We can switch to guided setup."
-
-GUIDE_TITLE = "Finish publishing the public key"
-GUIDE_BODY = (
-    "Complete the steps in your browser, then come back. "
-    "cc-sentiment will keep checking automatically."
+WORKING_BODY = "This usually takes a few seconds."
+WORKING_RECOVERABLE_FAILURE = (
+    "That step didn't finish: {error}. Switch to guided setup or try again."
 )
 
-MANUAL_GIST_INTRO = (
-    "GitHub does not reliably prefill new gists in every browser. "
-    "We copied the public key to your clipboard and listed the exact fields below."
-)
+GUIDE_TITLE = "Finish verification"
+GUIDE_BODY = "Complete the browser step, then come back. We'll keep checking."
+
+MANUAL_GIST_INTRO = "Copied your public key. Paste it into a new public gist."
 MANUAL_GIST_INTRO_NO_CLIPBOARD = (
-    "GitHub does not reliably prefill new gists in every browser. "
-    "We couldn't copy the public key automatically, so copy the public key shown below."
+    "Copy the public key below, then paste it into a new public gist."
 )
 MANUAL_GIST_STEPS = (
     "1. Create a public gist.",
-    "2. Description: cc-sentiment public key",
-    "3. File name: cc-sentiment.pub",
-    "4. Paste the public key from your clipboard.",
-    "5. Add a second file named README.md with the cc-sentiment note below.",
-    "6. Click Create public gist.",
-    "7. Come back here. We'll look for the gist and verify it.",
+    "2. Set description: cc-sentiment public key",
+    "3. Add file: cc-sentiment.pub",
+    "4. Paste the public key.",
+    "5. Add README.md with the note below.",
+    "6. Return here and check again.",
 )
-MANUAL_GIST_FOOTER = f"README.md content:\n\n{GIST_README_TEMPLATE}"
+MANUAL_GIST_FOOTER = f"README.md:\n\n{GIST_README_TEMPLATE}"
 
-MANUAL_GIST_NOT_FOUND = (
-    "We couldn't find the gist automatically. "
-    "Paste the gist URL and we'll verify it directly."
-)
+MANUAL_GIST_NOT_FOUND = "Paste the gist URL and we'll check it directly."
 MANUAL_GIST_DESCRIPTION_MISMATCH = (
-    "The gist exists, but its description must be exactly "
-    "\u201ccc-sentiment public key\u201d so sentiments.cc knows it is intentional."
+    "Set the gist description to exactly: \u201ccc-sentiment public key\u201d."
 )
-MANUAL_GIST_KEY_MISSING = "The gist exists, but cc-sentiment.pub is empty or missing."
+MANUAL_GIST_KEY_MISSING = "Add cc-sentiment.pub to the gist, then check again."
 
-GITHUB_SSH_GUIDE_INTRO = (
-    "This adds a public SSH key to your GitHub account. "
-    "Only continue if you're comfortable with that. "
-    "The private key stays on this device."
-)
+GITHUB_SSH_GUIDE_INTRO = "This adds a public SSH key to your GitHub account."
 GITHUB_SSH_GUIDE_STEPS = (
     "1. Title: cc-sentiment",
     "2. Key type: Authentication Key",
-    "3. Paste the public key from your clipboard.",
-    "4. Click Add SSH key.",
-    "5. Return here; verification will continue automatically.",
+    "3. Paste the public key.",
+    "4. Add the SSH key.",
+    "5. Return here and check again.",
 )
 
-GITHUB_GPG_GUIDE_INTRO = (
-    "This adds a public GPG key to your GitHub account. "
-    "It is used only so sentiments.cc can find a public verification key."
-)
+GITHUB_GPG_GUIDE_INTRO = "This adds a public GPG key to your GitHub account."
 GITHUB_GPG_GUIDE_STEPS = (
-    "1. Paste the GPG public key from your clipboard.",
-    "2. Click Add GPG key.",
-    "3. Return here; verification will continue automatically.",
+    "1. Paste the GPG public key.",
+    "2. Add the GPG key.",
+    "3. Return here and check again.",
 )
 
-OPENPGP_BEFORE_SEND = (
-    "keys.openpgp.org will email {email}. "
-    "Click the link in that email to publish the public key."
-)
+OPENPGP_BEFORE_SEND = "We'll email {email} a verification link."
 OPENPGP_AFTER_SEND = (
-    "Verification email sent to {email}. "
-    "Open it, click the verification link, then return here. We'll keep checking."
+    "Verification email sent to {email}. Open it, click the link, then return here."
 )
-OPENPGP_NO_EMAIL_NEEDED = (
-    "The public key is already published or no email verification is needed. "
-    "We'll verify the signature now."
-)
+OPENPGP_NO_EMAIL_NEEDED = "Your public key is published. Checking verification now."
 OPENPGP_API_FAILURE = (
-    "keys.openpgp.org didn't accept the automatic request: {error}. "
-    "We opened the upload page and copied the public key to your clipboard."
+    "Automatic verification failed: {error}. "
+    "We opened the upload page and copied the public key."
 )
 OPENPGP_API_FAILURE_NO_BROWSER = (
-    "keys.openpgp.org didn't accept the automatic request: {error}. "
+    "Automatic verification failed: {error}. "
     "Open the upload page manually; the public key is on your clipboard."
 )
 OPENPGP_API_FAILURE_NO_CLIPBOARD = (
-    "keys.openpgp.org didn't accept the automatic request: {error}. "
-    "We couldn't copy the public key automatically, so copy the public key shown below."
+    "Automatic verification failed: {error}. "
+    "Copy the public key below, then upload it manually."
 )
 
-RESUME_COPY = "Continuing setup where you left off."
+RESUME_COPY = "Resuming setup."
 
-USERNAME_SKIP_GPG_ONLY = (
-    "Continuing without GitHub. You'll be verified by GPG fingerprint instead of "
-    "a GitHub public key location. Stats are still aggregate."
-)
+USERNAME_SKIP_GPG_ONLY = "Continuing without GitHub. We'll verify with GPG."
 
-TOOLS_TITLE = "One tool is needed to finish setup"
-TOOLS_BODY = (
-    "cc-sentiment can do most of setup for you if GitHub CLI or GPG is installed. "
-    "Choose an option below."
-)
-TOOLS_GH_AUTH_DETAIL = (
-    "We'll run gh auth login. After you finish, cc-sentiment can create the gist automatically."
-)
-TOOLS_NO_BREW_BREW = "Install one of these, then return:\n\n  brew install gh\n  brew install gnupg"
-TOOLS_NO_BREW_GENERIC = (
-    "Install GitHub CLI or GPG with your system's package manager, then return."
-)
+TOOLS_TITLE = "Install a setup tool"
+TOOLS_BODY = "Install GitHub CLI or GPG, then come back."
+TOOLS_GH_AUTH_DETAIL = "Sign in to GitHub CLI, then setup can continue."
+TOOLS_NO_BREW_BREW = "Install one, then return:\n\n  brew install gh\n  brew install gnupg"
+TOOLS_NO_BREW_GENERIC = "Install GitHub CLI or GPG, then return."
 
-FIX_TITLE = "Verification is still not working"
-FIX_BODY = (
-    "The public key is not visible yet, or sentiments.cc could not verify the test signature. "
-    "This is usually a propagation delay, a gist description mismatch, or a pasted-key mismatch."
-)
-FIX_HELP = "If this keeps happening, open a GitHub issue or reach out to @yasyf on Twitter/X."
+FIX_TITLE = "Verification still isn't working"
+FIX_BODY = "We still can't verify this key. Try again, or open the guide."
+FIX_HELP = "If it keeps failing, open a GitHub issue."
 
-SETTINGS_TITLE = "Setup complete"
-SETTINGS_BODY = (
-    "cc-sentiment can now upload signed, aggregate sentiment metrics. "
-    "Conversation text, file paths, prompts, tool inputs, and tool outputs are not uploaded."
-)
+SETTINGS_TITLE = "Ready to ingest"
+SETTINGS_BODY = "Setup is complete. Start ingesting your Claude Code sessions."
 
 
 class SetupScreen(Dialog[bool]):
@@ -372,9 +316,9 @@ class SetupScreen(Dialog[bool]):
                 Static("", id="username-status", classes="status-line muted"),
                 Static("", id="discover-status", classes="status-line muted"),
                 StepActions(
-                    Button("Use GPG only", id="username-skip", variant="default"),
+                    Button("Use GPG instead", id="username-skip", variant="default"),
                     Button("Continue", id="username-next", variant="default"),
-                    primary=Button("Try saved key again", id="discover-retry", variant="primary"),
+                    primary=Button("Try again", id="discover-retry", variant="primary"),
                 ),
             )
 
@@ -394,7 +338,7 @@ class SetupScreen(Dialog[bool]):
                 Input(placeholder="email@example.com", id="propose-email"),
                 Static("", id="propose-status", classes="status-line muted"),
                 StepActions(
-                    Button("Use a different key", id="propose-alt", variant="default"),
+                    Button("Choose another method", id="propose-alt", variant="default"),
                     primary=Button("Continue", id="propose-go", variant="primary"),
                 ),
             )
@@ -408,7 +352,7 @@ class SetupScreen(Dialog[bool]):
                 StepActions(
                     Button("Choose another method", id="working-redo", variant="default"),
                     Button("Try again", id="working-retry", variant="default"),
-                    primary=Button("Show guided setup", id="working-guide", variant="primary"),
+                    primary=Button("Open guide", id="working-guide", variant="primary"),
                 ),
             )
 
@@ -422,9 +366,9 @@ class SetupScreen(Dialog[bool]):
                 Static("", id="guide-error", classes="status-line error"),
                 PendingStatus("", id="guide-pending"),
                 StepActions(
-                    Button("Exit, continue later", id="guide-exit", variant="default"),
+                    Button("Continue later", id="guide-exit", variant="default"),
                     Button("Choose another method", id="guide-redo", variant="default"),
-                    Button("Open page again", id="guide-open", variant="default"),
+                    Button("Reopen page", id="guide-open", variant="default"),
                     primary=Button("Check now", id="guide-check", variant="primary"),
                 ),
             )
@@ -552,7 +496,7 @@ class SetupScreen(Dialog[bool]):
                 return "temporary"
 
     async def _run_discover_phase(self, saved_invalid: bool = False) -> None:
-        self._update_status("discover-status", "Looking for keys, GitHub identity, and tools…")
+        self._update_status("discover-status", "Checking setup…")
         username_hint = self._best_known_username()
         result = await anyio.to_thread.run_sync(
             DiscoveryRunner.run, username_hint, self.github_lookup_allowed,
@@ -848,15 +792,15 @@ class SetupScreen(Dialog[bool]):
     def _alternative_label(self, route: SetupRoute) -> str:
         match route.key_plan:
             case GenerateSSHKey():
-                return "Generate cc-sentiment managed SSH key — only for this app"
+                return "New cc-sentiment SSH key"
             case GenerateGPGKey():
-                return "Generate cc-sentiment managed GPG key — only for this app"
+                return "New cc-sentiment GPG key"
             case ExistingSSHKey(info=info):
                 tag = info.comment or info.path.name
-                return f"SSH key: {tag} — use only if you recognize it"
+                return f"SSH key: {tag}"
             case ExistingGPGKey(info=info):
                 tag = info.email or info.fpr[-8:]
-                return f"GPG key: {tag} — good for email/keyserver verification"
+                return f"GPG key: {tag}"
             case _:
                 return route.title
 
@@ -891,20 +835,20 @@ class SetupScreen(Dialog[bool]):
         if result.intervention is SetupIntervention.SIGN_IN_GH:
             self.query_one("#tools-detail", Static).update(TOOLS_GH_AUTH_DETAIL)
             primary.label = "Sign in to GitHub CLI"
-            secondary.label = "Continue without GitHub CLI"
+            secondary.label = "Use GPG instead"
             return
         if caps.has_brew:
             self.query_one("#tools-detail", Static).update(TOOLS_BODY)
-            primary.label = "Install GitHub CLI with Homebrew"
-            secondary.label = "Install GPG with Homebrew"
+            primary.label = "Install GitHub CLI"
+            secondary.label = "Install GPG"
             tertiary.display = manual_available
             if manual_available:
-                tertiary.label = "Show manual setup options"
+                tertiary.label = "Show manual options"
             return
         detail = TOOLS_NO_BREW_BREW if sys.platform == "darwin" else TOOLS_NO_BREW_GENERIC
         self.query_one("#tools-detail", Static).update(detail)
         primary.label = "I installed one"
-        secondary.label = "Manual setup"
+        secondary.label = "Show manual setup"
         secondary.display = manual_available
 
     @staticmethod
@@ -1021,29 +965,29 @@ class SetupScreen(Dialog[bool]):
             case PublishMethod.GIST_AUTO:
                 steps: list[WorkStep] = []
                 if isinstance(route.key_plan, GenerateSSHKey):
-                    steps.append(WorkStep(label="Creating local cc-sentiment key…"))
+                    steps.append(WorkStep(label="Creating cc-sentiment key…"))
                 steps.extend([
-                    WorkStep(label="Creating public GitHub gist…"),
-                    WorkStep(label="Checking that sentiments.cc can read it…"),
-                    WorkStep(label="Verifying a test signature…"),
+                    WorkStep(label="Creating GitHub gist…"),
+                    WorkStep(label="Checking visibility…"),
+                    WorkStep(label="Verifying upload…"),
                 ])
                 return steps
             case PublishMethod.OPENPGP:
                 steps = []
                 if isinstance(route.key_plan, GenerateGPGKey):
-                    steps.append(WorkStep(label="Creating local GPG key…"))
+                    steps.append(WorkStep(label="Creating GPG key…"))
                 steps.extend([
-                    WorkStep(label="Uploading public key to keys.openpgp.org…"),
-                    WorkStep(label="Requesting email verification…"),
-                    WorkStep(label="Waiting for keyserver publication…"),
-                    WorkStep(label="Verifying a test signature…"),
+                    WorkStep(label="Sending public key…"),
+                    WorkStep(label="Sending verification email…"),
+                    WorkStep(label="Waiting for verification…"),
+                    WorkStep(label="Verifying upload…"),
                 ])
                 return steps
             case PublishMethod.GITHUB_SSH | PublishMethod.GITHUB_GPG:
                 return [
-                    WorkStep(label="Adding public key to GitHub account…"),
-                    WorkStep(label="Waiting for GitHub public key list…"),
-                    WorkStep(label="Verifying a test signature…"),
+                    WorkStep(label="Adding key to GitHub…"),
+                    WorkStep(label="Waiting for GitHub…"),
+                    WorkStep(label="Verifying upload…"),
                 ]
             case _:
                 return []
@@ -1452,8 +1396,8 @@ class SetupScreen(Dialog[bool]):
         fallback = self.aggregate.fallback
         if fallback.clipboard_failed:
             body = body.replace(MANUAL_GIST_INTRO, MANUAL_GIST_INTRO_NO_CLIPBOARD)
-            body = body.replace("Paste the public key from your clipboard.", "Copy the public key shown below.")
-            body = body.replace("Paste the GPG public key from your clipboard.", "Copy the GPG public key shown below.")
+            body = body.replace("Paste the public key.", "Paste the copied public key.")
+            body = body.replace("Paste the GPG public key.", "Paste the copied GPG public key.")
             body = body.replace(
                 OPENPGP_API_FAILURE.format(error=self.aggregate.guide.last_error),
                 OPENPGP_API_FAILURE_NO_CLIPBOARD.format(error=self.aggregate.guide.last_error),
@@ -1465,9 +1409,9 @@ class SetupScreen(Dialog[bool]):
             )
         blocks = [body]
         if fallback.browser_failed and fallback.url:
-            blocks.append(f"Open this URL manually: {fallback.url}")
+            blocks.append(f"Open manually: {fallback.url}")
         if fallback.clipboard_failed and fallback.public_key:
-            blocks.append(f"Copy this public key manually:\n\n{fallback.public_key}")
+            blocks.append(f"Copy this public key:\n\n{fallback.public_key}")
         return "\n\n".join(block for block in blocks if block)
 
     async def _run_guide_side_effects(self, route: SetupRoute) -> None:
@@ -1558,10 +1502,10 @@ class SetupScreen(Dialog[bool]):
         if guide.last_checked_at:
             last_checked = "just now" if monotonic() - guide.last_checked_at < 5 else f"{int(monotonic() - guide.last_checked_at)}s ago"
         rows = [
-            f"  Public key: {'found' if guide.public_key_found else 'waiting'}",
-            f"  sentiments.cc verification: "
+            f"  Key: {'found' if guide.public_key_found else 'waiting'}",
+            f"  Verification: "
             f"{'verified' if guide.server_verified else ('failed' if guide.last_error else 'waiting')}",
-            f"  Last checked: {last_checked}",
+            f"  Checked: {last_checked}",
             f"  Elapsed: {elapsed // 60}:{elapsed % 60:02d}",
         ]
         with suppress(NoMatches):
@@ -1572,9 +1516,9 @@ class SetupScreen(Dialog[bool]):
             )
         with suppress(NoMatches):
             self.query_one("#guide-pending", PendingStatus).label = (
-                "Verification verified."
+                "Verified."
                 if guide.server_verified
-                else f"Waiting for the public key to propagate… {elapsed // 60}:{elapsed % 60:02d}"
+                else f"Waiting for verification… {elapsed // 60}:{elapsed % 60:02d}"
             )
 
     @on(Button.Pressed, "#guide-check")
@@ -1762,12 +1706,12 @@ class SetupScreen(Dialog[bool]):
             if self.discovery.intervention is SetupIntervention.SIGN_IN_GH:
                 ok = await anyio.to_thread.run_sync(KeyDiscovery.gh_auth_login_interactive)
                 if not ok:
-                    self._update_status("tools-status", "gh auth login didn't finish.", Tone.ERROR)
+                    self._update_status("tools-status", "GitHub sign-in didn't finish.", Tone.ERROR)
                     return
             elif caps.has_brew:
                 ok, err = await anyio.to_thread.run_sync(KeyDiscovery.install_with_brew, "gh")
                 if not ok:
-                    self._update_status("tools-status", err or "brew install failed", Tone.ERROR)
+                    self._update_status("tools-status", err or "Install failed.", Tone.ERROR)
                     return
             await self._run_discover_phase()
         finally:
@@ -1803,7 +1747,7 @@ class SetupScreen(Dialog[bool]):
             if caps.has_brew:
                 ok, err = await anyio.to_thread.run_sync(KeyDiscovery.install_with_brew, "gnupg")
                 if not ok:
-                    self._update_status("tools-status", err or "brew install failed", Tone.ERROR)
+                    self._update_status("tools-status", err or "Install failed.", Tone.ERROR)
                     return
                 await self._run_discover_phase()
                 return
@@ -1971,7 +1915,7 @@ class SetupScreen(Dialog[bool]):
         instructions = f"{RESUME_COPY}\n\n{route_instructions}".strip()
         if pending.last_error:
             instructions = (
-                f"{instructions}\n\nLast error: {Sanitizer.error(pending.last_error)}"
+                f"{instructions}\n\nLast issue: {Sanitizer.error(pending.last_error)}"
             )
         self.aggregate.guide.last_error = pending.last_error
         self.aggregate.guide.openpgp_email_sent = pending.last_status in (
@@ -2092,30 +2036,29 @@ class SetupScreen(Dialog[bool]):
         return GPGKeyInfo(fpr=fpr, email=fallback_email, algo="")
 
     def _enter_settings_for_saved_config(self) -> None:
-        location, lookup = self._derive_location(self.state.config)
-        self._set_done_branch(location, lookup)
+        self._set_done_branch(self._derive_verification(self.state.config))
         self.transition_to(SetupStage.SETTINGS)
 
-    def _set_done_branch(self, location: str, lookup: str) -> None:
+    def _set_done_branch(self, verification: str) -> None:
         with suppress(NoMatches):
             branch = self.query_one("#done-branch", DoneBranch)
-            branch.public_location = location
-            branch.lookup_value = lookup
+            branch.verification = verification
 
-    def _derive_location(self, config: Config | None) -> tuple[str, str]:
+    @staticmethod
+    def _derive_verification(config: Config | None) -> str:
         match config:
             case SSHConfig(contributor_id=cid):
-                return "GitHub SSH keys", f"@{cid}"
-            case GistConfig(contributor_id=cid, gist_id=gid):
-                return "GitHub gist", f"@{cid} · gist {gid[:8]}"
-            case GistGPGConfig(contributor_id=cid, gist_id=gid):
-                return "GitHub gist", f"@{cid} · gist {gid[:8]}"
+                return f"Verification: @{cid} on GitHub"
+            case GistConfig(contributor_id=cid):
+                return f"Verification: @{cid} via public gist"
+            case GistGPGConfig(contributor_id=cid):
+                return f"Verification: @{cid} via public gist"
             case GPGConfig(contributor_type="github", contributor_id=cid):
-                return "GitHub GPG keys", f"@{cid}"
+                return f"Verification: @{cid} on GitHub"
             case GPGConfig(contributor_type="gpg", fpr=fpr):
-                return "keys.openpgp.org", f"GPG {fpr[-8:]}"
+                return f"Verification: GPG {fpr[-8:]}"
             case _:
-                return "unknown", ""
+                return "Verification: ready"
 
     def _tick_pending(self) -> None:
         if self.current_stage is SetupStage.GUIDE:
@@ -2171,12 +2114,9 @@ class SetupScreen(Dialog[bool]):
                 candidate = self.aggregate.candidate
                 if candidate.config is not None:
                     self.state.config = candidate.config
-                derived = self._derive_location(self.state.config)
-                location = candidate.location or derived[0]
-                lookup = candidate.lookup or derived[1]
                 candidate.clear()
                 self.state.save()
-                self._set_done_branch(location, lookup)
+                self._set_done_branch(self._derive_verification(self.state.config))
                 if self.current_stage is not SetupStage.SETTINGS:
                     self.transition_to(SetupStage.SETTINGS)
             case AuthUnauthorized():
@@ -2206,7 +2146,7 @@ class SetupScreen(Dialog[bool]):
                         self._update_status("guide-error", MANUAL_GIST_NOT_FOUND, Tone.WARNING)
                         self._update_pending(PendingSetupStatus.GIST_NOT_FOUND, MANUAL_GIST_NOT_FOUND)
                         return
-                    self.aggregate.guide.last_error = "sentiments.cc still couldn't verify the public key."
+                    self.aggregate.guide.last_error = "sentiments.cc still couldn't verify this key."
                     self._update_pending(
                         PendingSetupStatus.VERIFY_UNAUTHORIZED,
                         self.aggregate.guide.last_error,
@@ -2231,7 +2171,7 @@ class SetupScreen(Dialog[bool]):
     def _enter_fix(self, error: str) -> None:
         self.aggregate.fix.last_error = error
         with suppress(NoMatches):
-            self.query_one("#fix-error", Static).update(f"Last error: {Sanitizer.error(error)}")
+            self.query_one("#fix-error", Static).update(f"Last issue: {Sanitizer.error(error)}")
         self.transition_to(SetupStage.FIX)
 
     @on(Button.Pressed, "#fix-retry")

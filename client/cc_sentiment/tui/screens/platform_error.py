@@ -50,8 +50,8 @@ class PlatformErrorScreen(Dialog[None]):
                 case ClaudeNotInstalled(brew_available=brew):
                     yield Label("Install Claude Code to continue", classes="title")
                     yield Label(
-                        "cc-sentiment scores your Claude Code sessions, so you'll need "
-                        "Claude Code installed and signed in. Click a command to copy it.",
+                        "Install and sign in to Claude Code, then come back. "
+                        "Click a command to copy it.",
                         classes="detail",
                     )
                     yield CommandBox(install_command(brew))
@@ -59,8 +59,7 @@ class PlatformErrorScreen(Dialog[None]):
                 case ClaudeNotAuthenticated():
                     yield Label("Sign in to Claude Code", classes="title")
                     yield Label(
-                        "Claude Code is installed but not signed in. "
-                        "Click the command to copy it, then run it in your terminal.",
+                        "Run this command, then come back.",
                         classes="detail",
                     )
                     yield CommandBox(AUTH_LOGIN)

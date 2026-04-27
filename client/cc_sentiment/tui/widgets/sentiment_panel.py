@@ -7,7 +7,7 @@ from typing import ClassVar
 from textual.widgets import Static
 
 from cc_sentiment.models import SentimentRecord
-from cc_sentiment.tui.format import ScoreEmoji, Verdict
+from cc_sentiment.tui.format import ScoreEmoji
 
 
 class SentimentPanel(Static):
@@ -37,9 +37,7 @@ class SentimentPanel(Static):
         sessions = len({r.conversation_id for r in records})
         avg = mean(scores)
         frustrated_pct = 100 * sum(c for s, c in counts.items() if s <= 2) / total
-        verdict = Verdict.for_avg(avg)
 
-        header = f"[b {verdict.token}]{verdict.text}[/]"
         stat_line = (
             f"[b]{avg:.1f}[/] {ScoreEmoji.for_avg(avg)}"
             f"  [$text-muted]·[/]  "
@@ -53,7 +51,7 @@ class SentimentPanel(Static):
             f"{counts.get(s, 0) * 100 / total:>3.0f}% " for s in self.SCORES
         ) + "[/]"
 
-        self.update("\n".join([header, stat_line, "", *bar_lines, emojis, pcts]))
+        self.update("\n".join([stat_line, "", *bar_lines, emojis, pcts]))
 
     @classmethod
     def render_histogram(cls, counts: Counter[int], max_count: int) -> list[str]:

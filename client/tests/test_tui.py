@@ -470,19 +470,6 @@ def test_format_hour_short_matches_dashboard():
     assert TimeFormat.format_hour_short(23) == "11p"
 
 
-def test_verdict_thresholds_align_with_dashboard():
-    from cc_sentiment.tui.format import Verdict
-
-    assert Verdict.for_avg(1.5).text == "Developers are frustrated."
-    assert Verdict.for_avg(1.5).token == "$error"
-    assert Verdict.for_avg(2.3).text == "Developers are struggling."
-    assert Verdict.for_avg(3.0).text == "Developers are getting by."
-    assert Verdict.for_avg(3.0).token == "$warning"
-    assert Verdict.for_avg(3.7).text == "Developers are happy."
-    assert Verdict.for_avg(4.5).text == "Developers are thriving."
-    assert Verdict.for_avg(4.5).token == "$success"
-
-
 def test_score_emoji_for_score_and_avg():
     from cc_sentiment.tui.format import ScoreEmoji
 
@@ -580,7 +567,7 @@ async def test_enter_idle_after_upload_mentions_dashboard(tmp_path: Path, auth_o
             await app._enter_idle(uploaded=False)
             assert isinstance(app.stage, IdleCaughtUp)
             assert "Uploaded" not in app.status_text
-            assert "O to open dashboard" in app.status_text
+            assert "O to open aggregate stats" in app.status_text
 
 
 async def test_enter_idle_empty_state_mentions_dashboard(tmp_path: Path, auth_ok):
@@ -595,7 +582,7 @@ async def test_enter_idle_empty_state_mentions_dashboard(tmp_path: Path, auth_ok
             await app._enter_idle(uploaded=False)
             assert isinstance(app.stage, IdleEmpty)
             assert "No conversations yet" in app.status_text
-            assert "O to browse" in app.status_text
+            assert "O to open aggregate stats" in app.status_text
 
 
 async def test_successful_upload_lands_in_idle_after_upload(tmp_path: Path, auth_ok, no_stat_share):
@@ -878,7 +865,7 @@ async def test_sentiment_panel_empty_state():
         assert "warming up" in str(panel.content)
 
 
-async def test_sentiment_panel_renders_verdict_and_histogram():
+async def test_sentiment_panel_renders_histogram():
     from cc_sentiment.tui.widgets import SentimentPanel
     records = [
         make_record(score=1), make_record(score=1), make_record(score=2),
@@ -890,7 +877,6 @@ async def test_sentiment_panel_renders_verdict_and_histogram():
         panel.update_from_records(records)
         await pilot.pause()
         body = str(panel.content)
-        assert "Developers are" in body
         assert "frustrated" in body
         assert "chats" in body
         assert "😡" in body
@@ -1078,7 +1064,7 @@ async def test_cta_shows_schedule_when_daemon_not_installed(tmp_path: Path, auth
             section = pilot.app.query_one("#cta-section")
             assert "inactive" not in section.classes
             button = pilot.app.query_one("#cta-action", Button)
-            assert str(button.label) == "Schedule daily"
+            assert str(button.label) == "Run daily"
 
 
 async def test_cta_hides_when_daemon_installed_and_no_tweet(tmp_path: Path, auth_ok, no_stat_share):
@@ -1109,12 +1095,12 @@ async def test_cta_rotates_between_tweet_and_schedule(tmp_path: Path, auth_ok, n
             await pilot.pause()
             assert app.view.cta.showing == "schedule"
             button = pilot.app.query_one("#cta-action", Button)
-            assert str(button.label) == "Schedule daily"
+            assert str(button.label) == "Run daily"
 
             app.view.rotate_cta()
             await pilot.pause()
             assert app.view.cta.showing == "tweet"
-            assert str(button.label) == "Tweet it"
+            assert str(button.label) == "Share on X"
             title = pilot.app.query_one("#cta-title", Static)
             assert "nicer to Claude" in str(title.render())
 
