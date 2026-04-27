@@ -427,7 +427,7 @@ async def test_setup_discovery_single_radioset_no_datatable(no_auto_setup):
 
             assert list(screen.query("#step-discovery DataTable")) == []
             assert radio.display is True
-            assert radio_labels(radio) == ["SSH key  ·  id_ed25519"]
+            assert radio_labels(radio) == ["SSH key  ·  ssh-ed25519  ·  user@host"]
             assert radio.styles.max_height.value == 12
             assert screen.query_one("#discovery-next", Button).disabled is False
 
@@ -464,7 +464,7 @@ async def test_setup_discovery_no_gh_username_hides_ssh_keys(no_auto_setup):
             await pilot.pause(delay=0.3)
 
             assert radio_labels(screen.query_one("#key-select", RadioSet)) == [
-                "GPG key  ·  test@example.com",
+                "GPG key  ·  rsa4096  ·  test@example.com",
             ]
 
 
@@ -1931,7 +1931,7 @@ async def test_setup_no_gh_auth_with_ssh_keygen_picks_ssh_mode_generation_ssh(no
             assert screen.query_one("#discovery-next", Button).disabled is False
 
 
-async def test_setup_existing_keys_hide_create_new_option_generation_gist(no_auto_setup):
+async def test_setup_existing_keys_offer_create_new_as_last_option(no_auto_setup):
     ssh_keys = (SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="user@host"),)
 
     with patch("cc_sentiment.tui.screens.setup.KeyDiscovery.find_ssh_keys", return_value=ssh_keys), \
@@ -1945,9 +1945,10 @@ async def test_setup_existing_keys_hide_create_new_option_generation_gist(no_aut
             await pilot.pause(delay=0.5)
 
             assert screen.discovery.generation_mode == "gist"
+            assert screen.discovery.generation_radio_index == 1
             labels = [str(rb.label) for rb in screen.query("#key-select RadioButton").results(RadioButton)]
-            assert screen.discovery.generation_radio_index is None
-            assert "Create a new cc-sentiment key" not in labels
+            assert len(labels) == 2
+            assert labels[-1].startswith("Make a new key for me")
 
 
 async def test_setup_generation_ssh_routes_to_remote(tmp_path: Path, no_auto_setup):
@@ -3037,7 +3038,7 @@ async def test_setup_fingerprint_format_and_email_angle_copy_hierarchy(no_auto_s
             await pilot.pause(delay=0.3)
 
             assert radio_labels(screen.query_one("#key-select", RadioSet)) == [
-                "GPG key  ·  John Doe <john.doe@example.org>",
+                "GPG key  ·  rsa4096  ·  John Doe <john.doe@example.org>",
             ]
 
 

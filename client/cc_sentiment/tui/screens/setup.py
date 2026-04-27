@@ -288,10 +288,10 @@ class SetupScreen(Dialog[bool]):
 
     def _key_radio_label(self, key: SSHKeyInfo | GPGKeyInfo) -> Text:
         match key:
-            case SSHKeyInfo(path=path):
-                return Text(f"SSH key  ·  {path.name}")
-            case GPGKeyInfo(email=email):
-                return Text(f"GPG key  ·  {email or 'no email'}")
+            case SSHKeyInfo(path=path, algorithm=algo, comment=comment):
+                return Text(f"SSH key  ·  {algo}  ·  {comment or path.name}")
+            case GPGKeyInfo(email=email, algo=algo):
+                return Text(f"GPG key  ·  {algo}  ·  {email or 'no email'}")
 
     def _clear_radio_set(self, radio: RadioSet) -> None:
         radio._pressed_button = None
@@ -903,15 +903,13 @@ class SetupScreen(Dialog[bool]):
         self.discovery.discovered_keys = all_keys
         self.discovery.generation_mode = self._pick_generation_mode()
         self.discovery.generation_radio_index = (
-            len(all_keys)
-            if self.discovery.generation_mode is not None and not all_keys
-            else None
+            len(all_keys) if self.discovery.generation_mode is not None else None
         )
 
         radio_children = [
             *(RadioButton(self._key_radio_label(key)) for key in all_keys),
             *(
-                [RadioButton("Create a new cc-sentiment key")]
+                [RadioButton(self._generation_radio_label())]
                 if self.discovery.generation_radio_index is not None
                 else []
             ),
@@ -929,14 +927,21 @@ class SetupScreen(Dialog[bool]):
             next_btn.disabled = True
             return
 
+        plural = "s" if len(all_keys) != 1 else ""
         if not all_keys:
             self._set_tone(status, "No keys we can use on this Mac yet.")
             help_text.update(self._generation_prompt())
+        elif self.discovery.generation_radio_index is not None:
+            self._set_tone(
+                status,
+                f"Found {len(all_keys)} key{plural} on your machine. "
+                "Pick one — or have us make a fresh one.",
+            )
+            help_text.update(self._generation_prompt())
         else:
-            help_text.update("")
             hint = " Pick one." if len(all_keys) > 1 else ""
-            plural = "s" if len(all_keys) != 1 else ""
             self._set_tone(status, f"Found {len(all_keys)} key{plural} on your machine.{hint}")
+            help_text.update("")
 
         self.call_after_refresh(self._mount_discovery_options, radio_children)
         next_btn.disabled = False
@@ -962,6 +967,17 @@ class SetupScreen(Dialog[bool]):
                 return "No problem. We'll create a GPG key for you here."
             case _:
                 return ""
+
+    def _generation_radio_label(self) -> str:
+        match self.discovery.generation_mode:
+            case GenerationMode.GIST:
+                return "Make a new key for me  ·  we'll publish it to a GitHub Gist"
+            case GenerationMode.SSH:
+                return "Make a new SSH key for me  ·  you'll add it to GitHub after"
+            case GenerationMode.GPG:
+                return "Make a new GPG key for me  ·  stays on this Mac"
+            case _:
+                return "Make a new key for me"
 
     @on(Button.Pressed, "#discovery-back")
     def on_discovery_back(self) -> None:
