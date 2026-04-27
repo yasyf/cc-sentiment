@@ -342,7 +342,7 @@ class PeerStat(StatCandidate):
 
 @dataclass(frozen=True, slots=True)
 class AngriestHourStat(StatCandidate):
-    MIN_HOUR_RECORDS: ClassVar[int] = 30
+    MIN_HOUR_RECORDS: ClassVar[int] = 5
     WINDOW_DAYS: ClassVar[int] = 30
     UCB_Z: ClassVar[float] = 1.645
     UCB_SIGMA: ClassVar[float] = 0.7

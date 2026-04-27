@@ -97,7 +97,7 @@
 	);
 
 	const worstSentimentHour = $derived.by(() => {
-		const MIN_SAMPLES = 30;
+		const MIN_SAMPLES = 5;
 		const SIGMA = 0.7;
 		const Z = 1.645;
 		const eligible = hourlyData.filter((h) => h.count >= MIN_SAMPLES);
