@@ -16,6 +16,7 @@ import httpx
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
+from textual.content import Content
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.css.query import NoMatches
@@ -92,8 +93,8 @@ Config = SSHConfig | GPGConfig | GistConfig
 
 class SetupScreen(Dialog[bool]):
     REMOTE_TONE_STYLES: ClassVar[dict[Tone, str]] = {
-        Tone.SUCCESS: "green",
-        Tone.WARNING: "yellow",
+        Tone.SUCCESS: "$success",
+        Tone.WARNING: "$warning",
         Tone.MUTED: "dim",
     }
     DONE_FOCUS_CHAIN: ClassVar[tuple[str, ...]] = (
@@ -533,8 +534,11 @@ class SetupScreen(Dialog[bool]):
         table = self._configure_remote_checks_table()
         table.clear(columns=False)
         for row in rows:
-            style = self.REMOTE_TONE_STYLES.get(row.tone, "")
-            table.add_row(*(Text(value, style=style) for value in (row.glyph, row.check, row.detail)))
+            token = self.REMOTE_TONE_STYLES.get(row.tone, "")
+            table.add_row(*(
+                Content.from_markup(f"[{token}]{value}[/]") if token else value
+                for value in (row.glyph, row.check, row.detail)
+            ))
 
     def _set_remote_pending(self, generation: int, key: SSHKeyInfo | GPGKeyInfo | None) -> None:
         if not self._remote_check_is_current(generation, key):

@@ -142,6 +142,11 @@ def cell_text(cell: object) -> str:
     return cell.plain if hasattr(cell, "plain") else str(cell)
 
 
+def cell_span_style(cell: object) -> str:
+    spans = getattr(cell, "spans", None)
+    return spans[0].style if spans else ""
+
+
 def table_rows(table: DataTable) -> list[tuple[str, ...]]:
     return [
         tuple(cell_text(cell) for cell in table.get_row_at(index))
@@ -598,8 +603,8 @@ async def test_setup_check_results_datatable_uses_columns_and_row_tones(no_auto_
                 ("?", "GitHub", "Couldn't reach GitHub"),
                 ("—", "keys.openpgp.org", "Not on keys.openpgp.org yet"),
             ]
-            assert [getattr(cell, "style", "") for cell in table.get_row_at(0)] == ["dim", "dim", "dim"]
-            assert [getattr(cell, "style", "") for cell in table.get_row_at(1)] == ["yellow", "yellow", "yellow"]
+            assert [cell_span_style(cell) for cell in table.get_row_at(0)] == ["dim", "dim", "dim"]
+            assert [cell_span_style(cell) for cell in table.get_row_at(1)] == ["$warning", "$warning", "$warning"]
 
 
 async def test_setup_key_preview_gpg_long_ascii_armor_stays_within_dialog(no_auto_setup):

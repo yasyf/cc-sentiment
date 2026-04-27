@@ -196,7 +196,7 @@ class ProcessingView:
         total = max(progress.queued_records, 1)
         bar.update(total=total, progress=min(progress.uploaded_records, total))
         label.update(
-            f"[b cyan]{progress.uploaded_records:,}[/]/[b cyan]{progress.queued_records:,}[/] "
+            f"[b $accent]{progress.uploaded_records:,}[/]/[b $accent]{progress.queued_records:,}[/] "
             "[dim]moments[/]"
         )
 
@@ -261,15 +261,15 @@ class ProcessingView:
         section.remove_class("inactive")
         lines: list[str] = [self.stats_row("venting", self.venting_phrase())]
         volume_parts = [
-            f"[b cyan]{self.stats.total_buckets:,}[/] moments",
-            f"[b cyan]{self.stats.total_sessions:,}[/] chats",
-            f"[b cyan]{self.stats.total_files:,}[/] transcripts",
+            f"[b $accent]{self.stats.total_buckets:,}[/] moments",
+            f"[b $accent]{self.stats.total_sessions:,}[/] chats",
+            f"[b $accent]{self.stats.total_files:,}[/] transcripts",
         ]
         lines.append(self.stats_row("volume", " · ".join(volume_parts)))
         if self.stats.rate > 0:
             lines.append(self.stats_row(
                 "pace",
-                f"[b cyan]{self.stats.rate:.1f}[/] [dim]moments per second on this Mac[/]",
+                f"[b $accent]{self.stats.rate:.1f}[/] [dim]moments per second on this Mac[/]",
             ))
         peaks = self.peaks_phrase()
         if peaks:
@@ -285,19 +285,19 @@ class ProcessingView:
         if top is None:
             return "[dim]you're kind to Claude[/]"
         word, count = top
-        return f'[b yellow]"{word}"[/] ×[b cyan]{count}[/]'
+        return f'[b $warning]"{word}"[/] ×[b $accent]{count}[/]'
 
     def peaks_phrase(self) -> str:
         parts: list[str] = []
         match (self.stats.toughest_hour, self.stats.toughest_day):
             case (int() as h, int() as d):
                 parts.append(
-                    f"[b red]{TimeFormat.format_hour(h)}[/] on [b red]{self.WEEKDAY_LABELS[d]}[/]"
+                    f"[b $error]{TimeFormat.format_hour(h)}[/] on [b $error]{self.WEEKDAY_LABELS[d]}[/]"
                 )
             case (int() as h, None):
-                parts.append(f"[b red]{TimeFormat.format_hour(h)}[/]")
+                parts.append(f"[b $error]{TimeFormat.format_hour(h)}[/]")
             case (None, int() as d):
-                parts.append(f"on [b red]{self.WEEKDAY_LABELS[d]}[/]")
+                parts.append(f"on [b $error]{self.WEEKDAY_LABELS[d]}[/]")
             case _:
                 pass
         return " · ".join(parts)

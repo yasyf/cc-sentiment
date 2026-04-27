@@ -30,7 +30,7 @@ class CommandBox(Static):
     @on(events.Click)
     def on_click(self) -> None:
         self.app.copy_to_clipboard(self.command)
-        self.update(self._format(self.command, "  [green]copied[/]"))
+        self.update(self._format(self.command, "  [$success]copied[/]"))
         self.set_timer(self.COPIED_RESET_SECONDS, self._restore)
 
     def _restore(self) -> None:

@@ -26,13 +26,13 @@ class Phase:
     idx: int
 
     def ok(self, label: str) -> None:
-        self.emitter.replace(self.idx, "[green]✓[/]", label)
+        self.emitter.replace(self.idx, "[$success]✓[/]", label)
 
     def skip(self, label: str) -> None:
-        self.emitter.replace(self.idx, "[yellow]—[/]", label)
+        self.emitter.replace(self.idx, "[$warning]—[/]", label)
 
     def unreachable(self, label: str) -> None:
-        self.emitter.replace(self.idx, "[yellow]?[/]", label)
+        self.emitter.replace(self.idx, "[$warning]?[/]", label)
 
 
 @dataclass

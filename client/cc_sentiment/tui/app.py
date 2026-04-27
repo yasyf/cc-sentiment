@@ -358,14 +358,14 @@ class CCSentimentApp(App[None]):
             case IdleEmpty():
                 self.view.show_stats(0, 0, 0)
                 self._update_status(
-                    "[green]All set. No conversations yet. Come back after using Claude Code.[/] "
+                    "[$success]All set. No conversations yet. Come back after using Claude Code.[/] "
                     "[dim]Press O to browse the dashboard.[/]"
                 )
                 self._maybe_prewarm()
             case IdleCaughtUp(total_buckets=b, total_sessions=s, total_files=f):
                 self.view.show_stats(b, s, f)
                 self._update_status(
-                    f"[green]All caught up.[/] "
+                    f"[$success]All caught up.[/] "
                     f"{s} chat{'s' if s != 1 else ''}, "
                     f"{b} moment{'s' if b != 1 else ''} scored. "
                     f"[dim]Press R to rescan, O to open dashboard.[/]"
@@ -379,7 +379,7 @@ class CCSentimentApp(App[None]):
                 self._update_status(m)
             case RescanConfirm():
                 self._update_status(
-                    "[yellow]Press R again within 5s to clear all state and rescan from scratch.[/]"
+                    "[$warning]Press R again within 5s to clear all state and rescan from scratch.[/]"
                 )
 
     def _uploaded_status_text(self) -> str:
@@ -390,7 +390,7 @@ class CCSentimentApp(App[None]):
             else "[dim]Press O to open your dashboard.[/]"
         )
         return (
-            "[green]Uploaded to[/] "
+            "[$success]Uploaded to[/] "
             f"[link='{DASHBOARD_URL}'][b]sentiments.cc[/b][/link]. "
             f"{suffix}"
         )
@@ -409,18 +409,18 @@ class CCSentimentApp(App[None]):
                     return True
                 case AuthUnauthorized():
                     self._update_status(
-                        "[yellow]sentiments.cc doesn't recognize this key. Let's redo setup.[/]"
+                        "[$warning]sentiments.cc doesn't recognize this key. Let's redo setup.[/]"
                     )
                     self.state.config = None
                     await anyio.to_thread.run_sync(self.state.save)
                     continue
                 case AuthUnreachable(detail=d):
                     self._debug(f"AuthUnreachable: {d}")
-                    self.stage = Error(f"[red]Couldn't reach sentiments.cc.[/] [dim]{d}[/]")
+                    self.stage = Error(f"[$error]Couldn't reach sentiments.cc.[/] [dim]{d}[/]")
                     return False
                 case AuthServerError(status=s):
                     self._debug(f"AuthServerError: status={s}")
-                    self.stage = Error(f"[red]sentiments.cc had an error verifying your key (HTTP {s}).[/]")
+                    self.stage = Error(f"[$error]sentiments.cc had an error verifying your key (HTTP {s}).[/]")
                     return False
 
     @work()
@@ -499,7 +499,7 @@ class CCSentimentApp(App[None]):
                     except (TimeoutError, OSError, RuntimeError) as exc:
                         await self._dismiss_boot_screen()
                         self.stage = Error(
-                            f"[red]Couldn't start the local model.[/] [dim]{exc}[/]"
+                            f"[$error]Couldn't start the local model.[/] [dim]{exc}[/]"
                         )
                         return
                     build_task = None
@@ -653,13 +653,13 @@ class CCSentimentApp(App[None]):
             await anyio.to_thread.run_sync(LaunchAgent.install)
         except subprocess.CalledProcessError as e:
             self._update_status(
-                f"[yellow]Couldn't schedule the background job ({e.returncode}).[/] "
+                f"[$warning]Couldn't schedule the background job ({e.returncode}).[/] "
                 "[dim]Try `cc-sentiment install` manually.[/]"
             )
             return
         self.view.set_schedule_available(False)
         self._update_status(
-            "[green]Scheduled.[/] It'll refresh your numbers daily in the background. "
+            "[$success]Scheduled.[/] It'll refresh your numbers daily in the background. "
             "[dim]Undo with `cc-sentiment uninstall`.[/]"
         )
 
