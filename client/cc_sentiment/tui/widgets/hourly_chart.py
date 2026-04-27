@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import math
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from statistics import mean
 from typing import ClassVar
@@ -8,64 +10,92 @@ from typing import ClassVar
 from textual.widgets import Static
 
 from cc_sentiment.models import SentimentRecord
+from cc_sentiment.tui.format import ScoreEmoji, TimeFormat
+
+
+@dataclass(frozen=True)
+class ToughHour:
+    hour: int
+    avg_score: float
+    count: int
 
 
 class HourlyChart(Static):
-    DEFAULT_CSS = """
-    HourlyChart { height: 7; }
+    DEFAULT_CSS: ClassVar[str] = """
+    HourlyChart { height: 5; }
     """
 
-    COLORS: ClassVar[dict[int, str]] = {1: "red", 2: "dark_orange", 3: "yellow", 4: "green", 5: "cyan"}
-    Y_TICKS: ClassVar[dict[int, str]] = {5: "😄", 4: "🙂", 3: "😐", 2: "😕", 1: "😡"}
+    SCORE_TOKENS: ClassVar[dict[int, str]] = {
+        1: "$error",
+        2: "$error",
+        3: "$warning",
+        4: "$success",
+        5: "$success",
+    }
+    BAR_LEVELS: ClassVar[tuple[str, ...]] = (" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█")
+    EMPTY_CELL: ClassVar[str] = "[$text-muted]·[/]"
     X_LABELS: ClassVar[dict[int, str]] = {0: "12a", 6: "6a", 12: "12p", 18: "6p", 23: "11p"}
     WINDOW_DAYS: ClassVar[int] = 30
+    UCB_MIN_SAMPLES: ClassVar[int] = 5
+    UCB_Z: ClassVar[float] = 1.645
+    UCB_SIGMA: ClassVar[float] = 0.7
+    HOURS: ClassVar[int] = 24
 
     def update_chart(self, records: list[SentimentRecord]) -> None:
         cutoff = datetime.now(timezone.utc) - timedelta(days=self.WINDOW_DAYS)
-        by_hour: dict[int, list[int]] = defaultdict(list)
+        scores_by_hour: dict[int, list[int]] = defaultdict(list)
         for r in records:
             if r.time >= cutoff:
-                by_hour[r.time.astimezone().hour].append(int(r.sentiment_score))
+                scores_by_hour[r.time.astimezone().hour].append(int(r.sentiment_score))
 
-        rows: list[int | None] = [
-            max(1, min(5, round(mean(scores)))) if (scores := by_hour.get(h)) else None
-            for h in range(24)
-        ]
-
-        if all(r is None for r in rows):
-            self.update("[dim]no data yet[/]")
+        if not scores_by_hour:
+            self.update("[$text-muted]no data yet — keep using Claude Code[/]")
             return
 
-        lines: list[str] = []
-        for row_score in range(5, 0, -1):
-            tick = self.Y_TICKS[row_score]
-            cells: list[str] = []
-            for h in range(24):
-                if rows[h] == row_score:
-                    cells.append(f"[{self.COLORS[row_score]}]●[/]")
-                elif self._on_line_segment(h, row_score, rows):
-                    cells.append("[dim]│[/]")
-                else:
-                    cells.append(" ")
-            lines.append(f"{tick} " + "".join(cells))
+        counts = [len(scores_by_hour.get(h, [])) for h in range(self.HOURS)]
+        max_count = max(counts)
+        bar_row = "".join(self.cell(scores_by_hour.get(h), max_count) for h in range(self.HOURS))
+        axis_line = "[$text-muted]" + "─" * self.HOURS + "[/]"
+        caption = self.caption(scores_by_hour)
+        self.update("\n".join([caption, "", bar_row, axis_line, self.axis_labels()]))
 
-        lines.append("   " + "─" * 24)
-        axis_buf = list(" " * 24)
-        for h, lbl in self.X_LABELS.items():
+    @classmethod
+    def cell(cls, scores: list[int] | None, max_count: int) -> str:
+        if not scores:
+            return cls.EMPTY_CELL
+        steps = len(cls.BAR_LEVELS) - 1
+        level = max(1, round(len(scores) / max_count * steps))
+        return f"[{cls.SCORE_TOKENS[round(mean(scores))]}]{cls.BAR_LEVELS[level]}[/]"
+
+    @classmethod
+    def caption(cls, scores_by_hour: dict[int, list[int]]) -> str:
+        if (tough := cls.toughest_hour(scores_by_hour)) is None:
+            return ""
+        return (
+            f"[$text-muted]your tough hour:[/] "
+            f"[b $error]{TimeFormat.format_hour_short(tough.hour)}[/] "
+            f"[$text-muted]({tough.avg_score:.1f} {ScoreEmoji.for_avg(tough.avg_score)})[/]"
+        )
+
+    @classmethod
+    def toughest_hour(cls, scores_by_hour: dict[int, list[int]]) -> ToughHour | None:
+        eligible = [
+            ToughHour(h, mean(scores), len(scores))
+            for h, scores in scores_by_hour.items()
+            if len(scores) >= cls.UCB_MIN_SAMPLES
+        ]
+        if not eligible:
+            return None
+        return min(
+            eligible,
+            key=lambda t: t.avg_score + cls.UCB_Z * cls.UCB_SIGMA / math.sqrt(t.count),
+        )
+
+    @classmethod
+    def axis_labels(cls) -> str:
+        buf = list(" " * cls.HOURS)
+        for h, lbl in cls.X_LABELS.items():
             for i, ch in enumerate(lbl):
-                if h + i < 24:
-                    axis_buf[h + i] = ch
-        lines.append("   " + "".join(axis_buf).rstrip())
-        self.update("\n".join(lines))
-
-    @staticmethod
-    def _on_line_segment(h: int, row_score: int, rows: list[int | None]) -> bool:
-        if rows[h] is not None:
-            return False
-        prev_h = next((i for i in range(h - 1, -1, -1) if rows[i] is not None), None)
-        next_h = next((i for i in range(h + 1, 24) if rows[i] is not None), None)
-        if prev_h is None or next_h is None:
-            return False
-        prev_row, next_row = rows[prev_h], rows[next_h]
-        assert prev_row is not None and next_row is not None
-        return min(prev_row, next_row) < row_score < max(prev_row, next_row)
+                if h + i < cls.HOURS:
+                    buf[h + i] = ch
+        return "[$text-muted]" + "".join(buf).rstrip() + "[/]"

@@ -3496,6 +3496,37 @@ def test_format_duration_hours():
     assert TimeFormat.format_duration(7200) == "~2 hours"
 
 
+def test_format_hour_short_matches_dashboard():
+    assert TimeFormat.format_hour_short(0) == "12a"
+    assert TimeFormat.format_hour_short(5) == "5a"
+    assert TimeFormat.format_hour_short(12) == "12p"
+    assert TimeFormat.format_hour_short(17) == "5p"
+    assert TimeFormat.format_hour_short(23) == "11p"
+
+
+def test_verdict_thresholds_align_with_dashboard():
+    from cc_sentiment.tui.format import Verdict
+
+    assert Verdict.for_avg(1.5).text == "Developers are frustrated."
+    assert Verdict.for_avg(1.5).token == "$error"
+    assert Verdict.for_avg(2.3).text == "Developers are struggling."
+    assert Verdict.for_avg(3.0).text == "Developers are getting by."
+    assert Verdict.for_avg(3.0).token == "$warning"
+    assert Verdict.for_avg(3.7).text == "Developers are happy."
+    assert Verdict.for_avg(4.5).text == "Developers are thriving."
+    assert Verdict.for_avg(4.5).token == "$success"
+
+
+def test_score_emoji_for_score_and_avg():
+    from cc_sentiment.tui.format import ScoreEmoji
+
+    assert ScoreEmoji.for_score(1) == "😡"
+    assert ScoreEmoji.for_score(3) == "😐"
+    assert ScoreEmoji.for_score(5) == "🤩"
+    assert ScoreEmoji.for_avg(2.4) == "😒"
+    assert ScoreEmoji.for_avg(4.6) == "🤩"
+
+
 def test_sample_payload_fields_match_real_record_schema():
     from cc_sentiment.models import SentimentRecord
 
@@ -3800,7 +3831,7 @@ class ChartHarness(App[None]):
         yield HourlyChart(id="chart")
 
 
-async def test_hourly_chart_renders_dot_and_line_grid():
+async def test_hourly_chart_renders_volume_row_and_axis():
     from datetime import datetime, timedelta, timezone
 
     base = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
@@ -3813,20 +3844,21 @@ async def test_hourly_chart_renders_dot_and_line_grid():
         chart = pilot.app.query_one("#chart", HourlyChart)
         chart.update_chart(records)
         await pilot.pause()
-        text = str(chart.content)
-        lines = text.split("\n")
-        assert len(lines) == 7
-        for tick in HourlyChart.Y_TICKS.values():
-            assert any(line.startswith(tick) for line in lines[:5])
-        assert "─" * 24 in lines[5]
-        assert "12a" in lines[6]
-        assert "6a" in lines[6]
-        assert "12p" in lines[6]
-        assert "[red]●[/]" in lines[4]
-        assert "[cyan]●[/]" in lines[0]
+        lines = str(chart.content).split("\n")
+        assert len(lines) == 5
+        bar_row = lines[2]
+        assert "[$success]" in bar_row
+        assert "[$error]" in bar_row
+        assert "[$warning]" in bar_row
+        assert "─" * 24 in lines[3]
+        labels = lines[4]
+        assert "12a" in labels
+        assert "6a" in labels
+        assert "12p" in labels
+        assert "6p" in labels
 
 
-async def test_hourly_chart_renders_average_sentiment_per_hour():
+async def test_hourly_chart_colors_track_avg_sentiment():
     from datetime import datetime, timedelta, timezone
 
     base = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
@@ -3840,10 +3872,9 @@ async def test_hourly_chart_renders_average_sentiment_per_hour():
         chart = pilot.app.query_one("#chart", HourlyChart)
         chart.update_chart(records)
         await pilot.pause()
-        lines = str(chart.content).split("\n")
-        assert "[red]●[/]" in lines[4]
-        assert "[dark_orange]●[/]" in lines[3]
-        assert "[green]●[/]" in lines[1]
+        bar_row = str(chart.content).split("\n")[2]
+        assert "[$error]" in bar_row
+        assert "[$success]" in bar_row
 
 
 async def test_hourly_chart_drops_records_older_than_window():
@@ -3867,6 +3898,58 @@ async def test_hourly_chart_empty_records():
         chart.update_chart([])
         await pilot.pause()
         assert "no data yet" in str(chart.content)
+
+
+async def test_hourly_chart_caption_calls_out_tough_hour():
+    from datetime import datetime, timedelta, timezone
+
+    base = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+    records = [
+        make_record(score=1, time=base + timedelta(hours=17, minutes=i))
+        for i in range(HourlyChart.UCB_MIN_SAMPLES)
+    ]
+    async with ChartHarness().run_test() as pilot:
+        chart = pilot.app.query_one("#chart", HourlyChart)
+        chart.update_chart(records)
+        await pilot.pause()
+        caption = str(chart.content).split("\n")[0]
+        assert "tough hour" in caption
+
+
+class SentimentPanelHarness(App[None]):
+    def compose(self):
+        from cc_sentiment.tui.widgets import SentimentPanel
+        yield SentimentPanel(id="panel")
+
+
+async def test_sentiment_panel_empty_state():
+    from cc_sentiment.tui.widgets import SentimentPanel
+    async with SentimentPanelHarness().run_test() as pilot:
+        panel = pilot.app.query_one("#panel", SentimentPanel)
+        panel.update_from_records([])
+        await pilot.pause()
+        assert "warming up" in str(panel.content)
+
+
+async def test_sentiment_panel_renders_verdict_and_histogram():
+    from cc_sentiment.tui.widgets import SentimentPanel
+    records = [
+        make_record(score=1), make_record(score=1), make_record(score=2),
+        make_record(score=3), make_record(score=3), make_record(score=3),
+        make_record(score=4), make_record(score=4), make_record(score=5),
+    ]
+    async with SentimentPanelHarness().run_test() as pilot:
+        panel = pilot.app.query_one("#panel", SentimentPanel)
+        panel.update_from_records(records)
+        await pilot.pause()
+        body = str(panel.content)
+        assert "Developers are" in body
+        assert "frustrated" in body
+        assert "chats" in body
+        assert "😡" in body
+        assert "🤩" in body
+        assert "[$success]" in body
+        assert "[$error]" in body
 
 
 class MomentsHarness(App[None]):

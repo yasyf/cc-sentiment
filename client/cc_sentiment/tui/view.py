@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import defaultdict
 from dataclasses import dataclass, field
 from statistics import mean
 from typing import ClassVar, Literal
@@ -13,7 +13,7 @@ from cc_sentiment.upload import UploadProgress
 
 from cc_sentiment.tui.format import TimeFormat
 from cc_sentiment.tui.progress import LiveFunStats, ScoringProgress
-from cc_sentiment.tui.widgets import HourlyChart, ScoreBar
+from cc_sentiment.tui.widgets import HourlyChart, SentimentPanel
 
 
 @dataclass
@@ -78,12 +78,8 @@ class ProcessingView:
 
     def __init__(self, app: App[None]) -> None:
         self.app = app
-        self.score_bars: dict[int, ScoreBar] = {}
         self.stats = StatsState()
         self.cta = CtaState()
-
-    def register_score_bar(self, s: int, bar: ScoreBar) -> None:
-        self.score_bars[s] = bar
 
     @staticmethod
     def append_line(widget: Static | Label, addition: str) -> None:
@@ -109,8 +105,7 @@ class ProcessingView:
         self.app.query_one("#score-digits").add_class("inactive")
         self.app.query_one("#score-label").add_class("inactive")
         self.app.query_one("#hourly-chart", HourlyChart).update_chart([])
-        for s in range(1, 6):
-            self.score_bars[s].update("")
+        self.app.query_one("#sentiment-panel", SentimentPanel).update_from_records([])
         self.app.query_one("#sentiment-section").add_class("inactive")
         self.app.query_one("#hourly-section").add_class("inactive")
         self.app.query_one("#stats-rows", Static).update("")
@@ -226,17 +221,12 @@ class ProcessingView:
         self.app.query_one("#score-digits").remove_class("inactive")
         self.app.query_one("#score-label").remove_class("inactive")
         scores = [int(r.sentiment_score) for r in records]
-        counts = Counter(scores)
-        total = len(scores)
-        max_count = max(counts.values()) if counts else 1
-        for s in range(1, 6):
-            n = counts.get(s, 0)
-            self.score_bars[s].update(self.score_bars[s].render_bar(n, total, max_count))
         avg = mean(scores)
         self.app.query_one("#score-digits", Digits).update(f"{avg:.2f}")
+        self.app.query_one("#sentiment-panel", SentimentPanel).update_from_records(records)
         self.app.query_one("#hourly-chart", HourlyChart).update_chart(records)
         sessions = len({r.conversation_id for r in records})
-        self.stats.total_buckets = total
+        self.stats.total_buckets = len(scores)
         self.stats.total_sessions = sessions
         self.stats.avg_score = avg
         self.update_peaks(records)

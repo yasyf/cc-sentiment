@@ -91,7 +91,7 @@ from cc_sentiment.tui.widgets import (
     DebugSection,
     HourlyChart,
     ProgressRow,
-    ScoreBar,
+    SentimentPanel,
 )
 
 
@@ -124,7 +124,7 @@ class CCSentimentApp(App[None]):
     #cta-buttons { height: auto; }
     ProgressBar Bar > .bar--bar { color: $accent; }
     ProgressBar Bar > .bar--complete { color: $accent; }
-    #hourly-chart { height: 7; }
+    #hourly-chart { height: 5; }
     #moments-log { height: auto; min-height: 4; max-height: 10; color: $foreground; }
     #stats-rows { height: auto; }
     #status-line { height: auto; margin: 1 0 0 0; }
@@ -201,12 +201,8 @@ class CCSentimentApp(App[None]):
                 )
 
             with Horizontal(classes="row"):
-                with Card(id="sentiment-section", title="sentiment", classes="inactive"):
-                    for s in range(5, 0, -1):
-                        bar = ScoreBar(s)
-                        bar.id = f"bar-{s}"
-                        self.view.register_score_bar(s, bar)
-                        yield bar
+                with Card(id="sentiment-section", title="how it feels", classes="inactive"):
+                    yield SentimentPanel(id="sentiment-panel")
                 with Card(id="hourly-section", title="through the day", classes="inactive"):
                     yield HourlyChart(id="hourly-chart")
 

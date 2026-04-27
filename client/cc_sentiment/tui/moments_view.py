@@ -14,7 +14,7 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 from cc_sentiment.highlight import Highlighter
-from cc_sentiment.tui.widgets import ScoreBar
+from cc_sentiment.tui.format import ScoreEmoji
 
 
 @dataclass
@@ -103,7 +103,7 @@ class MomentsView:
         )
         self.lines.append(
             Text.assemble(
-                f'{ScoreBar.ICONS[score]} {score}  "',
+                f'{ScoreEmoji.for_score(score)} {score}  "',
                 highlighted,
                 '"  ',
                 (comment, "dim"),

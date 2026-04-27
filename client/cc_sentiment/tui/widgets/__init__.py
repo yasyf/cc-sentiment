@@ -9,8 +9,8 @@ from cc_sentiment.tui.widgets.hourly_chart import HourlyChart
 from cc_sentiment.tui.widgets.key_preview import KeyPreview
 from cc_sentiment.tui.widgets.pending_status import PendingStatus
 from cc_sentiment.tui.widgets.progress_row import ProgressRow
-from cc_sentiment.tui.widgets.score_bar import ScoreBar
 from cc_sentiment.tui.widgets.section import Section
+from cc_sentiment.tui.widgets.sentiment_panel import SentimentPanel
 from cc_sentiment.tui.widgets.spinner_line import SpinnerLine
 from cc_sentiment.tui.widgets.step_actions import StepActions
 from cc_sentiment.tui.widgets.step_body import StepBody
@@ -26,8 +26,8 @@ __all__ = [
     "KeyPreview",
     "PendingStatus",
     "ProgressRow",
-    "ScoreBar",
     "Section",
+    "SentimentPanel",
     "SpinnerLine",
     "StepActions",
     "StepBody",
