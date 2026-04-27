@@ -80,6 +80,8 @@ from cc_sentiment.tui.setup_state import (
     RouteId,
     SetupActionState,
     SetupAggregate,
+    SetupIntervention,
+    SetupPlan,
     SetupRoute,
     SetupStage,
     Tone,
@@ -169,6 +171,10 @@ MANUAL_GIST_INTRO = (
     "GitHub does not reliably prefill new gists in every browser. "
     "We copied the public key to your clipboard and listed the exact fields below."
 )
+MANUAL_GIST_INTRO_NO_CLIPBOARD = (
+    "GitHub does not reliably prefill new gists in every browser. "
+    "We couldn't copy the public key automatically, so copy the public key shown below."
+)
 MANUAL_GIST_STEPS = (
     "1. Create a public gist.",
     "2. Description: cc-sentiment public key",
@@ -224,6 +230,14 @@ OPENPGP_AFTER_SEND = (
 OPENPGP_API_FAILURE = (
     "keys.openpgp.org didn't accept the automatic request: {error}. "
     "We opened the upload page and copied the public key to your clipboard."
+)
+OPENPGP_API_FAILURE_NO_BROWSER = (
+    "keys.openpgp.org didn't accept the automatic request: {error}. "
+    "Open the upload page manually; the public key is on your clipboard."
+)
+OPENPGP_API_FAILURE_NO_CLIPBOARD = (
+    "keys.openpgp.org didn't accept the automatic request: {error}. "
+    "We couldn't copy the public key automatically, so copy the public key shown below."
 )
 
 RESUME_COPY = "Continuing setup where you left off."
@@ -491,7 +505,7 @@ class SetupScreen(Dialog[bool]):
                 return
             case "none" | "invalid":
                 pass
-        await self._run_discover_phase()
+        await self._run_discover_phase(saved_invalid=self.state.config is not None)
 
     async def _maybe_resume_pending(self) -> bool:
         pending_model = self.state.pending_setup
@@ -516,7 +530,7 @@ class SetupScreen(Dialog[bool]):
                 self._render_saved_temporary()
                 return "temporary"
 
-    async def _run_discover_phase(self) -> None:
+    async def _run_discover_phase(self, saved_invalid: bool = False) -> None:
         self._update_status("discover-status", "Looking for keys, GitHub identity, and tools…")
         username_hint = self._best_known_username()
         result = await anyio.to_thread.run_sync(
@@ -534,8 +548,17 @@ class SetupScreen(Dialog[bool]):
             return
         self.aggregate.discovery = self._mark_verify_rows(self.aggregate.discovery, False)
         self._render_discover_rows(self.aggregate.discovery.rows)
-        self._update_status("discover-status", DISCOVER_NO_MATCH_COPY, Tone.WARNING)
-        if result.recommended is None or result.recommended.route_id in (RouteId.INSTALL_TOOLS, RouteId.SIGN_IN_GH):
+        self._update_status(
+            "discover-status",
+            f"{SAVED_KEY_INVALID_COPY_1}\n{SAVED_KEY_INVALID_COPY_2}" if saved_invalid else DISCOVER_NO_MATCH_COPY,
+            Tone.WARNING,
+        )
+        if result.intervention is SetupIntervention.USERNAME:
+            self._show_inline_username_prompt(
+                f"{SAVED_KEY_INVALID_COPY_1}\n{SAVED_KEY_INVALID_COPY_2}" if saved_invalid else ""
+            )
+            return
+        if result.intervention in (SetupIntervention.INSTALL_TOOLS, SetupIntervention.SIGN_IN_GH):
             self._render_tools(result)
             self.transition_to(SetupStage.TOOLS)
             return
@@ -580,8 +603,9 @@ class SetupScreen(Dialog[bool]):
             PublishMethod.GITHUB_GPG,
         )
 
-    def _show_inline_username_prompt(self) -> None:
-        self._update_status("discover-status", "Enter a GitHub username, or pick GPG only.")
+    def _show_inline_username_prompt(self, prefix: str = "") -> None:
+        body = f"{USERNAME_TITLE}\n{USERNAME_BODY}"
+        self._update_status("discover-status", f"{prefix}\n\n{body}" if prefix else body)
         self.query_one("#username-input", Input).display = True
         self.query_one("#username-next", Button).display = True
         self.query_one("#username-skip", Button).display = True
@@ -688,7 +712,7 @@ class SetupScreen(Dialog[bool]):
                 self._update_status("username-status", USERNAME_ERROR_UNREACHABLE, Tone.ERROR)
                 return
         self.github_allowed = True
-        self._set_username(username, UsernameSource.USER)
+        await self._set_username(username, UsernameSource.USER)
         self.state.github_username = username
         await anyio.to_thread.run_sync(self.state.save)
         self._hide_inline_username_prompt()
@@ -697,7 +721,7 @@ class SetupScreen(Dialog[bool]):
     @on(Button.Pressed, "#username-skip")
     async def on_username_skip(self) -> None:
         self.github_allowed = False
-        self._set_username("", UsernameSource.NONE)
+        await self._set_username("", UsernameSource.NONE)
         self._hide_inline_username_prompt()
         self._update_status("discover-status", USERNAME_SKIP_GPG_ONLY, Tone.MUTED)
         if self.discovery.recommended is None:
@@ -711,7 +735,7 @@ class SetupScreen(Dialog[bool]):
         self.query_one("#username-next", Button).display = False
         self.query_one("#username-skip", Button).display = False
 
-    def _set_username(self, username: str, source: UsernameSource) -> None:
+    async def _set_username(self, username: str, source: UsernameSource) -> None:
         existing = self.discovery.identity
         new_identity = IdentityDiscovery(
             github_username=username,
@@ -721,7 +745,7 @@ class SetupScreen(Dialog[bool]):
             email_usable=existing.email_usable,
         )
         if username and not new_identity.email_usable:
-            email, src, usable = IdentityProbe.mine_email(username)
+            email, src, usable = await anyio.to_thread.run_sync(IdentityProbe.mine_email, username)
             new_identity = IdentityDiscovery(
                 github_username=username,
                 username_source=source,
@@ -729,7 +753,7 @@ class SetupScreen(Dialog[bool]):
                 email_source=src,
                 email_usable=usable,
             )
-        recommended, alternatives = SetupRoutePlanner.plan(
+        plan = SetupRoutePlanner.plan(
             self.discovery.capabilities,
             new_identity,
             self.discovery.existing_ssh,
@@ -742,15 +766,16 @@ class SetupScreen(Dialog[bool]):
             existing_ssh=self.discovery.existing_ssh,
             existing_gpg=self.discovery.existing_gpg,
             rows=self.discovery.rows,
-            recommended=recommended,
-            alternatives=alternatives,
+            plan=plan,
         )
 
     async def _enter_propose(self) -> None:
         result = self.discovery
-        if result.recommended is None or result.recommended.route_id in (
-            RouteId.INSTALL_TOOLS, RouteId.SIGN_IN_GH,
-        ):
+        if result.intervention is SetupIntervention.USERNAME:
+            self.transition_to(SetupStage.DISCOVER)
+            self._show_inline_username_prompt()
+            return
+        if result.recommended is None:
             self._render_tools(result)
             self.transition_to(SetupStage.TOOLS)
             return
@@ -794,9 +819,9 @@ class SetupScreen(Dialog[bool]):
     def _alternative_label(self, route: SetupRoute) -> str:
         match route.key_plan:
             case GenerateSSHKey():
-                return "Generate cc-sentiment managed key — recommended, only for this app"
+                return "Generate cc-sentiment managed SSH key — only for this app"
             case GenerateGPGKey():
-                return "Generate cc-sentiment managed key — recommended, only for this app"
+                return "Generate cc-sentiment managed GPG key — only for this app"
             case ExistingSSHKey(info=info):
                 tag = info.comment or info.path.name
                 return f"SSH key: {tag} — use only if you recognize it"
@@ -821,32 +846,45 @@ class SetupScreen(Dialog[bool]):
                 inferred.display = False
         with suppress(NoMatches):
             email_input = self.query_one("#propose-email", Input)
-            if show and identity.github_email:
+            if show and identity.github_email and identity.email_usable:
                 email_input.value = identity.github_email
+            if show and identity.github_email and not identity.email_usable:
+                email_input.value = ""
 
     def _render_tools(self, result: DiscoveryResult) -> None:
         caps = result.capabilities
         primary = self.query_one("#tools-primary", Button)
         secondary = self.query_one("#tools-secondary", Button)
         tertiary = self.query_one("#tools-tertiary", Button)
-        if caps.has_gh and not caps.gh_authed:
+        manual_available = self._manual_options_available(result)
+        secondary.display = True
+        tertiary.display = False
+        if result.intervention is SetupIntervention.SIGN_IN_GH:
             self.query_one("#tools-detail", Static).update(TOOLS_GH_AUTH_DETAIL)
             primary.label = "Sign in to GitHub CLI"
             secondary.label = "Continue without GitHub CLI"
-            tertiary.display = False
             return
-        tertiary.display = True
-        if caps.has_brew and sys.platform == "darwin":
+        if caps.has_brew:
             self.query_one("#tools-detail", Static).update(TOOLS_BODY)
             primary.label = "Install GitHub CLI with Homebrew"
             secondary.label = "Install GPG with Homebrew"
-            tertiary.label = "Show manual setup options"
+            tertiary.display = manual_available
+            if manual_available:
+                tertiary.label = "Show manual setup options"
             return
         detail = TOOLS_NO_BREW_BREW if sys.platform == "darwin" else TOOLS_NO_BREW_GENERIC
         self.query_one("#tools-detail", Static).update(detail)
         primary.label = "I installed one"
         secondary.label = "Manual setup"
-        tertiary.display = False
+        secondary.display = manual_available
+
+    @staticmethod
+    def _manual_options_available(result: DiscoveryResult) -> bool:
+        return any(
+            route.publish_method is PublishMethod.GIST_MANUAL
+            for route in (result.recommended, *result.alternatives)
+            if route is not None
+        )
 
     @on(Button.Pressed, "#propose-go")
     async def on_propose_go(self) -> None:
@@ -882,8 +920,7 @@ class SetupScreen(Dialog[bool]):
             existing_ssh=self.discovery.existing_ssh,
             existing_gpg=self.discovery.existing_gpg,
             rows=self.discovery.rows,
-            recommended=chosen,
-            alternatives=new_alternatives,
+            plan=SetupPlan(chosen, new_alternatives, self.discovery.intervention),
         )
         self.selected_route = chosen
         self._render_propose(chosen, new_alternatives)
@@ -1184,6 +1221,7 @@ class SetupScreen(Dialog[bool]):
     ) -> None:
         self.aggregate.guide.reset(monotonic())
         self.aggregate.guide.openpgp_email_sent = True
+        self.aggregate.guide.last_error = error
         self.aggregate.fallback.clear()
         self._copy_or_record_fallback(armor)
         self._open_or_record_fallback(OPENPGP_UPLOAD_URL)
@@ -1373,11 +1411,25 @@ class SetupScreen(Dialog[bool]):
                 return "", False
 
     def _render_guide_instructions(self, body: str) -> None:
+        self.aggregate.guide.instructions = body
         with suppress(NoMatches):
             self.query_one("#guide-instructions", Static).update(self._guide_text_with_fallbacks(body))
 
     def _guide_text_with_fallbacks(self, body: str) -> str:
         fallback = self.aggregate.fallback
+        if fallback.clipboard_failed:
+            body = body.replace(MANUAL_GIST_INTRO, MANUAL_GIST_INTRO_NO_CLIPBOARD)
+            body = body.replace("Paste the public key from your clipboard.", "Copy the public key shown below.")
+            body = body.replace("Paste the GPG public key from your clipboard.", "Copy the GPG public key shown below.")
+            body = body.replace(
+                OPENPGP_API_FAILURE.format(error=self.aggregate.guide.last_error),
+                OPENPGP_API_FAILURE_NO_CLIPBOARD.format(error=self.aggregate.guide.last_error),
+            )
+        if fallback.browser_failed and self.aggregate.guide.last_error:
+            body = body.replace(
+                OPENPGP_API_FAILURE.format(error=self.aggregate.guide.last_error),
+                OPENPGP_API_FAILURE_NO_BROWSER.format(error=self.aggregate.guide.last_error),
+            )
         blocks = [body]
         if fallback.browser_failed and fallback.url:
             blocks.append(f"Open this URL manually: {fallback.url}")
@@ -1404,6 +1456,7 @@ class SetupScreen(Dialog[bool]):
 
     def _copy_or_record_fallback(self, public_key: str) -> None:
         if Clipboard.copy(public_key):
+            self.aggregate.fallback.public_key_copied = True
             return
         self.aggregate.fallback.public_key = public_key
         self.aggregate.fallback.clipboard_failed = True
@@ -1413,6 +1466,8 @@ class SetupScreen(Dialog[bool]):
             return
         self.aggregate.fallback.url = url
         self.aggregate.fallback.browser_failed = True
+        if not self.aggregate.fallback.public_key_copied:
+            Clipboard.copy(url)
 
     @staticmethod
     def _public_key_text(resolved: ResolvedKey) -> str:
@@ -1625,18 +1680,20 @@ class SetupScreen(Dialog[bool]):
             return
         match self.selected_route.publish_method:
             case PublishMethod.GIST_MANUAL:
-                Browser.open(GIST_NEW_URL)
+                self._open_or_record_fallback(GIST_NEW_URL)
             case PublishMethod.GITHUB_SSH:
-                Browser.open(GITHUB_SSH_NEW_URL)
+                self._open_or_record_fallback(GITHUB_SSH_NEW_URL)
             case PublishMethod.GITHUB_GPG:
-                Browser.open(GITHUB_GPG_NEW_URL)
+                self._open_or_record_fallback(GITHUB_GPG_NEW_URL)
             case PublishMethod.OPENPGP if (
                 self.aggregate.pending is not None
                 and self.aggregate.pending.last_status is PendingSetupStatus.MANUAL_OPENPGP_UPLOAD
             ):
-                Browser.open(OPENPGP_UPLOAD_URL)
+                self._open_or_record_fallback(OPENPGP_UPLOAD_URL)
             case _:
                 pass
+        if self.aggregate.guide.instructions:
+            self._render_guide_instructions(self.aggregate.guide.instructions)
 
     @on(Button.Pressed, "#guide-redo")
     async def on_guide_redo(self) -> None:
@@ -1667,12 +1724,12 @@ class SetupScreen(Dialog[bool]):
         self.actions.tools_running = True
         try:
             caps = self.discovery.capabilities
-            if caps.has_gh and not caps.gh_authed:
+            if self.discovery.intervention is SetupIntervention.SIGN_IN_GH:
                 ok = await anyio.to_thread.run_sync(KeyDiscovery.gh_auth_login_interactive)
                 if not ok:
                     self._update_status("tools-status", "gh auth login didn't finish.", Tone.ERROR)
                     return
-            elif caps.has_brew and sys.platform == "darwin":
+            elif caps.has_brew:
                 ok, err = await anyio.to_thread.run_sync(KeyDiscovery.install_with_brew, "gh")
                 if not ok:
                     self._update_status("tools-status", err or "brew install failed", Tone.ERROR)
@@ -1688,10 +1745,10 @@ class SetupScreen(Dialog[bool]):
         self.actions.tools_running = True
         try:
             caps = self.discovery.capabilities
-            if caps.has_gh and not caps.gh_authed:
+            if self.discovery.intervention is SetupIntervention.SIGN_IN_GH:
                 self.github_allowed = False
                 suppressed = replace(caps, has_gh=False, gh_authed=False)
-                recommended, alternatives = SetupRoutePlanner.plan(
+                plan = SetupRoutePlanner.plan(
                     suppressed,
                     self.discovery.identity,
                     self.discovery.existing_ssh,
@@ -1701,25 +1758,26 @@ class SetupScreen(Dialog[bool]):
                 self.aggregate.discovery = replace(
                     self.discovery,
                     capabilities=suppressed,
-                    recommended=recommended,
-                    alternatives=alternatives,
+                    plan=plan,
                 )
                 await self._enter_propose()
                 return
-            if caps.has_brew and sys.platform == "darwin":
+            if caps.has_brew:
                 ok, err = await anyio.to_thread.run_sync(KeyDiscovery.install_with_brew, "gnupg")
                 if not ok:
                     self._update_status("tools-status", err or "brew install failed", Tone.ERROR)
                     return
                 await self._run_discover_phase()
                 return
-            await self._enter_propose()
+            if self._manual_options_available(self.discovery):
+                await self._enter_propose()
         finally:
             self.actions.tools_running = False
 
     @on(Button.Pressed, "#tools-tertiary")
     async def on_tools_tertiary(self) -> None:
-        await self._enter_propose()
+        if self._manual_options_available(self.discovery):
+            await self._enter_propose()
 
     def _persist_pending(
         self,
@@ -1836,13 +1894,24 @@ class SetupScreen(Dialog[bool]):
         assert pending is not None
         self.aggregate.guide.reset(monotonic())
         self.aggregate.fallback.clear()
-        self.aggregate.discovery = DiscoveryResult(
+        discovered = await anyio.to_thread.run_sync(
+            DiscoveryRunner.run,
+            pending.username,
+            bool(pending.username) or self.github_allowed,
+        )
+        self.aggregate.discovery = replace(
+            discovered,
             identity=IdentityDiscovery(
-                github_username=pending.username,
-                username_source=UsernameSource.SAVED if pending.username else UsernameSource.NONE,
-                github_email=pending.email,
-                email_usable=bool(pending.email),
-            )
+                github_username=pending.username or discovered.identity.github_username,
+                username_source=(
+                    UsernameSource.SAVED
+                    if pending.username
+                    else discovered.identity.username_source
+                ),
+                github_email=pending.email or discovered.identity.github_email,
+                email_source=discovered.identity.email_source,
+                email_usable=bool(pending.email) or discovered.identity.email_usable,
+            ),
         )
         match pending.key_kind:
             case KeyKind.SSH:
@@ -1880,7 +1949,7 @@ class SetupScreen(Dialog[bool]):
             and not pending.gist_id
         )
         with suppress(NoMatches):
-            self.query_one("#guide-instructions", Static).update(instructions)
+            self._render_guide_instructions(instructions)
             self.query_one("#guide-gist-url", Input).display = (gist_visible or show_gist_input) and not pending.gist_id
         self._render_guide_status()
         self.transition_to(SetupStage.GUIDE)
@@ -1916,6 +1985,10 @@ class SetupScreen(Dialog[bool]):
     def _stage_pending_candidate(self, pending: PendingSetup) -> None:
         resolved = self.aggregate.resolved_key
         assert resolved is not None
+        gist_location = pending.public_location or "GitHub gist"
+        ssh_location = pending.public_location or "GitHub SSH keys"
+        gpg_location = pending.public_location or "GitHub GPG keys"
+        openpgp_location = pending.public_location or "keys.openpgp.org"
         match pending.publish_method:
             case PublishMethod.GIST_AUTO | PublishMethod.GIST_MANUAL if pending.gist_id:
                 config: Config = (
@@ -1932,7 +2005,7 @@ class SetupScreen(Dialog[bool]):
                     )
                 )
                 self.aggregate.candidate.stage(
-                    config, "GitHub gist", f"@{pending.username} · gist {pending.gist_id[:8]}",
+                    config, gist_location, f"@{pending.username} · gist {pending.gist_id[:8]}",
                 )
                 self.aggregate.guide.public_key_found = True
             case PublishMethod.GITHUB_SSH:
@@ -1942,7 +2015,7 @@ class SetupScreen(Dialog[bool]):
                         contributor_id=ContributorId(pending.username),
                         key_path=resolved.info.path,
                     ),
-                    "GitHub SSH keys",
+                    ssh_location,
                     f"@{pending.username}",
                 )
             case PublishMethod.GITHUB_GPG:
@@ -1953,7 +2026,7 @@ class SetupScreen(Dialog[bool]):
                         contributor_id=ContributorId(pending.username),
                         fpr=resolved.info.fpr,
                     ),
-                    "GitHub GPG keys",
+                    gpg_location,
                     f"@{pending.username}",
                 )
             case PublishMethod.OPENPGP:
@@ -1964,7 +2037,7 @@ class SetupScreen(Dialog[bool]):
                         contributor_id=ContributorId(resolved.info.fpr),
                         fpr=resolved.info.fpr,
                     ),
-                    "keys.openpgp.org",
+                    openpgp_location,
                     f"GPG {resolved.info.fpr[-8:]}",
                 )
             case _:

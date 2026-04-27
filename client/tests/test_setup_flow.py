@@ -46,6 +46,8 @@ from cc_sentiment.tui.setup_state import (
     KeyKind,
     PublishMethod,
     RouteId,
+    SetupIntervention,
+    SetupPlan,
     SetupRoute,
     SetupStage,
     ToolCapabilities,
@@ -106,7 +108,9 @@ class TestPlanner:
     def test_gh_authenticated_recommends_managed_ssh_gist(self):
         caps = _capabilities(has_gh=True, gh_authed=True, has_ssh_keygen=True)
         ident = _identity("alice")
-        recommended, alternatives = SetupRoutePlanner.plan(caps, ident, (), ())
+        plan = SetupRoutePlanner.plan(caps, ident, (), ())
+        recommended = plan.recommended
+        alternatives = plan.alternatives
         assert recommended is not None
         assert recommended.route_id is RouteId.MANAGED_SSH_GIST
         assert recommended.publish_method is PublishMethod.GIST_AUTO
@@ -115,7 +119,7 @@ class TestPlanner:
 
     def test_no_gh_with_gpg_recommends_managed_gpg_openpgp(self):
         caps = _capabilities(has_gpg=True)
-        recommended, _ = SetupRoutePlanner.plan(caps, _identity(), (), ())
+        recommended = SetupRoutePlanner.plan(caps, _identity(), (), ()).recommended
         assert recommended is not None
         assert recommended.route_id is RouteId.MANAGED_GPG_OPENPGP
         assert recommended.publish_method is PublishMethod.OPENPGP
@@ -123,16 +127,23 @@ class TestPlanner:
 
     def test_no_gh_no_gpg_with_ssh_keygen_recommends_managed_ssh_manual_gist(self):
         caps = _capabilities(has_ssh_keygen=True)
-        recommended, _ = SetupRoutePlanner.plan(caps, _identity("alice"), (), ())
+        recommended = SetupRoutePlanner.plan(caps, _identity("alice"), (), ()).recommended
         assert recommended is not None
         assert recommended.route_id is RouteId.MANAGED_SSH_MANUAL_GIST
         assert recommended.publish_method is PublishMethod.GIST_MANUAL
+
+    def test_no_gh_no_gpg_with_ssh_keygen_and_no_username_prompts_for_username(self):
+        plan = SetupRoutePlanner.plan(_capabilities(has_ssh_keygen=True), _identity(), (), ())
+        assert plan.recommended is None
+        assert plan.intervention is SetupIntervention.USERNAME
 
     def test_existing_ssh_with_gh_offers_gist_default(self):
         caps = _capabilities(has_gh=True, gh_authed=True, has_ssh_keygen=True)
         ident = _identity("alice")
         ssh = _ssh_key()
-        recommended, alternatives = SetupRoutePlanner.plan(caps, ident, (ssh,), ())
+        plan = SetupRoutePlanner.plan(caps, ident, (ssh,), ())
+        recommended = plan.recommended
+        alternatives = plan.alternatives
         gist_methods = {
             r.publish_method
             for r in (recommended, *alternatives)
@@ -144,34 +155,35 @@ class TestPlanner:
         caps = _capabilities(has_ssh_keygen=True)
         ident = _identity("alice")
         ssh = _ssh_key()
-        recommended, _ = SetupRoutePlanner.plan(caps, ident, (ssh,), ())
+        recommended = SetupRoutePlanner.plan(caps, ident, (ssh,), ()).recommended
         assert recommended is not None
         assert recommended.publish_method is not PublishMethod.GITHUB_SSH
 
     def test_existing_gpg_only_recommends_openpgp_no_method_detour(self):
         caps = _capabilities(has_gpg=True)
         gpg = _gpg_key()
-        recommended, alternatives = SetupRoutePlanner.plan(caps, _identity(), (), (gpg,))
+        plan = SetupRoutePlanner.plan(caps, _identity(), (), (gpg,))
+        recommended = plan.recommended
         assert recommended is not None
-        assert recommended.route_id is RouteId.MANAGED_GPG_OPENPGP
+        assert recommended.route_id is RouteId.EXISTING_GPG_OPENPGP
         assert recommended.publish_method is PublishMethod.OPENPGP
-        assert any(isinstance(route.key_plan, ExistingGPGKey) for route in alternatives)
+        assert isinstance(recommended.key_plan, ExistingGPGKey)
 
     def test_no_tools_offers_install_route(self):
-        recommended, _ = SetupRoutePlanner.plan(_capabilities(), _identity(), (), ())
-        assert recommended is not None
-        assert recommended.route_id is RouteId.INSTALL_TOOLS
+        plan = SetupRoutePlanner.plan(_capabilities(), _identity(), (), ())
+        assert plan.recommended is None
+        assert plan.intervention is SetupIntervention.INSTALL_TOOLS
 
     def test_gh_unauthenticated_offers_signin(self):
         caps = _capabilities(has_gh=True)
-        recommended, _ = SetupRoutePlanner.plan(caps, _identity(), (), ())
-        assert recommended is not None
-        assert recommended.route_id is RouteId.SIGN_IN_GH
+        plan = SetupRoutePlanner.plan(caps, _identity(), (), ())
+        assert plan.recommended is None
+        assert plan.intervention is SetupIntervention.SIGN_IN_GH
 
     def test_account_key_routes_carry_warning(self):
         caps = _capabilities(has_gh=True, gh_authed=True, has_ssh_keygen=True)
         ssh = _ssh_key()
-        _, alternatives = SetupRoutePlanner.plan(caps, _identity("alice"), (ssh,), ())
+        alternatives = SetupRoutePlanner.plan(caps, _identity("alice"), (ssh,), ()).alternatives
         github_routes = [
             r for r in alternatives if r.route_id is RouteId.EXISTING_SSH_GITHUB
         ]
@@ -417,13 +429,44 @@ async def test_no_routes_falls_through_to_tools(auth_unauthorized, stub_discover
         identity=_identity(),
         existing_ssh=(),
         existing_gpg=(),
-        recommended=None,
-        alternatives=(),
+        plan=SetupPlan(intervention=SetupIntervention.INSTALL_TOOLS),
     ))
     state = AppState()
     async with SetupHarness(state).run_test() as pilot:
         screen = await wait_for_stage(pilot, SetupStage.TOOLS)
         assert screen.current_stage is SetupStage.TOOLS
+
+
+async def test_tools_hides_manual_button_when_no_manual_route(auth_unauthorized, stub_discovery):
+    stub_discovery(DiscoveryResult(
+        capabilities=_capabilities(),
+        identity=_identity(),
+        plan=SetupPlan(intervention=SetupIntervention.INSTALL_TOOLS),
+    ))
+    state = AppState()
+    async with SetupHarness(state).run_test() as pilot:
+        screen = await wait_for_stage(pilot, SetupStage.TOOLS)
+        assert not screen.query_one("#tools-secondary", Button).display
+
+
+async def test_saved_invalid_copy_survives_discovery(
+    tmp_path: Path, auth_unauthorized, stub_discovery,
+):
+    stub_discovery(DiscoveryResult(
+        capabilities=_capabilities(),
+        identity=_identity(),
+        plan=SetupPlan(intervention=SetupIntervention.INSTALL_TOOLS),
+    ))
+    state = AppState(
+        config=SSHConfig(
+            contributor_id=ContributorId("alice"),
+            key_path=tmp_path / "id_ed25519",
+        ),
+    )
+    async with SetupHarness(state).run_test() as pilot:
+        screen = await wait_for_stage(pilot, SetupStage.TOOLS)
+        status = str(screen.query_one("#discover-status", Static).render())
+        assert "The saved public key could not be verified anymore." in status
 
 
 async def test_propose_screen_shows_recommended_route(
@@ -435,8 +478,7 @@ async def test_propose_screen_shows_recommended_route(
         identity=_identity("alice"),
         existing_ssh=(),
         existing_gpg=(),
-        recommended=route,
-        alternatives=(),
+        plan=SetupPlan(route),
     ))
     state = AppState()
     async with SetupHarness(state).run_test() as pilot:
@@ -453,7 +495,7 @@ async def test_propose_button_label_matches_route(
     stub_discovery(DiscoveryResult(
         capabilities=_capabilities(has_gh=True, gh_authed=True, has_ssh_keygen=True),
         identity=_identity("alice"),
-        recommended=route,
+        plan=SetupPlan(route),
     ))
     state = AppState()
     async with SetupHarness(state).run_test() as pilot:
@@ -476,7 +518,7 @@ async def test_managed_gist_flow_completes_to_settings(
     stub_discovery(DiscoveryResult(
         capabilities=_capabilities(has_gh=True, gh_authed=True, has_ssh_keygen=True),
         identity=_identity("alice"),
-        recommended=route,
+        plan=SetupPlan(route),
     ))
     state = AppState()
     with patch(
@@ -558,11 +600,10 @@ async def test_done_button_dismisses_true(
 async def test_inline_username_prompt_shows_when_no_identity_but_routes_need_one(
     auth_unauthorized, stub_discovery,
 ):
-    route = _managed_ssh_route()
     stub_discovery(DiscoveryResult(
-        capabilities=_capabilities(has_gh=True, has_ssh_keygen=True),
+        capabilities=_capabilities(has_ssh_keygen=True),
         identity=_identity(),
-        recommended=route,
+        plan=SetupPlan(intervention=SetupIntervention.USERNAME),
     ))
     state = AppState()
     async with SetupHarness(state).run_test() as pilot:
@@ -574,11 +615,10 @@ async def test_inline_username_prompt_shows_when_no_identity_but_routes_need_one
 async def test_username_validation_failure_shows_exact_copy(
     auth_unauthorized, stub_discovery,
 ):
-    route = _managed_ssh_route()
     stub_discovery(DiscoveryResult(
-        capabilities=_capabilities(has_gh=True, has_ssh_keygen=True),
+        capabilities=_capabilities(has_ssh_keygen=True),
         identity=_identity(),
-        recommended=route,
+        plan=SetupPlan(intervention=SetupIntervention.USERNAME),
     ))
     state = AppState()
     with patch(
@@ -603,8 +643,7 @@ async def test_propose_alternatives_switch_recommendation(
     stub_discovery(DiscoveryResult(
         capabilities=_capabilities(has_gh=True, gh_authed=True, has_ssh_keygen=True),
         identity=_identity("alice"),
-        recommended=primary,
-        alternatives=(alt,),
+        plan=SetupPlan(primary, (alt,)),
     ))
     state = AppState()
     async with SetupHarness(state).run_test() as pilot:
@@ -691,9 +730,7 @@ class TestClipboardPlatformRouting:
         )
         cmd = Clipboard.command()
         assert cmd is not None
-        argv, env = cmd
-        assert argv == ["wl-copy"]
-        assert env == {}
+        assert cmd == ["wl-copy"]
 
     def test_command_returns_none_when_nothing_present(self, monkeypatch):
         from cc_sentiment.tui.setup_helpers import Clipboard
@@ -734,14 +771,15 @@ class TestPlannerEdgeCases:
     def test_existing_gpg_only_emits_no_alternatives_to_skip_method_detour(self):
         caps = _capabilities(has_gpg=True)
         gpg = _gpg_key()
-        recommended, alternatives = SetupRoutePlanner.plan(caps, _identity(), (), (gpg,))
+        plan = SetupRoutePlanner.plan(caps, _identity(), (), (gpg,))
+        recommended = plan.recommended
         assert recommended is not None
         assert recommended.publish_method is PublishMethod.OPENPGP
-        assert any(isinstance(route.key_plan, ExistingGPGKey) for route in alternatives)
+        assert isinstance(recommended.key_plan, ExistingGPGKey)
 
     def test_existing_ssh_with_gh_skips_username_gate_for_recommendation(self):
         caps = _capabilities(has_gh=True, gh_authed=True, has_ssh_keygen=True)
-        recommended, _ = SetupRoutePlanner.plan(caps, _identity(), (), ())
+        recommended = SetupRoutePlanner.plan(caps, _identity(), (), ()).recommended
         assert recommended is not None
         assert recommended.route_id is RouteId.MANAGED_SSH_GIST
 
@@ -751,9 +789,11 @@ class TestPlannerEdgeCases:
         )
         ssh = _ssh_key()
         gpg = _gpg_key()
-        recommended, alternatives = SetupRoutePlanner.plan(
+        plan = SetupRoutePlanner.plan(
             caps, _identity("alice"), (ssh,), (gpg,), github_allowed=False,
         )
+        recommended = plan.recommended
+        alternatives = plan.alternatives
         assert recommended is not None
         forbidden = {
             PublishMethod.GIST_AUTO,
@@ -767,12 +807,12 @@ class TestPlannerEdgeCases:
 
     def test_github_disallowed_with_only_gh_capability_falls_back_to_install_tools(self):
         caps = _capabilities(has_gh=True, gh_authed=True, has_ssh_keygen=True)
-        recommended, alternatives = SetupRoutePlanner.plan(
+        plan = SetupRoutePlanner.plan(
             caps, _identity("alice"), (), (), github_allowed=False,
         )
-        assert recommended is not None
-        assert recommended.route_id is RouteId.INSTALL_TOOLS
-        assert alternatives == ()
+        assert plan.recommended is None
+        assert plan.alternatives == ()
+        assert plan.intervention is SetupIntervention.INSTALL_TOOLS
 
 
 # --------------------------------------------------------------------------- #
@@ -783,11 +823,10 @@ class TestPlannerEdgeCases:
 async def test_username_validation_persists_to_app_state(
     auth_unauthorized, stub_discovery,
 ):
-    route = _managed_ssh_route()
     stub_discovery(DiscoveryResult(
-        capabilities=_capabilities(has_gh=True, has_ssh_keygen=True),
+        capabilities=_capabilities(has_ssh_keygen=True),
         identity=_identity(),
-        recommended=route,
+        plan=SetupPlan(intervention=SetupIntervention.USERNAME),
     ))
     state = AppState()
     with patch(
@@ -823,7 +862,7 @@ async def test_manual_gist_guide_shows_copy_and_open_fallbacks(
     stub_discovery(DiscoveryResult(
         capabilities=_capabilities(has_ssh_keygen=True),
         identity=_identity("alice"),
-        recommended=route,
+        plan=SetupPlan(route),
     ))
     state = AppState()
     with patch("cc_sentiment.tui.screens.setup.Clipboard.copy", return_value=False), \
@@ -836,6 +875,40 @@ async def test_manual_gist_guide_shows_copy_and_open_fallbacks(
             assert "Open this URL manually: https://gist.github.com/" in instructions
             assert "Copy this public key manually:" in instructions
             assert "ssh-ed25519 AAAA cc-sentiment" in instructions
+            assert "We copied the public key to your clipboard" not in instructions
+
+
+async def test_browser_failure_does_not_overwrite_copied_public_key(
+    tmp_path: Path, auth_unauthorized, stub_discovery,
+):
+    ssh = _managed_existing_ssh_key(tmp_path)
+    route = SetupRoute(
+        route_id=RouteId.MANAGED_SSH_MANUAL_GIST,
+        title="Publish a managed SSH key in a gist",
+        detail="",
+        primary_label="Open GitHub gist guide",
+        secondary_label="",
+        publish_method=PublishMethod.GIST_MANUAL,
+        key_kind=KeyKind.SSH,
+        key_plan=ssh,
+        automated=False,
+    )
+    stub_discovery(DiscoveryResult(
+        capabilities=_capabilities(has_ssh_keygen=True),
+        identity=_identity("alice"),
+        plan=SetupPlan(route),
+    ))
+    state = AppState()
+    with patch("cc_sentiment.tui.screens.setup.Clipboard.copy", return_value=True) as copy_mock, \
+         patch("cc_sentiment.tui.screens.setup.Browser.open", return_value=False):
+        async with SetupHarness(state).run_test() as pilot:
+            screen = await wait_for_stage(pilot, SetupStage.PROPOSE)
+            screen.query_one("#propose-go", Button).press()
+            screen = await wait_for_stage(pilot, SetupStage.GUIDE)
+            instructions = str(screen.query_one("#guide-instructions", Static).render())
+            assert "Open this URL manually: https://gist.github.com/" in instructions
+            assert "Copy this public key manually:" not in instructions
+    copy_mock.assert_called_once_with("ssh-ed25519 AAAA cc-sentiment")
 
 
 async def test_openpgp_guide_does_not_open_upload_before_email(
@@ -845,7 +918,7 @@ async def test_openpgp_guide_does_not_open_upload_before_email(
     stub_discovery(DiscoveryResult(
         capabilities=_capabilities(has_gpg=True),
         identity=_identity(email="alice@example.com", email_usable=True),
-        recommended=route,
+        plan=SetupPlan(route),
     ))
     state = AppState()
     with patch("cc_sentiment.tui.screens.setup.Browser.open") as open_mock:
@@ -856,6 +929,30 @@ async def test_openpgp_guide_does_not_open_upload_before_email(
     open_mock.assert_not_called()
 
 
+async def test_noreply_email_is_not_prefilled_for_openpgp(
+    auth_unauthorized, stub_discovery,
+):
+    gpg = ExistingGPGKey(
+        info=GPGKeyInfo(
+            fpr="ABCDEF1234567890ABCDEF1234567890ABCDEF12",
+            email="",
+            algo="ed25519",
+        ),
+    )
+    route = _existing_gpg_openpgp_route(gpg)
+    stub_discovery(DiscoveryResult(
+        capabilities=_capabilities(has_gpg=True),
+        identity=_identity("alice", "123+alice@users.noreply.github.com", False),
+        plan=SetupPlan(route),
+    ))
+    state = AppState()
+    async with SetupHarness(state).run_test() as pilot:
+        screen = await wait_for_stage(pilot, SetupStage.PROPOSE)
+        email = screen.query_one("#propose-email", Input)
+        assert email.display
+        assert email.value == ""
+
+
 async def test_openpgp_api_failure_uses_manual_upload_fallback(
     auth_unauthorized, stub_discovery,
 ):
@@ -863,7 +960,7 @@ async def test_openpgp_api_failure_uses_manual_upload_fallback(
     stub_discovery(DiscoveryResult(
         capabilities=_capabilities(has_gpg=True),
         identity=_identity(email="alice@example.com", email_usable=True),
-        recommended=route,
+        plan=SetupPlan(route),
     ))
     state = AppState()
     with patch(
@@ -980,14 +1077,38 @@ async def test_resume_pending_with_last_error_renders_error_in_guide(
         assert "Last error: sentiments.cc still couldn't verify" in instructions
 
 
+async def test_resume_choose_another_method_uses_fresh_discovery(
+    tmp_path: Path, auth_unauthorized, stub_discovery,
+):
+    stub_discovery(DiscoveryResult(
+        capabilities=_capabilities(has_ssh_keygen=True),
+        identity=_identity("alice"),
+        plan=SetupPlan(_managed_ssh_route()),
+    ))
+    state = AppState(
+        pending_setup=PendingSetupModel(
+            route_id="managed-ssh-manual-gist",
+            publish_method="gist-manual",
+            key_kind="ssh",
+            key_managed=True,
+            key_path=tmp_path / "id_ed25519",
+            username="alice",
+        ),
+    )
+    async with SetupHarness(state).run_test() as pilot:
+        screen = await wait_for_stage(pilot, SetupStage.GUIDE)
+        screen.query_one("#guide-redo", Button).press()
+        screen = await wait_for_stage(pilot, SetupStage.PROPOSE)
+        assert screen.current_stage is SetupStage.PROPOSE
+
+
 async def test_username_skip_marks_github_disallowed(
     auth_unauthorized, stub_discovery,
 ):
-    route = _managed_ssh_route()
     stub_discovery(DiscoveryResult(
-        capabilities=_capabilities(has_gh=True, has_ssh_keygen=True, has_gpg=True),
+        capabilities=_capabilities(has_ssh_keygen=True, has_gpg=True),
         identity=_identity(),
-        recommended=route,
+        plan=SetupPlan(intervention=SetupIntervention.USERNAME),
     ))
     state = AppState()
     async with SetupHarness(state).run_test() as pilot:
@@ -998,6 +1119,23 @@ async def test_username_skip_marks_github_disallowed(
             if not screen.github_allowed:
                 break
     assert screen.github_allowed is False
+
+
+async def test_username_skip_without_gpg_stays_in_tools_without_manual_loop(
+    auth_unauthorized, stub_discovery,
+):
+    stub_discovery(DiscoveryResult(
+        capabilities=_capabilities(has_ssh_keygen=True),
+        identity=_identity(),
+        plan=SetupPlan(intervention=SetupIntervention.USERNAME),
+    ))
+    state = AppState()
+    async with SetupHarness(state).run_test() as pilot:
+        screen = await wait_for_stage(pilot, SetupStage.DISCOVER)
+        screen.query_one("#username-skip", Button).press()
+        screen = await wait_for_stage(pilot, SetupStage.TOOLS)
+        assert screen.current_stage is SetupStage.TOOLS
+        assert not screen.query_one("#tools-secondary", Button).display
 
 
 async def test_candidate_config_not_committed_until_auth_ok(
@@ -1013,7 +1151,7 @@ async def test_candidate_config_not_committed_until_auth_ok(
     stub_discovery(DiscoveryResult(
         capabilities=_capabilities(has_gh=True, gh_authed=True, has_ssh_keygen=True),
         identity=_identity("alice"),
-        recommended=_managed_ssh_route(),
+        plan=SetupPlan(_managed_ssh_route()),
     ))
     state = AppState()
     with patch(

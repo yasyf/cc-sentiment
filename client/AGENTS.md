@@ -1,6 +1,6 @@
-# client: macOS CLI
+# client: cross-platform CLI
 
-macOS Apple Silicon CLI tool. Discovers Claude Code conversation transcripts, runs them through Gemma 4 via MLX for local sentiment analysis, signs results with GitHub SSH keys, and uploads to the server.
+Cross-platform CLI tool. Discovers Claude Code conversation transcripts, scores them with the best available engine, signs results with SSH or GPG keys, and uploads aggregate metrics to the server. Local MLX scoring is Apple Silicon-only; setup, upload, and dashboard sharing run on macOS, Linux, and Windows.
 
 ## Python Style
 
@@ -55,7 +55,7 @@ uv sync                            # Install dependencies
 uv run cc-sentiment scan           # Discover and score new transcripts
 uv run cc-sentiment upload         # Upload pending scores to server
 uv run cc-sentiment scan --upload  # Scan and upload in one step
-uv run cc-sentiment setup          # Configure GitHub username, verify SSH keys
+uv run cc-sentiment setup          # Configure a verification key
 uv run pytest client/              # Run tests
 ```
 
@@ -161,25 +161,24 @@ The prompt must:
 - `temperature`: 0.0 (deterministic scoring)
 - Each conversation gets its own inference call (context matters)
 
-## GitHub SSH Signing
+## Signing
 
 ### Key Discovery
 
-Look for SSH keys in order:
+Look for local verification keys in order:
 1. `~/.ssh/id_ed25519` (preferred)
 2. `~/.ssh/id_rsa`
-3. Keys listed in `~/.ssh/config`
+3. Local GPG keys
 
-GitHub username from `git config github.user` or `~/.cc-sentiment/config.toml`.
+GitHub usernames are used only for public-key lookup. GPG fingerprints are used for OpenPGP verification.
 
 ### Setup Flow
 
 `cc-sentiment setup`:
-1. Ask for GitHub username (or read from git config)
-2. Fetch `https://github.com/<username>.keys`
-3. Find matching local private key
-4. If no match: print instructions for adding an SSH key to GitHub
-5. Save config to `~/.cc-sentiment/config.toml`
+1. Detect GitHub CLI auth, saved username, local SSH/GPG keys, and public key locations
+2. Skip setup if an already-published local key verifies with sentiments.cc
+3. Recommend the safest available route: managed gist, OpenPGP email verification, guided gist, or tool install/sign-in
+4. Save config only after sentiments.cc verifies a test signature
 
 ### Signing Protocol
 

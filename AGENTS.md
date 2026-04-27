@@ -1,6 +1,6 @@
 # cc-sentiment Development Guide
 
-Monorepo with three components: `server/` (Modal API), `app/` (Svelte dashboard), and `client/` (macOS CLI).
+Monorepo with three components: `server/` (Modal API), `app/` (Svelte dashboard), and `client/` (cross-platform CLI).
 
 ## Repository Structure
 
@@ -8,7 +8,7 @@ Monorepo with three components: `server/` (Modal API), `app/` (Svelte dashboard)
 cc-sentiment/
 ├── server/           # Modal backend — upload API, data query API, timeseries storage
 ├── app/              # Svelte frontend — dashboard, charts, caching
-├── client/           # macOS CLI — transcript parsing, MLX inference, signed upload
+├── client/           # Cross-platform CLI — transcript parsing, scoring, signed upload
 ├── AGENTS.md         # This file — shared conventions
 └── README.md         # Project overview
 ```

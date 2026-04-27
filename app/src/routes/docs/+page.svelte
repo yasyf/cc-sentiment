@@ -34,16 +34,16 @@
 				</p>
 				<pre class="mt-3 overflow-x-auto rounded border border-border bg-bg-code px-4 py-3 font-mono text-sm text-text-secondary"><code>uvx cc-sentiment</code></pre>
 				<p class="mt-2 text-sm text-text-dim">
-					Or set it up on a schedule:
+					On macOS, set it up on a launchd schedule:
 				</p>
 				<pre class="mt-2 overflow-x-auto rounded border border-border bg-bg-code px-4 py-3 font-mono text-sm text-text-secondary"><code>uv tool install cc-sentiment
 cc-sentiment install</code></pre>
 				<p class="mt-2 text-sm text-text-dim">
-					Runs once a day in the background. Undo any time with <code class="rounded bg-bg-code px-1 py-0.5 font-mono text-xs">cc-sentiment uninstall</code>.
+					Runs once a day in the background on macOS. On Linux or Windows, use cron or your platform's scheduler to run <code class="rounded bg-bg-code px-1 py-0.5 font-mono text-xs">cc-sentiment run</code>. Undo the macOS schedule any time with <code class="rounded bg-bg-code px-1 py-0.5 font-mono text-xs">cc-sentiment uninstall</code>.
 				</p>
 				<p class="mt-3 text-sm text-text-muted">
-					The wizard sets up a verification key, scores your sessions on your machine,
-					and uploads the numeric scores. If anything's missing, it'll set it up for you.
+					The wizard sets up a verification key, scores your sessions with the best available engine,
+					and uploads the numeric scores. If anything's missing, it'll guide you through setup.
 				</p>
 			</section>
 
@@ -53,7 +53,7 @@ cc-sentiment install</code></pre>
 				<h3 class="text-base font-medium text-text">What happens</h3>
 				<ol class="mt-3 space-y-2 pl-5 text-sm text-text-muted list-decimal marker:text-text-dim">
 					<li>Finds your Claude Code transcripts in <code class="rounded bg-bg-code px-1 py-0.5 font-mono text-xs">~/.claude/projects/</code></li>
-					<li>Scores each conversation on your machine when the local engine is available</li>
+					<li>Scores each conversation locally when the local engine is available, otherwise asks before using the configured fallback engine</li>
 					<li>Signs each upload with a key you control and a public verification handle (GitHub username or GPG fingerprint) used only to find a public key and verify signatures</li>
 					<li>Uploads only the numeric scores and timestamps to the <a href="/" class="text-accent hover:text-accent-hover transition-colors">dashboard</a></li>
 				</ol>

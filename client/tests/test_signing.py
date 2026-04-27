@@ -16,19 +16,11 @@ from tests.helpers import make_record
 
 
 class TestKeyDiscovery:
-    def test_find_ssh_keys_ed25519(self) -> None:
-        with patch("cc_sentiment.signing.discovery.SSH_DIR") as mock_ssh_dir:
-            ed25519_path = MagicMock(spec=Path)
-            ed25519_path.exists.return_value = True
-            pub_path = MagicMock()
-            pub_path.read_text.return_value = "ssh-ed25519 AAAA user@host"
-            ed25519_path.with_suffix.return_value = pub_path
-            ed25519_path.suffix = ""
-
-            rsa_path = MagicMock(spec=Path)
-            rsa_path.exists.return_value = False
-
-            mock_ssh_dir.__truediv__ = lambda self, name: ed25519_path if name == "id_ed25519" else rsa_path
+    def test_find_ssh_keys_ed25519(self, tmp_path: Path) -> None:
+        key_path = tmp_path / "id_ed25519"
+        key_path.write_text("private")
+        key_path.with_suffix(".pub").write_text("ssh-ed25519 AAAA user@host")
+        with patch("cc_sentiment.signing.discovery.SSH_DIR", tmp_path):
             keys = KeyDiscovery.find_ssh_keys()
             assert len(keys) == 1
             assert keys[0].algorithm == "ssh-ed25519"

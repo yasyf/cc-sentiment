@@ -26,6 +26,8 @@ from cc_sentiment.tui.setup_state import (
     KeyKind,
     PublishMethod,
     RouteId,
+    SetupIntervention,
+    SetupPlan,
     SetupRoute,
     ToolCapabilities,
     UsernameSource,
@@ -50,30 +52,29 @@ ACCOUNT_GPG_WARNING = (
 
 class Clipboard:
     @classmethod
-    def command(cls) -> tuple[list[str], dict[str, str]] | None:
+    def command(cls) -> list[str] | None:
         match sys.platform:
             case "darwin":
                 if shutil.which("pbcopy"):
-                    return ["pbcopy"], {}
+                    return ["pbcopy"]
             case "win32":
                 if shutil.which("clip"):
-                    return ["clip"], {}
+                    return ["clip"]
             case _:
                 if shutil.which("wl-copy"):
-                    return ["wl-copy"], {}
+                    return ["wl-copy"]
                 if shutil.which("xclip"):
-                    return ["xclip", "-selection", "clipboard"], {}
+                    return ["xclip", "-selection", "clipboard"]
                 if shutil.which("xsel"):
-                    return ["xsel", "--clipboard", "--input"], {}
+                    return ["xsel", "--clipboard", "--input"]
         return None
 
     @classmethod
     def copy(cls, text: str) -> bool:
         if (cmd := cls.command()) is None:
             return False
-        argv, env = cmd
         try:
-            subprocess.run(argv, input=text, text=True, check=True, timeout=5, env=env or None)
+            subprocess.run(cmd, input=text, text=True, check=True, timeout=5)
         except (subprocess.SubprocessError, OSError):
             return False
         return True
@@ -193,19 +194,25 @@ class IdentityProbe:
 class LocalKeysProbe:
     @staticmethod
     def detect_ssh() -> tuple[ExistingSSHKey, ...]:
-        keys: list[ExistingSSHKey] = []
-        for ssh in KeyDiscovery.find_ssh_keys():
-            managed = ssh.path.parent.name == "keys" and ssh.path.parent.parent.name == ".cc-sentiment"
-            keys.append(ExistingSSHKey(info=ssh, managed=managed))
-        managed_path = KeyDiscovery.find_gist_keypair()
-        if managed_path is not None and not any(k.info.path == managed_path for k in keys):
-            info = KeyDiscovery.ssh_key_info(managed_path, "cc-sentiment")
-            assert info is not None
-            keys.append(ExistingSSHKey(
-                info=info,
-                managed=True,
-            ))
-        return tuple(keys)
+        keys = tuple(
+            ExistingSSHKey(
+                info=ssh,
+                managed=ssh.path.parent.name == "keys" and ssh.path.parent.parent.name == ".cc-sentiment",
+            )
+            for ssh in KeyDiscovery.find_ssh_keys()
+        )
+        return keys + (
+            (LocalKeysProbe._managed_ssh_key(managed_path),)
+            if (managed_path := KeyDiscovery.find_gist_keypair()) is not None
+            and not any(key.info.path == managed_path for key in keys)
+            else ()
+        )
+
+    @staticmethod
+    def _managed_ssh_key(path: Path) -> ExistingSSHKey:
+        info = KeyDiscovery.ssh_key_info(path, "cc-sentiment")
+        assert info is not None
+        return ExistingSSHKey(info=info, managed=True)
 
     @staticmethod
     def detect_gpg() -> tuple[ExistingGPGKey, ...]:
@@ -221,49 +228,72 @@ class SetupRoutePlanner:
         ssh_keys: tuple[ExistingSSHKey, ...],
         gpg_keys: tuple[ExistingGPGKey, ...],
         github_allowed: bool = True,
-    ) -> tuple[SetupRoute | None, tuple[SetupRoute, ...]]:
-        candidates: list[SetupRoute] = []
+    ) -> SetupPlan:
         username = identity.github_username
         gh_publish_allowed = github_allowed and capabilities.gh_authed
         if gh_publish_allowed and capabilities.has_ssh_keygen:
-            candidates.append(cls._managed_ssh_gist())
+            recommended = cls._managed_ssh_gist()
         elif gh_publish_allowed and gpg_keys:
-            candidates.append(cls._existing_gpg_gist(gpg_keys[0]))
+            recommended = cls._existing_gpg_gist(gpg_keys[0])
+        elif capabilities.has_gpg and gpg_keys:
+            recommended = cls._existing_gpg_openpgp(gpg_keys[0])
         elif capabilities.has_gpg:
-            candidates.append(cls._managed_gpg_openpgp())
-        elif github_allowed and username and capabilities.has_ssh_keygen:
-            candidates.append(cls._managed_ssh_manual_gist())
+            recommended = cls._managed_gpg_openpgp()
         elif github_allowed and capabilities.has_gh and not capabilities.gh_authed:
-            candidates.append(cls._sign_in_gh())
+            return SetupPlan(intervention=SetupIntervention.SIGN_IN_GH)
+        elif github_allowed and not username and capabilities.has_ssh_keygen:
+            return SetupPlan(intervention=SetupIntervention.USERNAME)
+        elif github_allowed and username and capabilities.has_ssh_keygen:
+            recommended = cls._managed_ssh_manual_gist()
         else:
-            candidates.append(cls._install_tools(capabilities))
+            return SetupPlan(intervention=SetupIntervention.INSTALL_TOOLS)
 
-        if gh_publish_allowed and capabilities.has_ssh_keygen:
-            candidates.extend(cls._existing_ssh_gist(ssh) for ssh in ssh_keys)
-        if gh_publish_allowed:
-            candidates.extend(cls._existing_gpg_gist(gpg) for gpg in gpg_keys)
-        if capabilities.has_gpg:
-            candidates.extend(cls._existing_gpg_openpgp(gpg) for gpg in gpg_keys)
-        if github_allowed and username and capabilities.has_ssh_keygen:
-            candidates.extend(cls._existing_ssh_manual_gist(ssh) for ssh in ssh_keys)
-        if gh_publish_allowed and capabilities.has_ssh_keygen:
-            candidates.extend(cls._existing_ssh_github(ssh) for ssh in ssh_keys)
-        if gh_publish_allowed:
-            candidates.extend(cls._existing_gpg_github(gpg) for gpg in gpg_keys)
-
-        unique = cls._unique_routes(candidates)
-        return unique[0], tuple(unique[1:])
+        unique = cls._unique_routes([
+            recommended,
+            *(
+                cls._existing_ssh_gist(ssh)
+                for ssh in ssh_keys
+                if gh_publish_allowed and capabilities.has_ssh_keygen
+            ),
+            *(
+                cls._existing_gpg_gist(gpg)
+                for gpg in gpg_keys
+                if gh_publish_allowed
+            ),
+            *(
+                cls._existing_gpg_openpgp(gpg)
+                for gpg in gpg_keys
+                if capabilities.has_gpg
+            ),
+            *(
+                cls._existing_ssh_manual_gist(ssh)
+                for ssh in ssh_keys
+                if github_allowed and username and capabilities.has_ssh_keygen
+            ),
+            *(
+                cls._existing_ssh_github(ssh)
+                for ssh in ssh_keys
+                if gh_publish_allowed and capabilities.has_ssh_keygen
+            ),
+            *(
+                cls._existing_gpg_github(gpg)
+                for gpg in gpg_keys
+                if gh_publish_allowed
+            ),
+        ])
+        if not unique:
+            return SetupPlan(intervention=SetupIntervention.INSTALL_TOOLS)
+        return SetupPlan(unique[0], tuple(unique[1:]))
 
     @classmethod
     def _unique_routes(cls, candidates: list[SetupRoute]) -> list[SetupRoute]:
-        seen: set[tuple[str, str, str]] = set()
-        unique: list[SetupRoute] = []
-        for route in candidates:
-            if (key := cls._route_key(route)) in seen:
-                continue
-            seen.add(key)
-            unique.append(route)
-        return unique
+        return [
+            route
+            for index, route in enumerate(candidates)
+            if cls._route_key(route) not in {
+                cls._route_key(previous) for previous in candidates[:index]
+            }
+        ]
 
     @staticmethod
     def _route_key(route: SetupRoute) -> tuple[str, str, str]:
@@ -434,43 +464,6 @@ class SetupRoutePlanner:
             automated=True,
         )
 
-    @staticmethod
-    def _sign_in_gh() -> SetupRoute:
-        return SetupRoute(
-            route_id=RouteId.SIGN_IN_GH,
-            title="Sign in to GitHub CLI",
-            detail=(
-                "We'll run gh auth login. After you finish, cc-sentiment can create the gist automatically."
-            ),
-            primary_label="Sign in to GitHub CLI",
-            secondary_label="Continue without GitHub CLI",
-            publish_method=None,
-            key_kind=None,
-            automated=False,
-        )
-
-    @staticmethod
-    def _install_tools(capabilities: ToolCapabilities) -> SetupRoute:
-        return SetupRoute(
-            route_id=RouteId.INSTALL_TOOLS,
-            title="Install GitHub CLI or GPG",
-            detail="cc-sentiment can do most of setup for you if GitHub CLI or GPG is installed.",
-            primary_label=(
-                "Install GitHub CLI with Homebrew"
-                if capabilities.has_brew
-                else "I installed one"
-            ),
-            secondary_label=(
-                "Install GPG with Homebrew"
-                if capabilities.has_brew
-                else "Manual setup"
-            ),
-            publish_method=None,
-            key_kind=None,
-            automated=False,
-        )
-
-
 @dataclass(frozen=True, slots=True)
 class GistRef:
     owner: str
@@ -512,7 +505,11 @@ class GistDiscovery:
             return ()
         return tuple(
             GistRef(owner=username, gist_id=str(gist["id"]))
-            for gist in response.json()
+            for gist in sorted(
+                response.json(),
+                key=lambda gist: gist.get("updated_at") or gist.get("created_at") or "",
+                reverse=True,
+            )
             if gist.get("description") == GIST_DESCRIPTION and gist.get("public")
         )
 
@@ -551,7 +548,7 @@ class DiscoveryRunner:
                 )
         ssh_keys = LocalKeysProbe.detect_ssh()
         gpg_keys = LocalKeysProbe.detect_gpg()
-        recommended, alternatives = SetupRoutePlanner.plan(
+        plan = SetupRoutePlanner.plan(
             capabilities, identity, ssh_keys, gpg_keys,
             github_allowed=github_allowed,
         )
@@ -562,8 +559,7 @@ class DiscoveryRunner:
             existing_ssh=ssh_keys,
             existing_gpg=gpg_keys,
             rows=rows,
-            recommended=recommended,
-            alternatives=alternatives,
+            plan=plan,
         )
 
     @staticmethod

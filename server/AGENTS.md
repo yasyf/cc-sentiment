@@ -1,6 +1,6 @@
 # server: Modal API
 
-Python 3.14 backend deployed on Modal. Accepts signed sentiment uploads, verifies GitHub SSH signatures, stores timeseries data, and exposes query APIs for the dashboard app.
+Python 3.14 backend deployed on Modal. Accepts signed sentiment uploads, verifies GitHub SSH/GPG, gist, and OpenPGP signatures, stores timeseries data, and exposes query APIs for the dashboard app.
 
 ## Tech Stack
 
@@ -27,7 +27,7 @@ server/
 ├── pyproject.toml
 ├── app.py              # Modal app definition, web endpoints
 ├── db.py               # Timeseries storage layer
-├── verify.py           # GitHub SSH signature verification
+├── verify.py           # Public-key lookup and signature verification
 ├── models.py           # Pydantic request/response models
 └── tests/
     ├── test_verify.py
@@ -95,8 +95,8 @@ Accepts a JSON payload:
 ```
 
 Verification flow:
-1. Fetch user's SSH keys from `https://github.com/<username>.keys`
-2. Verify signature over the canonical JSON of `records` using `ssh-keygen -Y verify`
+1. Resolve the configured public key location: GitHub SSH/GPG, cc-sentiment gist, or keys.openpgp.org
+2. Verify the signature over the canonical JSON of `records`
 3. Reject if no key matches
 
 ### `GET /data`
@@ -111,7 +111,7 @@ All rules from root `AGENTS.md` apply, plus:
 
 - **Pydantic models for all API boundaries.** Frozen models (`model_config = ConfigDict(frozen=True)`) for immutable data.
 - **No ORM.** Raw SQL for the timeseries DB. The schema is trivial.
-- **Signature verification is its own module.** Isolated, heavily tested. Subprocess calls to `ssh-keygen` with strict argument validation, never `shell=True`.
+- **Signature verification is its own module.** Isolated, heavily tested. Subprocess calls use strict argument validation, never `shell=True`.
 - **Modal volumes for persistence.** All persistent state on a Modal Volume at `/data`. No local filesystem assumptions.
 - **CORS configuration.** The Svelte app needs cross-origin access. Configure allowed origins explicitly, not `*`.
 - **Never call Modal functions directly from a FastAPI handler.** `create_app(...)` takes spawner Protocols (`RefreshSpawner`, `MyStatSpawner`, `RevalidateSpawner`) for every Modal side effect. `API.serve` wires them to `<fn>.spawn.aio(...)`, tests wire them to noops. Importing a Modal function symbol into the handler module and calling `.spawn.aio(...)` inline makes the request path depend on the Modal control plane and hang in tests. If you add a new Modal function that the request path triggers, add a new Protocol and a matching `create_app` parameter.

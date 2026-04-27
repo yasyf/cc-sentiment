@@ -62,8 +62,13 @@ class RouteId(StrEnum):
     EXISTING_GPG_GIST = "existing-gpg-gist"
     EXISTING_GPG_OPENPGP = "existing-gpg-openpgp"
     EXISTING_GPG_GITHUB = "existing-gpg-github"
-    INSTALL_TOOLS = "install-tools"
+
+
+class SetupIntervention(StrEnum):
+    NONE = "none"
+    USERNAME = "username"
     SIGN_IN_GH = "sign-in-gh"
+    INSTALL_TOOLS = "install-tools"
 
 
 class PublishMethod(StrEnum):
@@ -170,6 +175,13 @@ class SetupRoute:
 
 
 @dataclass(frozen=True, slots=True)
+class SetupPlan:
+    recommended: SetupRoute | None = None
+    alternatives: tuple[SetupRoute, ...] = ()
+    intervention: SetupIntervention = SetupIntervention.NONE
+
+
+@dataclass(frozen=True, slots=True)
 class DiscoverRow:
     label: str
     state: DiscoverRowState = DiscoverRowState.WAITING
@@ -189,6 +201,7 @@ class GuideStatus:
     server_verified: bool = False
     last_checked_at: float = 0.0
     started_at: float = 0.0
+    instructions: str = ""
     last_error: str = ""
     retry_count: int = 0
     openpgp_email_sent: bool = False
@@ -198,6 +211,7 @@ class GuideStatus:
         self.server_verified = False
         self.last_checked_at = 0.0
         self.started_at = now
+        self.instructions = ""
         self.last_error = ""
         self.retry_count = 0
         self.openpgp_email_sent = False
@@ -207,12 +221,14 @@ class GuideStatus:
 class GuideFallback:
     url: str = ""
     public_key: str = ""
+    public_key_copied: bool = False
     clipboard_failed: bool = False
     browser_failed: bool = False
 
     def clear(self) -> None:
         self.url = ""
         self.public_key = ""
+        self.public_key_copied = False
         self.clipboard_failed = False
         self.browser_failed = False
 
@@ -246,8 +262,19 @@ class DiscoveryResult:
     existing_ssh: tuple[ExistingSSHKey, ...] = ()
     existing_gpg: tuple[ExistingGPGKey, ...] = ()
     rows: tuple[DiscoverRow, ...] = ()
-    recommended: SetupRoute | None = None
-    alternatives: tuple[SetupRoute, ...] = ()
+    plan: SetupPlan = field(default_factory=SetupPlan)
+
+    @property
+    def recommended(self) -> SetupRoute | None:
+        return self.plan.recommended
+
+    @property
+    def alternatives(self) -> tuple[SetupRoute, ...]:
+        return self.plan.alternatives
+
+    @property
+    def intervention(self) -> SetupIntervention:
+        return self.plan.intervention
 
 
 @dataclass(slots=True)
