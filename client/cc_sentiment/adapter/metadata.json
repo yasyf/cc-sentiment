@@ -1,31 +1,52 @@
 {
   "adapter_dtype": "F32",
-  "dataset_digest": "3927f89faa4716b2",
-  "cc_sentiment_git_sha": "3f4f00d48a41ed72ccba6c59dc8c9487b2ce2d87",
-  "experiment_id": "e5_lora_simba",
-  "mean_exact_acc": 0.9924,
-  "pm1_acc": 0.9949,
-  "std_exact_acc": 0.0076,
+  "dataset_digest": "2c448b7286a59a2e",
+  "cc_sentiment_git_sha": "591acd1c1df4673e19a6b8700957c605422f029c",
+  "experiment_id": "c0_cascade_default",
+  "mean_exact_acc": 0.9787,
+  "pm1_acc": 0.9965,
+  "std_exact_acc": 0.0071,
   "seeds": [
-    1729,
     42,
-    2024
+    1729
   ],
-  "mcnemar_p_vs_baseline": 0.0,
-  "session_resume_tag_acc": 1.0,
-  "per_class_f1": {
-    "1": 0.9891,
-    "2": 0.9945,
-    "3": 0.9902,
-    "4": 1.0,
-    "5": 0.9944
+  "mcnemar_p_vs_baseline": {
+    "1729": 0.012939453125,
+    "42": 0.03857421875
   },
-  "adapter_sha256": "c3c167e1844411258494e7e9aab52a79d689b7744f20b246104e85103a211b24",
-  "smoke_eval_sha256": "9232cd0b4a9dc9041468e28cc99e2b7c2fa1b4bdcb581a5ac52ee4a7fa0aedbe",
+  "session_resume_tag_acc": 0.8889,
+  "imperative_irritation_tag_acc": 1.0,
+  "shipped_seed": 1729,
+  "shipped_seed_exact_acc": 0.9858,
+  "shipped_seed_per_class_f1": {
+    "1": 0.9851,
+    "2": 1.0,
+    "3": 0.9677,
+    "4": 0.9333,
+    "5": 1.0
+  },
+  "shipped_seed_tag_accuracy": {
+    "claude_labeled": 0.75,
+    "sarcasm": 1.0,
+    "ai_correction": 1.0,
+    "swear_frustration": 1.0,
+    "correction": 1.0,
+    "command": 1.0,
+    "blunt_imperative": 1.0,
+    "all_caps_command": 1.0,
+    "legacy_profanity": 1.0,
+    "lgtm_variant": 1.0,
+    "mild_praise": 1.0,
+    "hype": 1.0,
+    "emoji_hype": 1.0,
+    "session_resume": 1.0,
+    "imperative_irritation": 1.0
+  },
+  "adapter_sha256": "c15b5e53708811d306d9db8fd2088efa4d79d9a99b0bb39ff9e29e2e5cf4e82d",
   "mlx_lm_version": "0.31.3",
-  "train_command": "python -m harness.run_lora --experiment-id e5_lora_simba --seed 42 --config configs/e5_lora_simba.json",
-  "notes": "Retrained on expanded session-resume canonicals (added 'continue where you left off' and 4 related Claude Code resume prompts; sentence-case surface variant). Labeler/teacher refactored to claude -p (no ANTHROPIC_API_KEY).",
-  "prompt_campaign": "SIMBA (dspy.teleprompt.SIMBA) \u2014 prompt unchanged from prior shipped",
-  "teacher_model": "claude-cli",
-  "student_model": "unsloth/gemma-4-E2B-it-UD-MLX-4bit"
+  "train_command": "uv run python -m harness.run_cascade --experiment-id c0_cascade_default --seed 1729 --config configs/c0_cascade_default.json",
+  "notes": "DSPy optimizer-search cascade: tested bootstrap/copro/mipro/simba; MIPROv2 won val_exact_acc=0.895; LoRA distilled the MIPRO program (instructions+demos) on the base unsloth Gemma. Fixed the 'and again!' \u2192 1 mislabel (imperative_irritation tag: 0.182 \u2192 1.000). Shipped seed 1729 (exact=0.986); seed 42 had session_resume regression to 0.778. SIMBA prompt + DEMOS in protocol.py replaced with MIPRO outputs.",
+  "prompt_campaign": "DSPy MIPROv2 (auto=light) \u2014 winner of optimizer search across bootstrap, copro, mipro, simba",
+  "teacher_model": "claude-cli (--bare via OAuth bridge)",
+  "student_model": "unsloth/gemma-4-E2B-it-UD-MLX-4bit (served via omlx)"
 }

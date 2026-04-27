@@ -168,6 +168,8 @@ def build_message(data: dict[str, Any]) -> TranscriptMessage | None:
             content = content.strip()
             if not content:
                 return None
+            if (version := data.get("version")) is None:
+                return None
             return UserMessage(
                 content=content,
                 timestamp=datetime.fromisoformat(data["timestamp"]),
@@ -175,7 +177,7 @@ def build_message(data: dict[str, Any]) -> TranscriptMessage | None:
                 uuid=data["uuid"],
                 tool_calls=(),
                 thinking_chars=0,
-                cc_version=data["version"],
+                cc_version=version,
             )
         case "assistant" if data["message"]["model"] == "<synthetic>":
             return None
