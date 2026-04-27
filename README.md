@@ -18,7 +18,7 @@ Claude Code threads like [anthropics/claude-code#42796](https://github.com/anthr
 uvx cc-sentiment
 ```
 
-Needs [uv](https://docs.astral.sh/uv/). The first run links your GitHub account, scores any transcripts it finds in `~/.claude/projects/`, and uploads the numbers.
+Needs [uv](https://docs.astral.sh/uv/). The first run sets up a verification key, scores any transcripts it finds in `~/.claude/projects/`, and uploads the numbers.
 
 ## What gets uploaded
 
@@ -37,11 +37,11 @@ The client records the following per 5-minute slice of each conversation.
 | Claude model | Which model produced the assistant turns |
 | `cc_version` | Claude Code CLI version |
 
-Plus a public verification handle (your GitHub username when GitHub is linked, otherwise your GPG fingerprint) used only to verify signatures.
+Plus a public verification handle (your GitHub username when GitHub/GPG lookup is used, otherwise your GPG fingerprint) used only to find a public key and verify signatures.
 
 ## What stays on your machine
 
-Conversation text, file contents, file paths, tool inputs, and tool outputs never leave the device. Scoring is local. Only the numbers above are uploaded.
+Conversation text, file contents, file paths, prompts, tool inputs, and tool outputs are not uploaded to sentiments.cc. Scoring is local when the local engine is available. Only the numbers above are uploaded.
 
 ## Architecture
 

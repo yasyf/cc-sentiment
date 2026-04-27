@@ -38,14 +38,20 @@ class TestKeyDiscovery:
             keys = KeyDiscovery.find_ssh_keys()
             assert keys == ()
 
+    def test_find_ssh_keys_skips_missing_public_key(self, tmp_path: Path) -> None:
+        (tmp_path / "id_ed25519").write_text("private")
+        with patch("cc_sentiment.signing.discovery.SSH_DIR", tmp_path):
+            assert KeyDiscovery.find_ssh_keys() == ()
+
     def test_has_tool(self) -> None:
         assert KeyDiscovery.has_tool("python3") is True
         assert KeyDiscovery.has_tool("nonexistent_tool_xyz") is False
 
     def test_gist_readme_includes_privacy_promises(self) -> None:
-        assert "private key stays on the device that generated it" in GIST_README_TEMPLATE.lower()
-        assert "aggregate sentiment metrics" in GIST_README_TEMPLATE.lower()
-        assert "conversation text" in GIST_README_TEMPLATE.lower()
+        lowered = GIST_README_TEMPLATE.lower()
+        assert "private key stays on this device" in lowered
+        assert "aggregate sentiment metrics are uploaded to sentiments.cc" in lowered
+        assert "conversation text, file paths, prompts, tool inputs, and tool outputs are not uploaded" in lowered
 
     def test_gist_description_constant(self) -> None:
         assert GIST_DESCRIPTION == "cc-sentiment public key"
@@ -153,8 +159,9 @@ class TestGistKeypair:
             patch("cc_sentiment.signing.discovery.CC_SENTIMENT_KEY_DIR", tmp_path),
             patch.object(KeyDiscovery, "find_gist_keypair", return_value=None),
             patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run,
-            patch("pathlib.Path.read_text", return_value="ssh-ed25519 AAAA cc-sentiment\n"),
         ):
+            (tmp_path / "id_ed25519").write_text("private")
+            (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA cc-sentiment\n")
             mock_run.return_value = MagicMock(returncode=0)
             result = KeyDiscovery.generate_managed_ssh_key()
 

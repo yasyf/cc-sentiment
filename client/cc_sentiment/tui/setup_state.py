@@ -3,11 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal
 
-from textual.worker import Worker
-
-from cc_sentiment.models import GistGPGConfig, GistConfig, GPGConfig, SSHConfig
+from cc_sentiment.models import (
+    GistGPGConfig,
+    GistConfig,
+    GPGConfig,
+    PendingSetupStatus,
+    SSHConfig,
+)
 from cc_sentiment.signing import GPGKeyInfo, SSHKeyInfo
 
 CandidateConfig = SSHConfig | GPGConfig | GistConfig | GistGPGConfig
@@ -129,7 +132,7 @@ class GenerateSSHKey:
 
 @dataclass(frozen=True, slots=True)
 class GenerateGPGKey:
-    email: str = ""
+    pass
 
 
 KeyPlan = ExistingSSHKey | ExistingGPGKey | GenerateSSHKey | GenerateGPGKey
@@ -201,6 +204,20 @@ class GuideStatus:
 
 
 @dataclass(slots=True)
+class GuideFallback:
+    url: str = ""
+    public_key: str = ""
+    clipboard_failed: bool = False
+    browser_failed: bool = False
+
+    def clear(self) -> None:
+        self.url = ""
+        self.public_key = ""
+        self.clipboard_failed = False
+        self.browser_failed = False
+
+
+@dataclass(slots=True)
 class FixState:
     last_error: str = ""
 
@@ -245,7 +262,7 @@ class PendingSetup:
     email: str = ""
     public_location: str = ""
     gist_id: str = ""
-    last_status: str = ""
+    last_status: PendingSetupStatus = PendingSetupStatus.CREATED
     last_error: str = ""
     started_at: float = 0.0
     updated_at: float = 0.0
@@ -290,9 +307,6 @@ class SetupActionState:
     tools_running: bool = False
 
 
-VerifySource = Literal["github-ssh", "github-gpg", "gist", "openpgp"]
-
-
 @dataclass(slots=True)
 class SetupAggregate:
     actions: SetupActionState = field(default_factory=SetupActionState)
@@ -302,6 +316,7 @@ class SetupAggregate:
     pending: PendingSetup | None = None
     working: WorkingPlanState = field(default_factory=WorkingPlanState)
     guide: GuideStatus = field(default_factory=GuideStatus)
+    fallback: GuideFallback = field(default_factory=GuideFallback)
     fix: FixState = field(default_factory=FixState)
     candidate: CandidateState = field(default_factory=CandidateState)
     verification_poll: VerificationPollState = field(

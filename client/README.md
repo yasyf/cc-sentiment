@@ -2,7 +2,7 @@
 
 A CLI that scores your Claude Code conversations on-device and contributes aggregate numbers to an open dashboard at [sentiments.cc](https://sentiments.cc).
 
-Your conversations stay on your device. Only signed aggregate numeric scores are uploaded; the server verifies signatures using a public key you control.
+Your conversations stay on your device. Only signed aggregate numeric scores are uploaded to sentiments.cc; the server verifies signatures using a public key you control.
 
 ## Run it
 
@@ -20,9 +20,9 @@ Scoring runs locally on Gemma 4. The client uploads only numbers and timestamps 
 - Read:edit ratio, edits-without-prior-read %, write:edit ratio, tool calls per turn, subagent spawn rate
 - Turn count, thinking present/chars
 - Claude model and Claude Code version
-- A public verification handle (GitHub username or GPG fingerprint) used only to verify signatures
+- A public verification handle (GitHub username or GPG fingerprint) used only to find a public key and verify signatures
 
-Your conversation text, file contents, file paths, and tool inputs/outputs never leave your machine.
+Your conversation text, file contents, file paths, prompts, tool inputs, and tool outputs are not uploaded to sentiments.cc.
 
 ## Commands
 

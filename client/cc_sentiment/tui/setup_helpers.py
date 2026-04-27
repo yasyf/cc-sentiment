@@ -5,13 +5,14 @@ import shutil
 import subprocess
 import sys
 import webbrowser
+from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 
 from cc_sentiment.signing import KeyDiscovery
-from cc_sentiment.signing.discovery import GIST_DESCRIPTION
+from cc_sentiment.signing.discovery import GIST_DESCRIPTION, GIST_PUB_FILENAME
 from cc_sentiment.tui.setup_state import (
     DiscoverRow,
     DiscoverRowState,
@@ -198,15 +199,10 @@ class LocalKeysProbe:
             keys.append(ExistingSSHKey(info=ssh, managed=managed))
         managed_path = KeyDiscovery.find_gist_keypair()
         if managed_path is not None and not any(k.info.path == managed_path for k in keys):
-            parts = managed_path.with_suffix(managed_path.suffix + ".pub").read_text().strip().split()
-            from cc_sentiment.signing import SSHKeyInfo
-
+            info = KeyDiscovery.ssh_key_info(managed_path, "cc-sentiment")
+            assert info is not None
             keys.append(ExistingSSHKey(
-                info=SSHKeyInfo(
-                    path=managed_path,
-                    algorithm=parts[0] if len(parts) >= 2 else "unknown",
-                    comment=parts[2] if len(parts) >= 3 else "cc-sentiment",
-                ),
+                info=info,
                 managed=True,
             ))
         return tuple(keys)
@@ -229,74 +225,58 @@ class SetupRoutePlanner:
         candidates: list[SetupRoute] = []
         username = identity.github_username
         gh_publish_allowed = github_allowed and capabilities.gh_authed
-
         if gh_publish_allowed and capabilities.has_ssh_keygen:
             candidates.append(cls._managed_ssh_gist())
-        elif capabilities.has_gpg and gpg_keys:
-            candidates.append(cls._existing_gpg_openpgp(gpg_keys[0]))
+        elif gh_publish_allowed and gpg_keys:
+            candidates.append(cls._existing_gpg_gist(gpg_keys[0]))
         elif capabilities.has_gpg:
             candidates.append(cls._managed_gpg_openpgp())
-        elif github_allowed and capabilities.has_ssh_keygen:
+        elif github_allowed and username and capabilities.has_ssh_keygen:
             candidates.append(cls._managed_ssh_manual_gist())
-        elif github_allowed and ssh_keys:
-            candidates.append(cls._existing_ssh_manual_gist(ssh_keys[0]))
+        elif github_allowed and capabilities.has_gh and not capabilities.gh_authed:
+            candidates.append(cls._sign_in_gh())
+        else:
+            candidates.append(cls._install_tools(capabilities))
 
+        if gh_publish_allowed and capabilities.has_ssh_keygen:
+            candidates.extend(cls._existing_ssh_gist(ssh) for ssh in ssh_keys)
         if gh_publish_allowed:
-            for ssh in ssh_keys:
-                candidates.append(cls._existing_ssh_gist(ssh))
-            for gpg in gpg_keys:
-                candidates.append(cls._existing_gpg_gist(gpg))
+            candidates.extend(cls._existing_gpg_gist(gpg) for gpg in gpg_keys)
+        if capabilities.has_gpg:
+            candidates.extend(cls._existing_gpg_openpgp(gpg) for gpg in gpg_keys)
+        if github_allowed and username and capabilities.has_ssh_keygen:
+            candidates.extend(cls._existing_ssh_manual_gist(ssh) for ssh in ssh_keys)
+        if gh_publish_allowed and capabilities.has_ssh_keygen:
+            candidates.extend(cls._existing_ssh_github(ssh) for ssh in ssh_keys)
+        if gh_publish_allowed:
+            candidates.extend(cls._existing_gpg_github(gpg) for gpg in gpg_keys)
 
-        if github_allowed and username:
-            for ssh in ssh_keys:
-                if not gh_publish_allowed:
-                    candidates.append(cls._existing_ssh_manual_gist(ssh))
-                candidates.append(cls._existing_ssh_github(ssh))
+        unique = cls._unique_routes(candidates)
+        return unique[0], tuple(unique[1:])
 
-        for gpg in gpg_keys:
-            candidates.append(cls._existing_gpg_openpgp(gpg))
-            if capabilities.has_gpg and not gpg.managed:
-                candidates.append(cls._managed_gpg_openpgp())
-            if github_allowed and username:
-                candidates.append(cls._existing_gpg_github(gpg))
-
+    @classmethod
+    def _unique_routes(cls, candidates: list[SetupRoute]) -> list[SetupRoute]:
         seen: set[tuple[str, str, str]] = set()
         unique: list[SetupRoute] = []
         for route in candidates:
-            key = cls._route_key(route)
-            if key in seen:
+            if (key := cls._route_key(route)) in seen:
                 continue
             seen.add(key)
             unique.append(route)
-
-        if not unique:
-            if github_allowed and capabilities.has_gh and not capabilities.gh_authed:
-                unique.append(cls._sign_in_gh())
-            else:
-                unique.append(cls._install_tools(capabilities))
-            return unique[0], ()
-
-        recommended = unique[0]
-        alternatives = tuple(unique[1:])
-        if (
-            recommended.route_id is RouteId.EXISTING_GPG_OPENPGP
-            and not gh_publish_allowed
-            and not (github_allowed and capabilities.has_gh)
-        ):
-            return recommended, ()
-        return recommended, alternatives
+        return unique
 
     @staticmethod
     def _route_key(route: SetupRoute) -> tuple[str, str, str]:
+        publish_method = route.publish_method.value if route.publish_method else ""
         match route.key_plan:
             case ExistingSSHKey(info=info):
-                return route.route_id.value, route.publish_method.value if route.publish_method else "", str(info.path)
+                return route.route_id.value, publish_method, str(info.path)
             case ExistingGPGKey(info=info):
-                return route.route_id.value, route.publish_method.value if route.publish_method else "", info.fpr
+                return route.route_id.value, publish_method, info.fpr
             case GenerateSSHKey():
-                return route.route_id.value, route.publish_method.value if route.publish_method else "", "managed-ssh"
+                return route.route_id.value, publish_method, "managed-ssh"
             case GenerateGPGKey():
-                return route.route_id.value, route.publish_method.value if route.publish_method else "", "managed-gpg"
+                return route.route_id.value, publish_method, "managed-gpg"
             case _:
                 return route.route_id.value, "", ""
 
@@ -435,7 +415,7 @@ class SetupRoutePlanner:
             publish_method=PublishMethod.OPENPGP,
             key_kind=KeyKind.GPG,
             key_plan=ExistingGPGKey(info=gpg.info, managed=gpg.managed),
-            needs_email=True,
+            needs_email=not bool(gpg.info.email),
             automated=True,
         )
 
@@ -491,47 +471,67 @@ class SetupRoutePlanner:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class GistRef:
+    owner: str
+    gist_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class GistMetadata:
+    ref: GistRef
+    description: str
+    public_key: str
+
+
 class GistDiscovery:
     GIST_ID_PATTERN = re.compile(r"[0-9a-f]{20,}")
 
     @classmethod
-    def parse_gist_id(cls, value: str) -> str | None:
-        candidate = value.strip().rsplit("/", 1)[-1].split("?", 1)[0].split("#", 1)[0]
-        return candidate if cls.GIST_ID_PATTERN.fullmatch(candidate) else None
+    def parse_ref(cls, value: str, fallback_owner: str = "") -> GistRef | None:
+        raw = value.strip()
+        parsed = urlparse(raw)
+        if parsed.netloc == "gist.github.com":
+            parts = [part for part in parsed.path.split("/") if part]
+            if len(parts) >= 2 and cls.GIST_ID_PATTERN.fullmatch(parts[1]):
+                return GistRef(owner=parts[0], gist_id=parts[1])
+            return None
+        candidate = raw.rsplit("/", 1)[-1].split("?", 1)[0].split("#", 1)[0]
+        if fallback_owner and cls.GIST_ID_PATTERN.fullmatch(candidate):
+            return GistRef(owner=fallback_owner, gist_id=candidate)
+        return None
 
     @staticmethod
-    def find_cc_sentiment_gist_id(username: str) -> str | None:
-        try:
-            response = httpx.get(
-                f"https://api.github.com/users/{username}/gists",
-                params={"per_page": "100"},
-                timeout=10.0,
-            )
-        except httpx.HTTPError:
-            return None
+    def find_cc_sentiment_gists(username: str) -> tuple[GistRef, ...]:
+        response = httpx.get(
+            f"https://api.github.com/users/{username}/gists",
+            params={"per_page": "100"},
+            timeout=10.0,
+        )
         if response.status_code != 200:
-            return None
-        return next(
-            (
-                str(gist["id"])
-                for gist in response.json()
-                if gist.get("description") == GIST_DESCRIPTION and gist.get("public")
-            ),
-            None,
+            return ()
+        return tuple(
+            GistRef(owner=username, gist_id=str(gist["id"]))
+            for gist in response.json()
+            if gist.get("description") == GIST_DESCRIPTION and gist.get("public")
         )
 
     @staticmethod
-    def fetch_gist_description(gist_id: str) -> str | None:
-        try:
-            response = httpx.get(
-                f"https://api.github.com/gists/{gist_id}",
-                timeout=10.0,
-            )
-        except httpx.HTTPError:
-            return None
+    def fetch_metadata(ref: GistRef) -> GistMetadata | None:
+        response = httpx.get(
+            f"https://api.github.com/gists/{ref.gist_id}",
+            timeout=10.0,
+        )
         if response.status_code != 200:
             return None
-        return response.json().get("description") or ""
+        data = response.json()
+        if data.get("owner", {}).get("login") != ref.owner:
+            return None
+        return GistMetadata(
+            ref=ref,
+            description=data.get("description") or "",
+            public_key=data.get("files", {}).get(GIST_PUB_FILENAME, {}).get("content", "").strip(),
+        )
 
 
 class DiscoveryRunner:

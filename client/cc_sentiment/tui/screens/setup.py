@@ -4,6 +4,7 @@ import subprocess
 import sys
 from contextlib import suppress
 from dataclasses import replace
+from pathlib import Path
 from time import monotonic
 from typing import ClassVar, Literal
 
@@ -42,7 +43,7 @@ from cc_sentiment.signing import (
     SSHBackend,
     SSHKeyInfo,
 )
-from cc_sentiment.signing.discovery import GIST_README_TEMPLATE
+from cc_sentiment.signing.discovery import GIST_DESCRIPTION, GIST_README_TEMPLATE
 from cc_sentiment.tui.screens.dialog import Dialog
 from cc_sentiment.tui.setup_helpers import (
     GIST_NEW_URL,
@@ -53,6 +54,7 @@ from cc_sentiment.tui.setup_helpers import (
     Clipboard,
     DiscoveryRunner,
     GistDiscovery,
+    GistRef,
     IdentityProbe,
     IssueUrl,
     Sanitizer,
@@ -70,6 +72,7 @@ from cc_sentiment.tui.setup_state import (
     IdentityDiscovery,
     KeyKind,
     PendingSetup,
+    PendingSetupStatus,
     PublishMethod,
     ResolvedGPGKey,
     ResolvedKey,
@@ -117,8 +120,9 @@ PUBLIC_LOCATION_LABEL: dict[PublishMethod, str] = {
 DISCOVER_TITLE = "Setting up private signing"
 DISCOVER_BODY = (
     "cc-sentiment signs uploads so sentiments.cc can verify they came from this device. "
-    "The private key stays here. Public stats are aggregated, "
-    "and your conversations are not uploaded."
+    "The private key stays on this device. Only aggregate sentiment metrics are uploaded to sentiments.cc. "
+    "Conversation text, file paths, prompts, tool inputs, and tool outputs are not uploaded. "
+    "GitHub/GPG details are used only to find a public key and verify signatures."
 )
 DISCOVER_VERIFIED_COPY = "Found a working public key. No setup needed."
 DISCOVER_NO_MATCH_COPY = (
@@ -143,7 +147,7 @@ USERNAME_ERROR_UNREACHABLE = "Couldn't reach GitHub. Retry, or continue with GPG
 PROPOSE_TITLE = "Recommended setup"
 PROPOSE_BODY = (
     "We only need a public key that sentiments.cc can read. "
-    "The private key stays on this device, and uploaded stats stay aggregate."
+    "The private key stays on this device, and only aggregate sentiment metrics are uploaded."
 )
 
 OPENPGP_EMAIL_LABEL = "Verification email"
@@ -184,6 +188,7 @@ MANUAL_GIST_DESCRIPTION_MISMATCH = (
     "The gist exists, but its description must be exactly "
     "\u201ccc-sentiment public key\u201d so sentiments.cc knows it is intentional."
 )
+MANUAL_GIST_KEY_MISSING = "The gist exists, but cc-sentiment.pub is empty or missing."
 
 GITHUB_SSH_GUIDE_INTRO = (
     "This adds a public SSH key to your GitHub account. "
@@ -251,7 +256,7 @@ FIX_HELP = "If this keeps happening, open a GitHub issue or reach out to @yasyf 
 SETTINGS_TITLE = "Setup complete"
 SETTINGS_BODY = (
     "cc-sentiment can now upload signed, aggregate sentiment metrics. "
-    "Conversation text, file paths, prompts, tool inputs, and tool outputs stay on this device."
+    "Conversation text, file paths, prompts, tool inputs, and tool outputs are not uploaded."
 )
 
 
@@ -629,27 +634,27 @@ class SetupScreen(Dialog[bool]):
                 )
                 if isinstance(await Uploader().probe_credentials(config), AuthOk):
                     return config
-            gist_id = await anyio.to_thread.run_sync(GistDiscovery.find_cc_sentiment_gist_id, username)
-            for ssh in result.existing_ssh:
-                if gist_id is None:
-                    break
-                config = GistConfig(
-                    contributor_id=ContributorId(username),
-                    key_path=ssh.info.path,
-                    gist_id=gist_id,
-                )
-                if isinstance(await Uploader().probe_credentials(config), AuthOk):
-                    return config
-            for gpg in result.existing_gpg:
-                if gist_id is None:
-                    break
-                config = GistGPGConfig(
-                    contributor_id=ContributorId(username),
-                    fpr=gpg.info.fpr,
-                    gist_id=gist_id,
-                )
-                if isinstance(await Uploader().probe_credentials(config), AuthOk):
-                    return config
+            try:
+                gist_refs = await anyio.to_thread.run_sync(GistDiscovery.find_cc_sentiment_gists, username)
+            except httpx.HTTPError:
+                gist_refs = ()
+            for ref in gist_refs:
+                for ssh in result.existing_ssh:
+                    config = GistConfig(
+                        contributor_id=ContributorId(ref.owner),
+                        key_path=ssh.info.path,
+                        gist_id=ref.gist_id,
+                    )
+                    if isinstance(await Uploader().probe_credentials(config), AuthOk):
+                        return config
+                for gpg in result.existing_gpg:
+                    config = GistGPGConfig(
+                        contributor_id=ContributorId(ref.owner),
+                        fpr=gpg.info.fpr,
+                        gist_id=ref.gist_id,
+                    )
+                    if isinstance(await Uploader().probe_credentials(config), AuthOk):
+                        return config
         for gpg in result.existing_gpg:
             config = GPGConfig(
                 contributor_type="gpg",
@@ -743,7 +748,9 @@ class SetupScreen(Dialog[bool]):
 
     async def _enter_propose(self) -> None:
         result = self.discovery
-        if result.recommended is None:
+        if result.recommended is None or result.recommended.route_id in (
+            RouteId.INSTALL_TOOLS, RouteId.SIGN_IN_GH,
+        ):
             self._render_tools(result)
             self.transition_to(SetupStage.TOOLS)
             return
@@ -801,7 +808,7 @@ class SetupScreen(Dialog[bool]):
 
     def _render_email_field(self, route: SetupRoute) -> None:
         identity = self.discovery.identity
-        show = route.needs_email and not identity.email_usable
+        show = route.needs_email and not identity.email_usable and not self._route_email(route)
         for selector in ("#propose-email-label", "#propose-email-help", "#propose-email"):
             with suppress(NoMatches):
                 self.query_one(selector).display = show
@@ -896,11 +903,21 @@ class SetupScreen(Dialog[bool]):
         ident = self.discovery.identity
         if ident.email_usable and ident.github_email:
             return ident.github_email
+        if self.selected_route is not None and (email := self._route_email(self.selected_route)):
+            return email
         with suppress(NoMatches):
             value = self.query_one("#propose-email", Input).value.strip()
             if value:
                 return value
         return ""
+
+    @staticmethod
+    def _route_email(route: SetupRoute) -> str:
+        match route.key_plan:
+            case ExistingGPGKey(info=info):
+                return info.email
+            case _:
+                return ""
 
     def _resolve_key(self, route: SetupRoute) -> ResolvedKey:
         if self.aggregate.resolved_key is not None:
@@ -1040,11 +1057,7 @@ class SetupScreen(Dialog[bool]):
         resolved = self.aggregate.resolved_key
         assert resolved is not None
         call(self._step_running, idx)
-        match resolved:
-            case ResolvedSSHKey(info=info):
-                pub_text = SSHBackend(private_key_path=info.path).public_key_text()
-            case ResolvedGPGKey(info=info):
-                pub_text = GPGBackend(fpr=info.fpr).public_key_text()
+        pub_text = self._public_key_text(resolved)
         gist_id = KeyDiscovery.create_gist_from_text(pub_text)
         call(self._step_success, idx, gist_id[:8])
         idx += 1
@@ -1066,18 +1079,15 @@ class SetupScreen(Dialog[bool]):
             )
 
         call(self._step_running, idx)
-        if GistDiscovery.fetch_gist_description(gist_id) != "cc-sentiment public key":
+        metadata = GistDiscovery.fetch_metadata(GistRef(owner=username, gist_id=gist_id))
+        if metadata is None or metadata.description != GIST_DESCRIPTION:
             raise AssertionError("created gist is not visible yet")
         call(self._step_success, idx)
         idx += 1
 
         call(self._step_running, idx)
         location = "GitHub gist"
-        lookup = (
-            f"@{username} · gist {gist_id[:8]}"
-            if isinstance(resolved, ResolvedSSHKey)
-            else f"@{username} · gist {gist_id[:8]}"
-        )
+        lookup = f"@{username} · gist {gist_id[:8]}"
         call(self._on_working_complete, route, config, location, lookup)
 
     def _execute_openpgp(self, route: SetupRoute, call) -> None:
@@ -1097,22 +1107,22 @@ class SetupScreen(Dialog[bool]):
         call(self._step_running, idx)
         armor = GPGBackend(fpr=resolved.info.fpr).public_key_text()
         try:
-            token, statuses = KeyDiscovery.upload_openpgp_key(armor)
+            token, statuses = self._upload_openpgp_key(armor)
         except httpx.HTTPError as exc:
             call(self._on_openpgp_api_failure, route, resolved, armor, Sanitizer.error(str(exc)))
             return
         call(self._step_success, idx)
         idx += 1
 
-        emails = [e for e, s in statuses.items() if s == "unpublished"] or [self._resolved_email() or resolved.info.email]
-        emails = [e for e in emails if e]
+        emails = self._openpgp_verification_emails(
+            statuses, self._resolved_email() or resolved.info.email,
+        )
         call(self._step_running, idx)
-        if emails:
-            try:
-                KeyDiscovery.request_openpgp_verify(token, emails)
-            except httpx.HTTPError as exc:
-                call(self._on_openpgp_api_failure, route, resolved, armor, Sanitizer.error(str(exc)))
-                return
+        try:
+            self._request_openpgp_verification(token, emails)
+        except httpx.HTTPError as exc:
+            call(self._on_openpgp_api_failure, route, resolved, armor, Sanitizer.error(str(exc)))
+            return
         call(self._step_success, idx, ", ".join(emails))
         idx += 1
 
@@ -1126,7 +1136,35 @@ class SetupScreen(Dialog[bool]):
         lookup = f"GPG {resolved.info.fpr[-8:]}"
         instructions = OPENPGP_AFTER_SEND.format(email=", ".join(emails))
         call(self._step_running, idx)
-        call(self._on_working_pending, route, config, location, lookup, instructions)
+        call(
+            self._on_working_pending,
+            route,
+            config,
+            location,
+            lookup,
+            instructions,
+            PendingSetupStatus.OPENPGP_EMAIL_SENT,
+        )
+
+    @staticmethod
+    def _upload_openpgp_key(armor: str) -> tuple[str, dict[str, str]]:
+        return KeyDiscovery.upload_openpgp_key(armor)
+
+    @staticmethod
+    def _openpgp_verification_emails(statuses: dict[str, str], fallback_email: str) -> list[str]:
+        return [
+            email
+            for email in (
+                [e for e, status in statuses.items() if status == "unpublished"]
+                or [fallback_email]
+            )
+            if email
+        ]
+
+    @staticmethod
+    def _request_openpgp_verification(token: str, emails: list[str]) -> None:
+        if emails:
+            KeyDiscovery.request_openpgp_verify(token, emails)
 
     def _on_openpgp_api_failure(
         self,
@@ -1135,17 +1173,43 @@ class SetupScreen(Dialog[bool]):
         armor: str,
         error: str,
     ) -> None:
-        Clipboard.copy(armor)
-        Browser.open(OPENPGP_UPLOAD_URL)
+        self._enter_manual_openpgp_upload(route, resolved, armor, error)
+
+    def _enter_manual_openpgp_upload(
+        self,
+        route: SetupRoute,
+        resolved: ResolvedGPGKey,
+        armor: str,
+        error: str,
+    ) -> None:
+        self.aggregate.guide.reset(monotonic())
+        self.aggregate.guide.openpgp_email_sent = True
+        self.aggregate.fallback.clear()
+        self._copy_or_record_fallback(armor)
+        self._open_or_record_fallback(OPENPGP_UPLOAD_URL)
         config: Config = GPGConfig(
             contributor_type="gpg",
             contributor_id=ContributorId(resolved.info.fpr),
             fpr=resolved.info.fpr,
         )
-        instructions = OPENPGP_API_FAILURE.format(error=error)
-        location = "keys.openpgp.org"
-        lookup = f"GPG {resolved.info.fpr[-8:]}"
-        self._on_working_pending(route, config, location, lookup, instructions)
+        self.aggregate.candidate.stage(
+            config,
+            "keys.openpgp.org",
+            f"GPG {resolved.info.fpr[-8:]}",
+        )
+        self._persist_pending(
+            route,
+            "keys.openpgp.org",
+            "",
+            PendingSetupStatus.MANUAL_OPENPGP_UPLOAD,
+            error,
+        )
+        self._render_guide_instructions(OPENPGP_API_FAILURE.format(error=error))
+        self._render_guide_status()
+        self.transition_to(SetupStage.GUIDE)
+        self._render_guide_buttons(route)
+        self.aggregate.verification_poll.restart(monotonic())
+        self.verify_server_config()
 
     def _execute_github_ssh(self, route: SetupRoute, call) -> None:
         self._resolve_key(route)
@@ -1190,7 +1254,12 @@ class SetupScreen(Dialog[bool]):
     ) -> None:
         self._render_working()
         self.aggregate.candidate.stage(config, location, lookup)
-        self._persist_pending(route, location, getattr(config, "gist_id", ""))
+        self._persist_pending(
+            route,
+            location,
+            getattr(config, "gist_id", ""),
+            PendingSetupStatus.VERIFY_PENDING,
+        )
         self.aggregate.verification_poll.restart(monotonic())
         self.verify_server_config()
 
@@ -1201,6 +1270,7 @@ class SetupScreen(Dialog[bool]):
         location: str,
         lookup: str,
         instructions: str,
+        status: PendingSetupStatus = PendingSetupStatus.VERIFY_PENDING,
     ) -> None:
         running = [step for step in self.aggregate.working.steps if step.state is WorkStepState.RUNNING]
         if running:
@@ -1209,9 +1279,13 @@ class SetupScreen(Dialog[bool]):
             self.aggregate.working.steps[-1].state = WorkStepState.WARNING
         self._render_working()
         self.aggregate.candidate.stage(config, location, lookup)
-        self._persist_pending(route, location, "")
+        self._persist_pending(route, location, "", status)
         self.aggregate.verification_poll.restart(monotonic())
         self.aggregate.guide.reset(monotonic())
+        self.aggregate.guide.openpgp_email_sent = status in (
+            PendingSetupStatus.OPENPGP_EMAIL_SENT,
+            PendingSetupStatus.MANUAL_OPENPGP_UPLOAD,
+        )
         with suppress(NoMatches):
             self.query_one("#guide-instructions", Static).update(instructions)
         self._render_guide_status()
@@ -1226,10 +1300,7 @@ class SetupScreen(Dialog[bool]):
                 step.detail = error
         self.aggregate.working.failure_text = WORKING_RECOVERABLE_FAILURE.format(error=error)
         self._render_working()
-        if self.state.pending_setup is not None:
-            self.state.pending_setup.last_status = "working-failed"
-            self.state.pending_setup.last_error = error
-            self.state.save()
+        self._update_pending(PendingSetupStatus.WORKING_FAILED, error)
 
     @on(Button.Pressed, "#working-guide")
     async def on_working_guide(self) -> None:
@@ -1251,18 +1322,24 @@ class SetupScreen(Dialog[bool]):
     async def _enter_guide(self, route: SetupRoute) -> None:
         self.selected_route = route
         self.aggregate.guide.reset(monotonic())
+        self.aggregate.fallback.clear()
         instructions, gist_url_visible = self._guide_instructions(route)
-        with suppress(NoMatches):
-            self.query_one("#guide-instructions", Static).update(instructions)
+        self._render_guide_instructions(instructions)
         with suppress(NoMatches):
             self.query_one("#guide-gist-url", Input).display = gist_url_visible
         with suppress(NoMatches):
             self.query_one("#guide-error", Static).update("")
         self._render_guide_status()
         self.transition_to(SetupStage.GUIDE)
-        await self._guide_clipboard_and_browser(route)
+        await self._run_guide_side_effects(route)
+        self._render_guide_instructions(instructions)
         self._guide_apply_temp_config(route)
-        self._persist_pending(route, PUBLIC_LOCATION_LABEL.get(route.publish_method, ""), "")
+        self._persist_pending(
+            route,
+            PUBLIC_LOCATION_LABEL.get(route.publish_method, ""),
+            "",
+            PendingSetupStatus.AWAITING_USER,
+        )
         self._render_guide_buttons(route)
         if route.publish_method is not PublishMethod.OPENPGP:
             self.verify_server_config()
@@ -1279,51 +1356,63 @@ class SetupScreen(Dialog[bool]):
                 primary.label = "Check now"
 
     def _guide_instructions(self, route: SetupRoute) -> tuple[str, bool]:
-        can_open = self.discovery.capabilities.can_open_browser
         match route.publish_method:
             case PublishMethod.GIST_MANUAL:
                 steps = "\n".join(MANUAL_GIST_STEPS)
-                body = f"{MANUAL_GIST_INTRO}\n\n{steps}\n\n{MANUAL_GIST_FOOTER}"
-                return self._maybe_append_url(body, GIST_NEW_URL, can_open), False
+                return f"{MANUAL_GIST_INTRO}\n\n{steps}\n\n{MANUAL_GIST_FOOTER}", False
             case PublishMethod.GITHUB_SSH:
                 steps = "\n".join(GITHUB_SSH_GUIDE_STEPS)
-                return self._maybe_append_url(
-                    f"{GITHUB_SSH_GUIDE_INTRO}\n\n{steps}", GITHUB_SSH_NEW_URL, can_open,
-                ), False
+                return f"{GITHUB_SSH_GUIDE_INTRO}\n\n{steps}", False
             case PublishMethod.GITHUB_GPG:
                 steps = "\n".join(GITHUB_GPG_GUIDE_STEPS)
-                return self._maybe_append_url(
-                    f"{GITHUB_GPG_GUIDE_INTRO}\n\n{steps}", GITHUB_GPG_NEW_URL, can_open,
-                ), False
+                return f"{GITHUB_GPG_GUIDE_INTRO}\n\n{steps}", False
             case PublishMethod.OPENPGP:
                 email = self._resolved_email()
-                body = OPENPGP_BEFORE_SEND.format(email=email or "your address")
-                return self._maybe_append_url(body, OPENPGP_UPLOAD_URL, can_open), False
+                return OPENPGP_BEFORE_SEND.format(email=email or "your address"), False
             case _:
                 return "", False
 
-    @staticmethod
-    def _maybe_append_url(body: str, url: str, can_open: bool) -> str:
-        return body if can_open else f"{body}\n\nOpen this URL manually: {url}"
+    def _render_guide_instructions(self, body: str) -> None:
+        with suppress(NoMatches):
+            self.query_one("#guide-instructions", Static).update(self._guide_text_with_fallbacks(body))
 
-    async def _guide_clipboard_and_browser(self, route: SetupRoute) -> None:
+    def _guide_text_with_fallbacks(self, body: str) -> str:
+        fallback = self.aggregate.fallback
+        blocks = [body]
+        if fallback.browser_failed and fallback.url:
+            blocks.append(f"Open this URL manually: {fallback.url}")
+        if fallback.clipboard_failed and fallback.public_key:
+            blocks.append(f"Copy this public key manually:\n\n{fallback.public_key}")
+        return "\n\n".join(block for block in blocks if block)
+
+    async def _run_guide_side_effects(self, route: SetupRoute) -> None:
         match route.publish_method:
             case PublishMethod.GIST_MANUAL:
                 resolved = self._resolve_key(route)
-                Clipboard.copy(self._public_key_text(resolved))
-                Browser.open(GIST_NEW_URL)
+                self._copy_or_record_fallback(self._public_key_text(resolved))
+                self._open_or_record_fallback(GIST_NEW_URL)
             case PublishMethod.GITHUB_SSH:
                 resolved = self._resolve_key(route)
-                Clipboard.copy(self._public_key_text(resolved))
-                Browser.open(GITHUB_SSH_NEW_URL)
+                self._copy_or_record_fallback(self._public_key_text(resolved))
+                self._open_or_record_fallback(GITHUB_SSH_NEW_URL)
             case PublishMethod.GITHUB_GPG:
                 resolved = self._resolve_key(route)
-                Clipboard.copy(self._public_key_text(resolved))
-                Browser.open(GITHUB_GPG_NEW_URL)
-            case PublishMethod.OPENPGP:
-                Browser.open(OPENPGP_UPLOAD_URL)
+                self._copy_or_record_fallback(self._public_key_text(resolved))
+                self._open_or_record_fallback(GITHUB_GPG_NEW_URL)
             case _:
                 pass
+
+    def _copy_or_record_fallback(self, public_key: str) -> None:
+        if Clipboard.copy(public_key):
+            return
+        self.aggregate.fallback.public_key = public_key
+        self.aggregate.fallback.clipboard_failed = True
+
+    def _open_or_record_fallback(self, url: str) -> None:
+        if Browser.open(url):
+            return
+        self.aggregate.fallback.url = url
+        self.aggregate.fallback.browser_failed = True
 
     @staticmethod
     def _public_key_text(resolved: ResolvedKey) -> str:
@@ -1424,51 +1513,79 @@ class SetupScreen(Dialog[bool]):
         username = self.discovery.identity.github_username or (
             self.aggregate.pending.username if self.aggregate.pending else ""
         )
+        if pending_gist and username:
+            return await self._stage_manual_gist(GistRef(owner=username, gist_id=pending_gist))
         if not username:
-            self._update_status("guide-error", USERNAME_ERROR_EMPTY, Tone.ERROR)
-            return False
-        gist_id = pending_gist or await anyio.to_thread.run_sync(
-            GistDiscovery.find_cc_sentiment_gist_id, username,
-        )
-        if gist_id is None:
             self.query_one("#guide-gist-url", Input).display = True
             self._update_status("guide-error", MANUAL_GIST_NOT_FOUND, Tone.WARNING)
+            self._update_pending(PendingSetupStatus.GIST_NOT_FOUND, MANUAL_GIST_NOT_FOUND)
             return False
-        return await self._stage_manual_gist(username, gist_id)
+        try:
+            refs = await anyio.to_thread.run_sync(GistDiscovery.find_cc_sentiment_gists, username)
+        except httpx.HTTPError:
+            self._update_status("guide-error", USERNAME_ERROR_UNREACHABLE, Tone.WARNING)
+            self._update_pending(PendingSetupStatus.NETWORK_PENDING, USERNAME_ERROR_UNREACHABLE)
+            return False
+        for ref in refs:
+            if await self._stage_manual_gist(ref):
+                return True
+        self.query_one("#guide-gist-url", Input).display = True
+        self._update_status("guide-error", MANUAL_GIST_NOT_FOUND, Tone.WARNING)
+        self._update_pending(PendingSetupStatus.GIST_NOT_FOUND, MANUAL_GIST_NOT_FOUND)
+        return False
 
-    async def _stage_manual_gist(self, username: str, gist_id: str) -> bool:
+    async def _stage_manual_gist(self, ref: GistRef) -> bool:
         resolved = self.aggregate.resolved_key
         if resolved is None:
             return False
-        description = await anyio.to_thread.run_sync(GistDiscovery.fetch_gist_description, gist_id)
-        if description is None:
+        try:
+            metadata = await anyio.to_thread.run_sync(GistDiscovery.fetch_metadata, ref)
+        except httpx.HTTPError:
+            self.query_one("#guide-gist-url", Input).display = True
+            self._update_status("guide-error", USERNAME_ERROR_UNREACHABLE, Tone.WARNING)
+            self._update_pending(PendingSetupStatus.NETWORK_PENDING, USERNAME_ERROR_UNREACHABLE)
+            return False
+        if metadata is None:
             self.query_one("#guide-gist-url", Input).display = True
             self._update_status("guide-error", MANUAL_GIST_NOT_FOUND, Tone.WARNING)
+            self._update_pending(PendingSetupStatus.GIST_NOT_FOUND, MANUAL_GIST_NOT_FOUND)
             return False
-        if description.strip() != "cc-sentiment public key":
+        if metadata.description.strip() != GIST_DESCRIPTION:
             self.query_one("#guide-gist-url", Input).display = True
             self._update_status("guide-error", MANUAL_GIST_DESCRIPTION_MISMATCH, Tone.WARNING)
+            self._update_pending(
+                PendingSetupStatus.GIST_DESCRIPTION_MISMATCH,
+                MANUAL_GIST_DESCRIPTION_MISMATCH,
+            )
+            return False
+        if not metadata.public_key:
+            self.query_one("#guide-gist-url", Input).display = True
+            self._update_status("guide-error", MANUAL_GIST_KEY_MISSING, Tone.WARNING)
+            self._update_pending(PendingSetupStatus.GIST_NOT_FOUND, MANUAL_GIST_KEY_MISSING)
             return False
         candidate: Config = (
             GistConfig(
-                contributor_id=ContributorId(username),
+                contributor_id=ContributorId(ref.owner),
                 key_path=resolved.info.path,
-                gist_id=gist_id,
+                gist_id=ref.gist_id,
             )
             if isinstance(resolved, ResolvedSSHKey)
             else GistGPGConfig(
-                contributor_id=ContributorId(username),
+                contributor_id=ContributorId(ref.owner),
                 fpr=resolved.info.fpr,
-                gist_id=gist_id,
+                gist_id=ref.gist_id,
             )
         )
         self.aggregate.candidate.stage(
-            candidate, "GitHub gist", f"@{username} · gist {gist_id[:8]}",
+            candidate, "GitHub gist", f"@{ref.owner} · gist {ref.gist_id[:8]}",
         )
         self.aggregate.guide.public_key_found = True
-        if self.aggregate.pending is not None:
-            self.aggregate.pending.gist_id = gist_id
-            self._persist_pending_from_state(self.aggregate.pending)
+        self._update_pending(
+            PendingSetupStatus.VERIFY_PENDING,
+            "",
+            ref.gist_id,
+            ref.owner,
+        )
         return True
 
     async def _openpgp_send_email(self) -> None:
@@ -1480,21 +1597,20 @@ class SetupScreen(Dialog[bool]):
             lambda: GPGBackend(fpr=resolved.info.fpr).public_key_text()
         )
         try:
-            token, statuses = await anyio.to_thread.run_sync(KeyDiscovery.upload_openpgp_key, armor)
+            token, statuses = await anyio.to_thread.run_sync(self._upload_openpgp_key, armor)
         except httpx.HTTPError as exc:
-            self._update_status("guide-error", Sanitizer.error(str(exc)), Tone.ERROR)
+            self._enter_manual_openpgp_upload(route, resolved, armor, Sanitizer.error(str(exc)))
             return
-        emails = [e for e, s in statuses.items() if s == "unpublished"] or [
-            self._resolved_email() or resolved.info.email,
-        ]
-        emails = [e for e in emails if e]
-        if emails:
-            try:
-                await anyio.to_thread.run_sync(KeyDiscovery.request_openpgp_verify, token, emails)
-            except httpx.HTTPError as exc:
-                self._update_status("guide-error", Sanitizer.error(str(exc)), Tone.ERROR)
-                return
+        emails = self._openpgp_verification_emails(
+            statuses, self._resolved_email() or resolved.info.email,
+        )
+        try:
+            await anyio.to_thread.run_sync(self._request_openpgp_verification, token, emails)
+        except httpx.HTTPError as exc:
+            self._enter_manual_openpgp_upload(route, resolved, armor, Sanitizer.error(str(exc)))
+            return
         self.aggregate.guide.openpgp_email_sent = True
+        self._update_pending(PendingSetupStatus.OPENPGP_EMAIL_SENT)
         with suppress(NoMatches):
             self.query_one("#guide-instructions", Static).update(
                 OPENPGP_AFTER_SEND.format(email=", ".join(emails))
@@ -1514,7 +1630,10 @@ class SetupScreen(Dialog[bool]):
                 Browser.open(GITHUB_SSH_NEW_URL)
             case PublishMethod.GITHUB_GPG:
                 Browser.open(GITHUB_GPG_NEW_URL)
-            case PublishMethod.OPENPGP:
+            case PublishMethod.OPENPGP if (
+                self.aggregate.pending is not None
+                and self.aggregate.pending.last_status is PendingSetupStatus.MANUAL_OPENPGP_UPLOAD
+            ):
                 Browser.open(OPENPGP_UPLOAD_URL)
             case _:
                 pass
@@ -1531,15 +1650,13 @@ class SetupScreen(Dialog[bool]):
     @on(Input.Submitted, "#guide-gist-url")
     async def on_guide_gist_url(self, event: Input.Submitted) -> None:
         url = event.value.strip()
-        if "/" not in url:
+        fallback_owner = self.discovery.identity.github_username or (
+            self.aggregate.pending.username if self.aggregate.pending else ""
+        )
+        ref = GistDiscovery.parse_ref(url, fallback_owner)
+        if ref is None:
             return
-        gist_id = GistDiscovery.parse_gist_id(url)
-        if not gist_id:
-            return
-        username = self.discovery.identity.github_username
-        if username == "":
-            return
-        if not await self._stage_manual_gist(username, gist_id):
+        if not await self._stage_manual_gist(ref):
             return
         self.verify_server_config()
 
@@ -1572,6 +1689,7 @@ class SetupScreen(Dialog[bool]):
         try:
             caps = self.discovery.capabilities
             if caps.has_gh and not caps.gh_authed:
+                self.github_allowed = False
                 suppressed = replace(caps, has_gh=False, gh_authed=False)
                 recommended, alternatives = SetupRoutePlanner.plan(
                     suppressed,
@@ -1603,7 +1721,14 @@ class SetupScreen(Dialog[bool]):
     async def on_tools_tertiary(self) -> None:
         await self._enter_propose()
 
-    def _persist_pending(self, route: SetupRoute, location: str, gist_id: str) -> None:
+    def _persist_pending(
+        self,
+        route: SetupRoute,
+        location: str,
+        gist_id: str,
+        status: PendingSetupStatus = PendingSetupStatus.CREATED,
+        error: str = "",
+    ) -> None:
         if route.key_kind is None or route.publish_method is None:
             return
         resolved = self._resolve_key(route)
@@ -1631,13 +1756,15 @@ class SetupScreen(Dialog[bool]):
             email=email,
             public_location=location,
             gist_id=gist_id,
+            last_status=status,
+            last_error=error,
             started_at=self.aggregate.guide.started_at or monotonic(),
             updated_at=monotonic(),
         )
         self.aggregate.pending = pending
-        self._persist_pending_from_state(pending)
+        self._save_pending(pending)
 
-    def _persist_pending_from_state(self, pending: PendingSetup) -> None:
+    def _save_pending(self, pending: PendingSetup) -> None:
         self.state.pending_setup = PendingSetupModel(
             route_id=pending.route_id.value,
             publish_method=pending.publish_method.value,
@@ -1649,12 +1776,41 @@ class SetupScreen(Dialog[bool]):
             email=pending.email,
             public_location=pending.public_location,
             gist_id=pending.gist_id,
-            last_status=pending.last_status,
+            last_status=pending.last_status.value,
             last_error=pending.last_error,
             started_at=pending.started_at,
             updated_at=pending.updated_at,
         )
         self.state.save()
+
+    def _update_pending(
+        self,
+        status: PendingSetupStatus,
+        error: str = "",
+        gist_id: str = "",
+        username: str = "",
+    ) -> None:
+        if self.aggregate.pending is None:
+            return
+        next_gist_id = gist_id or self.aggregate.pending.gist_id
+        next_username = username or self.aggregate.pending.username
+        if (
+            self.aggregate.pending.last_status == status
+            and self.aggregate.pending.last_error == error
+            and self.aggregate.pending.gist_id == next_gist_id
+            and self.aggregate.pending.username == next_username
+        ):
+            return
+        pending = replace(
+            self.aggregate.pending,
+            last_status=status,
+            last_error=error,
+            gist_id=next_gist_id,
+            username=next_username,
+            updated_at=monotonic(),
+        )
+        self.aggregate.pending = pending
+        self._save_pending(pending)
 
     @staticmethod
     def _pending_from_model(model: PendingSetupModel) -> PendingSetup:
@@ -1669,7 +1825,7 @@ class SetupScreen(Dialog[bool]):
             email=model.email,
             public_location=model.public_location,
             gist_id=model.gist_id,
-            last_status=model.last_status,
+            last_status=PendingSetupStatus(model.last_status),
             last_error=model.last_error,
             started_at=model.started_at,
             updated_at=model.updated_at,
@@ -1678,6 +1834,8 @@ class SetupScreen(Dialog[bool]):
     async def _enter_guide_for_resume(self) -> None:
         pending = self.aggregate.pending
         assert pending is not None
+        self.aggregate.guide.reset(monotonic())
+        self.aggregate.fallback.clear()
         self.aggregate.discovery = DiscoveryResult(
             identity=IdentityDiscovery(
                 github_username=pending.username,
@@ -1709,14 +1867,26 @@ class SetupScreen(Dialog[bool]):
                 f"{instructions}\n\nLast error: {Sanitizer.error(pending.last_error)}"
             )
         self.aggregate.guide.last_error = pending.last_error
+        self.aggregate.guide.openpgp_email_sent = pending.last_status in (
+            PendingSetupStatus.OPENPGP_EMAIL_SENT,
+            PendingSetupStatus.MANUAL_OPENPGP_UPLOAD,
+        )
+        show_gist_input = (
+            pending.last_status in (
+                PendingSetupStatus.GIST_NOT_FOUND,
+                PendingSetupStatus.GIST_DESCRIPTION_MISMATCH,
+                PendingSetupStatus.VERIFY_UNAUTHORIZED,
+            )
+            and not pending.gist_id
+        )
         with suppress(NoMatches):
             self.query_one("#guide-instructions", Static).update(instructions)
-            self.query_one("#guide-gist-url", Input).display = gist_visible and not pending.gist_id
-        self.aggregate.guide.reset(monotonic())
+            self.query_one("#guide-gist-url", Input).display = (gist_visible or show_gist_input) and not pending.gist_id
         self._render_guide_status()
         self.transition_to(SetupStage.GUIDE)
         self._render_guide_buttons(route)
-        self.verify_server_config()
+        if self.aggregate.candidate.config is not None:
+            self.verify_server_config()
 
     def _route_from_pending(self, pending: PendingSetup) -> SetupRoute:
         resolved = self.aggregate.resolved_key
@@ -1801,13 +1971,10 @@ class SetupScreen(Dialog[bool]):
                 pass
 
     @staticmethod
-    def _rehydrate_ssh_info(key_path) -> SSHKeyInfo:
-        pub = key_path.with_suffix(key_path.suffix + ".pub")
-        if pub.exists() and (parts := pub.read_text().strip().split(maxsplit=2)):
-            algorithm = parts[0] if parts else ""
-            comment = parts[2] if len(parts) >= 3 else ""
-            return SSHKeyInfo(path=key_path, algorithm=algorithm, comment=comment)
-        return SSHKeyInfo(path=key_path, algorithm="", comment="")
+    def _rehydrate_ssh_info(key_path: Path) -> SSHKeyInfo:
+        return KeyDiscovery.ssh_key_info(key_path) or SSHKeyInfo(
+            path=key_path, algorithm="", comment="",
+        )
 
     @staticmethod
     def _rehydrate_gpg_info(fpr: str, fallback_email: str) -> GPGKeyInfo:
@@ -1903,6 +2070,14 @@ class SetupScreen(Dialog[bool]):
                     self.transition_to(SetupStage.SETTINGS)
             case AuthUnauthorized():
                 if monotonic() - self.aggregate.verification_poll.started_at < PENDING_PROPAGATION_WINDOW_SECONDS:
+                    if (
+                        self.aggregate.pending is None
+                        or self.aggregate.pending.last_status not in (
+                            PendingSetupStatus.OPENPGP_EMAIL_SENT,
+                            PendingSetupStatus.MANUAL_OPENPGP_UPLOAD,
+                        )
+                    ):
+                        self._update_pending(PendingSetupStatus.VERIFY_PENDING)
                     self.aggregate.verification_poll.schedule_next(monotonic())
                     self.aggregate.guide.last_checked_at = monotonic()
                     if self.current_stage is SetupStage.GUIDE:
@@ -1914,21 +2089,27 @@ class SetupScreen(Dialog[bool]):
                     if (
                         self.selected_route is not None
                         and self.selected_route.publish_method is PublishMethod.GIST_MANUAL
+                        and self.aggregate.candidate.config is None
                     ):
                         self.aggregate.guide.last_error = MANUAL_GIST_NOT_FOUND
                         self._update_status("guide-error", MANUAL_GIST_NOT_FOUND, Tone.WARNING)
-                        if self.state.pending_setup is not None:
-                            self.state.pending_setup.last_status = "verify-unauthorized"
-                            self.state.pending_setup.last_error = MANUAL_GIST_NOT_FOUND
-                            self.state.save()
+                        self._update_pending(PendingSetupStatus.GIST_NOT_FOUND, MANUAL_GIST_NOT_FOUND)
                         return
                     self.aggregate.guide.last_error = "sentiments.cc still couldn't verify the public key."
-                    if self.state.pending_setup is not None:
-                        self.state.pending_setup.last_status = "verify-unauthorized"
-                        self.state.pending_setup.last_error = self.aggregate.guide.last_error
-                        self.state.save()
+                    self._update_pending(
+                        PendingSetupStatus.VERIFY_UNAUTHORIZED,
+                        self.aggregate.guide.last_error,
+                    )
                     self._enter_fix(self.aggregate.guide.last_error)
             case AuthUnreachable() | AuthServerError():
+                if (
+                    self.aggregate.pending is None
+                    or self.aggregate.pending.last_status not in (
+                        PendingSetupStatus.OPENPGP_EMAIL_SENT,
+                        PendingSetupStatus.MANUAL_OPENPGP_UPLOAD,
+                    )
+                ):
+                    self._update_pending(PendingSetupStatus.NETWORK_PENDING)
                 self.aggregate.verification_poll.schedule_next(monotonic())
                 self.aggregate.guide.last_checked_at = monotonic()
                 if self.current_stage is SetupStage.GUIDE:

@@ -28,12 +28,12 @@ class DoneBranch(Vertical):
     def compose(self) -> ComposeResult:
         yield Card(
             Static(
-                f"Public key lookup: {self.public_location or 'unknown'}",
+                f"Public key location: {self.public_location or 'unknown'}",
                 id="done-location",
                 classes=Tone.SUCCESS.value,
             ),
             Static(
-                f"Verification handle: {self.lookup_value}" if self.lookup_value else "",
+                f"Lookup value: {self.lookup_value}" if self.lookup_value else "",
                 id="done-lookup",
                 classes=Tone.MUTED.value,
             ),

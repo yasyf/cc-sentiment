@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Literal, NewType
 
@@ -30,6 +31,19 @@ PublishMethodLiteral = Literal[
 ]
 
 KeyKindLiteral = Literal["ssh", "gpg"]
+
+
+class PendingSetupStatus(StrEnum):
+    CREATED = "created"
+    AWAITING_USER = "awaiting-user"
+    GIST_NOT_FOUND = "gist-not-found"
+    GIST_DESCRIPTION_MISMATCH = "gist-description-mismatch"
+    OPENPGP_EMAIL_SENT = "openpgp-email-sent"
+    MANUAL_OPENPGP_UPLOAD = "manual-openpgp-upload"
+    VERIFY_PENDING = "verify-pending"
+    VERIFY_UNAUTHORIZED = "verify-unauthorized"
+    NETWORK_PENDING = "network-pending"
+    WORKING_FAILED = "working-failed"
 
 
 class SSHConfig(BaseModel, frozen=True):
@@ -84,7 +98,7 @@ class PendingSetupModel(BaseModel, frozen=True):
     email: str = ""
     public_location: str = ""
     gist_id: str = ""
-    last_status: str = ""
+    last_status: PendingSetupStatus = PendingSetupStatus.CREATED
     last_error: str = ""
     started_at: float = 0.0
     updated_at: float = 0.0

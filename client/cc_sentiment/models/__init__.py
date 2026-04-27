@@ -19,6 +19,7 @@ from .config import (
     GistConfig,
     GPGConfig,
     PendingSetupModel,
+    PendingSetupStatus,
     SSHConfig,
 )
 from .daemon import DaemonEvent, DaemonEventPayload, DaemonEventType
@@ -54,6 +55,7 @@ __all__ = [
     "MyStat",
     "PROMPT_VERSION",
     "PendingSetupModel",
+    "PendingSetupStatus",
     "PromptVersion",
     "SSHConfig",
     "SentimentRecord",

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from textual.app import App
 from textual.widgets import Button, Input, Static
@@ -14,6 +15,7 @@ from cc_sentiment.models import (
     PendingSetupModel,
     SSHConfig,
 )
+from cc_sentiment.signing.discovery import GIST_DESCRIPTION
 from cc_sentiment.signing import GPGKeyInfo, SSHKeyInfo
 from cc_sentiment.tui.screens import SetupScreen
 from cc_sentiment.tui.screens.setup import (
@@ -30,6 +32,8 @@ from cc_sentiment.tui.screens.setup import (
 )
 from cc_sentiment.tui.setup_helpers import (
     ACCOUNT_SSH_WARNING,
+    GistMetadata,
+    GistRef,
     SetupRoutePlanner,
 )
 from cc_sentiment.tui.setup_state import (
@@ -66,6 +70,24 @@ def _identity(username: str = "", email: str = "", email_usable: bool = False) -
 def _ssh_key(path: str = "/home/.ssh/id_ed25519") -> ExistingSSHKey:
     return ExistingSSHKey(
         info=SSHKeyInfo(path=Path(path), algorithm="ssh-ed25519", comment="alice"),
+    )
+
+
+def _write_ssh_key(tmp_path: Path) -> Path:
+    key_path = tmp_path / "id_ed25519"
+    key_path.write_text("private")
+    key_path.with_suffix(".pub").write_text("ssh-ed25519 AAAA cc-sentiment")
+    return key_path
+
+
+def _managed_existing_ssh_key(tmp_path: Path) -> ExistingSSHKey:
+    return ExistingSSHKey(
+        info=SSHKeyInfo(
+            path=_write_ssh_key(tmp_path),
+            algorithm="ssh-ed25519",
+            comment="cc-sentiment",
+        ),
+        managed=True,
     )
 
 
@@ -129,10 +151,11 @@ class TestPlanner:
     def test_existing_gpg_only_recommends_openpgp_no_method_detour(self):
         caps = _capabilities(has_gpg=True)
         gpg = _gpg_key()
-        recommended, _ = SetupRoutePlanner.plan(caps, _identity(), (), (gpg,))
+        recommended, alternatives = SetupRoutePlanner.plan(caps, _identity(), (), (gpg,))
         assert recommended is not None
+        assert recommended.route_id is RouteId.MANAGED_GPG_OPENPGP
         assert recommended.publish_method is PublishMethod.OPENPGP
-        assert isinstance(recommended.key_plan, ExistingGPGKey)
+        assert any(isinstance(route.key_plan, ExistingGPGKey) for route in alternatives)
 
     def test_no_tools_offers_install_route(self):
         recommended, _ = SetupRoutePlanner.plan(_capabilities(), _identity(), (), ())
@@ -146,7 +169,7 @@ class TestPlanner:
         assert recommended.route_id is RouteId.SIGN_IN_GH
 
     def test_account_key_routes_carry_warning(self):
-        caps = _capabilities(has_gh=True, gh_authed=True)
+        caps = _capabilities(has_gh=True, gh_authed=True, has_ssh_keygen=True)
         ssh = _ssh_key()
         _, alternatives = SetupRoutePlanner.plan(caps, _identity("alice"), (ssh,), ())
         github_routes = [
@@ -313,6 +336,21 @@ def _existing_ssh_github_route(ssh: ExistingSSHKey) -> SetupRoute:
     )
 
 
+def _existing_gpg_openpgp_route(gpg: ExistingGPGKey, automated: bool = False) -> SetupRoute:
+    return SetupRoute(
+        route_id=RouteId.EXISTING_GPG_OPENPGP,
+        title="Publish this GPG public key with keys.openpgp.org",
+        detail="keys.openpgp.org will email you before making the public key searchable.",
+        primary_label="Send verification email",
+        secondary_label="Choose another key",
+        publish_method=PublishMethod.OPENPGP,
+        key_kind=KeyKind.GPG,
+        key_plan=gpg,
+        needs_email=not bool(gpg.info.email),
+        automated=automated,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Journeys
 # --------------------------------------------------------------------------- #
@@ -448,8 +486,12 @@ async def test_managed_gist_flow_completes_to_settings(
         "cc_sentiment.signing.discovery.KeyDiscovery.create_gist_from_text",
         return_value="abc123def456",
     ), patch(
-        "cc_sentiment.tui.screens.setup.GistDiscovery.fetch_gist_description",
-        return_value="cc-sentiment public key",
+        "cc_sentiment.tui.screens.setup.GistDiscovery.fetch_metadata",
+        return_value=GistMetadata(
+            GistRef("alice", "abc123def456"),
+            GIST_DESCRIPTION,
+            "ssh-ed25519 AAAAPUBKEY cc-sentiment",
+        ),
     ):
         async with SetupHarness(state).run_test() as pilot:
             screen = await wait_for_stage(pilot, SetupStage.PROPOSE)
@@ -662,17 +704,25 @@ class TestClipboardPlatformRouting:
 
 
 class TestGistDiscoveryHelpers:
-    def test_parse_gist_id_extracts_from_full_url(self):
+    def test_parse_ref_extracts_owner_and_id_from_full_url(self):
         from cc_sentiment.tui.setup_helpers import GistDiscovery
 
-        assert GistDiscovery.parse_gist_id(
+        assert GistDiscovery.parse_ref(
             "https://gist.github.com/octocat/abcdef1234567890abcd",
-        ) == "abcdef1234567890abcd"
+        ) == GistRef("octocat", "abcdef1234567890abcd")
 
-    def test_parse_gist_id_rejects_garbage(self):
+    def test_parse_ref_uses_fallback_owner_for_bare_id(self):
         from cc_sentiment.tui.setup_helpers import GistDiscovery
 
-        assert GistDiscovery.parse_gist_id("not-a-gist-id") is None
+        assert GistDiscovery.parse_ref(
+            "abcdef1234567890abcd",
+            "octocat",
+        ) == GistRef("octocat", "abcdef1234567890abcd")
+
+    def test_parse_ref_rejects_garbage(self):
+        from cc_sentiment.tui.setup_helpers import GistDiscovery
+
+        assert GistDiscovery.parse_ref("not-a-gist-id") is None
 
 
 # --------------------------------------------------------------------------- #
@@ -687,7 +737,7 @@ class TestPlannerEdgeCases:
         recommended, alternatives = SetupRoutePlanner.plan(caps, _identity(), (), (gpg,))
         assert recommended is not None
         assert recommended.publish_method is PublishMethod.OPENPGP
-        assert alternatives == ()
+        assert any(isinstance(route.key_plan, ExistingGPGKey) for route in alternatives)
 
     def test_existing_ssh_with_gh_skips_username_gate_for_recommendation(self):
         caps = _capabilities(has_gh=True, gh_authed=True, has_ssh_keygen=True)
@@ -755,9 +805,10 @@ async def test_username_validation_persists_to_app_state(
     assert state.github_username == "alice"
 
 
-async def test_manual_gist_guide_appends_url_when_browser_unavailable(
-    auth_unauthorized, stub_discovery,
+async def test_manual_gist_guide_shows_copy_and_open_fallbacks(
+    tmp_path: Path, auth_unauthorized, stub_discovery,
 ):
+    ssh = _managed_existing_ssh_key(tmp_path)
     route = SetupRoute(
         route_id=RouteId.MANAGED_SSH_MANUAL_GIST,
         title="Publish a managed SSH key in a gist",
@@ -766,18 +817,146 @@ async def test_manual_gist_guide_appends_url_when_browser_unavailable(
         secondary_label="",
         publish_method=PublishMethod.GIST_MANUAL,
         key_kind=KeyKind.SSH,
-        key_plan=GenerateSSHKey(),
+        key_plan=ssh,
+        automated=False,
     )
     stub_discovery(DiscoveryResult(
-        capabilities=_capabilities(has_ssh_keygen=True, can_open_browser=False),
+        capabilities=_capabilities(has_ssh_keygen=True),
         identity=_identity("alice"),
         recommended=route,
     ))
     state = AppState()
-    async with SetupHarness(state).run_test() as pilot:
-        screen = await wait_for_stage(pilot, SetupStage.PROPOSE)
-        body, _ = screen._guide_instructions(route)
-        assert "Open this URL manually: https://gist.github.com/" in body
+    with patch("cc_sentiment.tui.screens.setup.Clipboard.copy", return_value=False), \
+         patch("cc_sentiment.tui.screens.setup.Browser.open", return_value=False):
+        async with SetupHarness(state).run_test() as pilot:
+            screen = await wait_for_stage(pilot, SetupStage.PROPOSE)
+            screen.query_one("#propose-go", Button).press()
+            screen = await wait_for_stage(pilot, SetupStage.GUIDE)
+            instructions = str(screen.query_one("#guide-instructions", Static).render())
+            assert "Open this URL manually: https://gist.github.com/" in instructions
+            assert "Copy this public key manually:" in instructions
+            assert "ssh-ed25519 AAAA cc-sentiment" in instructions
+
+
+async def test_openpgp_guide_does_not_open_upload_before_email(
+    auth_unauthorized, stub_discovery,
+):
+    route = _existing_gpg_openpgp_route(_gpg_key())
+    stub_discovery(DiscoveryResult(
+        capabilities=_capabilities(has_gpg=True),
+        identity=_identity(email="alice@example.com", email_usable=True),
+        recommended=route,
+    ))
+    state = AppState()
+    with patch("cc_sentiment.tui.screens.setup.Browser.open") as open_mock:
+        async with SetupHarness(state).run_test() as pilot:
+            screen = await wait_for_stage(pilot, SetupStage.PROPOSE)
+            screen.query_one("#propose-go", Button).press()
+            await wait_for_stage(pilot, SetupStage.GUIDE)
+    open_mock.assert_not_called()
+
+
+async def test_openpgp_api_failure_uses_manual_upload_fallback(
+    auth_unauthorized, stub_discovery,
+):
+    route = _existing_gpg_openpgp_route(_gpg_key())
+    stub_discovery(DiscoveryResult(
+        capabilities=_capabilities(has_gpg=True),
+        identity=_identity(email="alice@example.com", email_usable=True),
+        recommended=route,
+    ))
+    state = AppState()
+    with patch(
+        "cc_sentiment.tui.screens.setup.GPGBackend.public_key_text",
+        return_value="-----BEGIN PGP PUBLIC KEY BLOCK-----\nkey",
+    ), patch(
+        "cc_sentiment.tui.screens.setup.KeyDiscovery.upload_openpgp_key",
+        side_effect=httpx.HTTPError("nope"),
+    ), patch(
+        "cc_sentiment.tui.screens.setup.Clipboard.copy",
+        return_value=False,
+    ), patch(
+        "cc_sentiment.tui.screens.setup.Browser.open",
+        return_value=False,
+    ):
+        async with SetupHarness(state).run_test() as pilot:
+            screen = await wait_for_stage(pilot, SetupStage.PROPOSE)
+            screen.query_one("#propose-go", Button).press()
+            screen = await wait_for_stage(pilot, SetupStage.GUIDE)
+            screen.query_one("#guide-check", Button).press()
+            for _ in range(20):
+                await pilot.pause(delay=0.1)
+                if state.pending_setup and state.pending_setup.last_status == "manual-openpgp-upload":
+                    break
+            instructions = str(screen.query_one("#guide-instructions", Static).render())
+            assert "keys.openpgp.org didn't accept the automatic request" in instructions
+            assert "Open this URL manually: https://keys.openpgp.org/upload" in instructions
+            assert "Copy this public key manually:" in instructions
+    assert state.pending_setup is not None
+    assert state.pending_setup.last_status == "manual-openpgp-upload"
+
+
+async def test_pasted_gist_url_stages_owner_without_saved_username(
+    tmp_path: Path, auth_unauthorized, stub_discovery,
+):
+    key_path = _write_ssh_key(tmp_path)
+    state = AppState(
+        pending_setup=PendingSetupModel(
+            route_id="managed-ssh-manual-gist",
+            publish_method="gist-manual",
+            key_kind="ssh",
+            key_managed=True,
+            key_path=key_path,
+        ),
+    )
+    with patch(
+        "cc_sentiment.tui.screens.setup.GistDiscovery.fetch_metadata",
+        return_value=GistMetadata(
+            GistRef("octocat", "abcdef1234567890abcd"),
+            GIST_DESCRIPTION,
+            "ssh-ed25519 AAAA cc-sentiment",
+        ),
+    ):
+        async with SetupHarness(state).run_test() as pilot:
+            screen = await wait_for_stage(pilot, SetupStage.GUIDE)
+            event = type("Event", (), {"value": "https://gist.github.com/octocat/abcdef1234567890abcd"})()
+            await screen.on_guide_gist_url(event)
+            assert isinstance(screen.aggregate.candidate.config, GistConfig)
+            assert screen.aggregate.candidate.config.contributor_id == "octocat"
+    assert state.pending_setup is not None
+    assert state.pending_setup.username == "octocat"
+    assert state.pending_setup.gist_id == "abcdef1234567890abcd"
+
+
+async def test_manual_gist_description_mismatch_persists_status(
+    tmp_path: Path, auth_unauthorized, stub_discovery,
+):
+    key_path = _write_ssh_key(tmp_path)
+    state = AppState(
+        pending_setup=PendingSetupModel(
+            route_id="managed-ssh-manual-gist",
+            publish_method="gist-manual",
+            key_kind="ssh",
+            key_managed=True,
+            key_path=key_path,
+            username="alice",
+        ),
+    )
+    with patch(
+        "cc_sentiment.tui.screens.setup.GistDiscovery.fetch_metadata",
+        return_value=GistMetadata(
+            GistRef("alice", "abcdef1234567890abcd"),
+            "wrong",
+            "ssh-ed25519 AAAA cc-sentiment",
+        ),
+    ):
+        async with SetupHarness(state).run_test() as pilot:
+            screen = await wait_for_stage(pilot, SetupStage.GUIDE)
+            staged = await screen._stage_manual_gist(GistRef("alice", "abcdef1234567890abcd"))
+            assert staged is False
+            assert screen.aggregate.candidate.config is None
+    assert state.pending_setup is not None
+    assert state.pending_setup.last_status == "gist-description-mismatch"
 
 
 async def test_resume_pending_with_last_error_renders_error_in_guide(
@@ -848,8 +1027,12 @@ async def test_candidate_config_not_committed_until_auth_ok(
         "cc_sentiment.signing.discovery.KeyDiscovery.create_gist_from_text",
         return_value="abc123def456",
     ), patch(
-        "cc_sentiment.tui.screens.setup.GistDiscovery.fetch_gist_description",
-        return_value="cc-sentiment public key",
+        "cc_sentiment.tui.screens.setup.GistDiscovery.fetch_metadata",
+        return_value=GistMetadata(
+            GistRef("alice", "abc123def456"),
+            GIST_DESCRIPTION,
+            "ssh-ed25519 AAAA cc-sentiment",
+        ),
     ):
         async with SetupHarness(state).run_test() as pilot:
             screen = await wait_for_stage(pilot, SetupStage.PROPOSE)

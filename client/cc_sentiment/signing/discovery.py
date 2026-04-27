@@ -24,9 +24,9 @@ GIST_README_TEMPLATE = """\
 This gist holds the public signing key for [cc-sentiment](https://github.com/yasyf/cc-sentiment),
 a local tool that scores Claude Code conversations.
 
-The private key stays on the device that generated it. Only aggregate sentiment metrics are uploaded.
+The private key stays on this device. Only aggregate sentiment metrics are uploaded to sentiments.cc.
 Conversation text, file paths, prompts, tool inputs, and tool outputs are not uploaded.
-GitHub/GPG details are used only so sentiments.cc can find a public key and verify signatures.
+GitHub/GPG details are used only to find a public key and verify signatures.
 
 If you didn't set this up, you can safely delete this gist.
 """
@@ -38,15 +38,25 @@ class KeyDiscovery:
         return shutil.which(name) is not None
 
     @staticmethod
+    def ssh_key_info(path: Path, default_comment: str = "") -> SSHKeyInfo | None:
+        pub_path = path.with_suffix(path.suffix + ".pub")
+        if not path.exists() or not pub_path.exists():
+            return None
+        parts = pub_path.read_text().strip().split()
+        if not parts:
+            return None
+        return SSHKeyInfo(
+            path=path,
+            algorithm=parts[0] if len(parts) >= 2 else "unknown",
+            comment=parts[2] if len(parts) >= 3 else default_comment,
+        )
+
+    @staticmethod
     def find_ssh_keys() -> tuple[SSHKeyInfo, ...]:
         return tuple(
-            SSHKeyInfo(
-                path=path,
-                algorithm=parts[0] if len(parts := path.with_suffix(path.suffix + ".pub").read_text().strip().split()) >= 2 else "unknown",
-                comment=parts[2] if len(parts) >= 3 else "",
-            )
+            info
             for name in SSH_KEY_CANDIDATES
-            if (path := SSH_DIR / name).exists()
+            if (info := KeyDiscovery.ssh_key_info(SSH_DIR / name)) is not None
         )
 
     @staticmethod
@@ -215,12 +225,9 @@ class KeyDiscovery:
                 ["ssh-keygen", "-t", "ed25519", "-f", str(path), "-N", "", "-C", "cc-sentiment"],
                 check=True, capture_output=True, timeout=10,
             )
-        parts = path.with_suffix(path.suffix + ".pub").read_text().strip().split()
-        return SSHKeyInfo(
-            path=path,
-            algorithm=parts[0] if len(parts) >= 2 else "unknown",
-            comment=parts[2] if len(parts) >= 3 else "cc-sentiment",
-        )
+        info = KeyDiscovery.ssh_key_info(path, "cc-sentiment")
+        assert info is not None
+        return info
 
     @staticmethod
     def create_gist_from_text(pub_text: str) -> str:

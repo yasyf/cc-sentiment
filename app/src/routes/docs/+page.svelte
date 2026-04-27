@@ -1,8 +1,8 @@
 <svelte:head>
 	<title>Contribute · cc-sentiment</title>
-	<meta name="description" content="Add your Claude Code sessions to the public sentiment dashboard. One command, fully local scoring, nothing leaves your machine." />
+	<meta name="description" content="Add aggregate Claude Code sentiment metrics to the public dashboard. One command, private setup, only numbers are uploaded." />
 	<meta property="og:title" content="Contribute · cc-sentiment" />
-	<meta property="og:description" content="One command, fully local scoring, nothing leaves your machine." />
+	<meta property="og:description" content="One command, private setup, only aggregate numbers are uploaded." />
 	<meta property="og:image" content="/og" />
 </svelte:head>
 
@@ -22,8 +22,8 @@
 	<div class="mx-auto max-w-2xl px-6 py-10">
 		<h2 class="text-3xl font-semibold tracking-tight text-text">Contribute your data</h2>
 		<p class="mt-2 text-text-muted">
-			One command. Everything runs locally on your machine -- your conversation transcripts
-			never leave your machine. Only numeric scores (1-5) and timestamps are uploaded.
+			One command. cc-sentiment sets up a verification key, scores your sessions,
+			and uploads only aggregate numeric metrics to sentiments.cc.
 		</p>
 
 		<div class="mt-10 space-y-6">
@@ -42,7 +42,7 @@ cc-sentiment install</code></pre>
 					Runs once a day in the background. Undo any time with <code class="rounded bg-bg-code px-1 py-0.5 font-mono text-xs">cc-sentiment uninstall</code>.
 				</p>
 				<p class="mt-3 text-sm text-text-muted">
-					The wizard confirms your GitHub identity, scores your sessions on your machine,
+					The wizard sets up a verification key, scores your sessions on your machine,
 					and uploads the numeric scores. If anything's missing, it'll set it up for you.
 				</p>
 			</section>
@@ -53,8 +53,8 @@ cc-sentiment install</code></pre>
 				<h3 class="text-base font-medium text-text">What happens</h3>
 				<ol class="mt-3 space-y-2 pl-5 text-sm text-text-muted list-decimal marker:text-text-dim">
 					<li>Finds your Claude Code transcripts in <code class="rounded bg-bg-code px-1 py-0.5 font-mono text-xs">~/.claude/projects/</code></li>
-					<li>Scores each conversation on-device using Gemma 4 via MLX -- nothing is sent anywhere</li>
-					<li>Signs each upload with a key you control and a public verification handle (GitHub username or GPG fingerprint) so the server can verify the source without learning anything about your sessions</li>
+					<li>Scores each conversation on your machine when the local engine is available</li>
+					<li>Signs each upload with a key you control and a public verification handle (GitHub username or GPG fingerprint) used only to find a public key and verify signatures</li>
 					<li>Uploads only the numeric scores and timestamps to the <a href="/" class="text-accent hover:text-accent-hover transition-colors">dashboard</a></li>
 				</ol>
 			</section>
@@ -64,9 +64,9 @@ cc-sentiment install</code></pre>
 			<section>
 				<h3 class="text-base font-medium text-text">Privacy</h3>
 				<p class="mt-2 text-sm text-text-muted">
-					Your conversations stay on your machine. The model runs entirely locally.
-					What gets uploaded: a score from 1-5, a timestamp, and a public verification handle (GitHub username or GPG fingerprint) used only to verify signatures.
-					What doesn't: any conversation text, file contents, or code.
+					Your conversations are not uploaded to sentiments.cc. The private signing key stays on your machine.
+					What gets uploaded: a score from 1-5, a timestamp, and a public verification handle (GitHub username or GPG fingerprint) used only to find a public key and verify signatures.
+					What doesn't: conversation text, file contents, file paths, prompts, tool inputs, or tool outputs.
 				</p>
 			</section>
 		</div>
