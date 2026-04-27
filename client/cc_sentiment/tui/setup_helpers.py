@@ -227,23 +227,21 @@ class SetupRoutePlanner:
         identity: IdentityDiscovery,
         ssh_keys: tuple[ExistingSSHKey, ...],
         gpg_keys: tuple[ExistingGPGKey, ...],
-        github_allowed: bool = True,
+        github_lookup_allowed: bool = True,
     ) -> SetupPlan:
         username = identity.github_username
-        gh_publish_allowed = github_allowed and capabilities.gh_authed
+        gh_publish_allowed = github_lookup_allowed and capabilities.gh_authed
         if gh_publish_allowed and capabilities.has_ssh_keygen:
             recommended = cls._managed_ssh_gist()
         elif gh_publish_allowed and gpg_keys:
             recommended = cls._existing_gpg_gist(gpg_keys[0])
-        elif capabilities.has_gpg and gpg_keys:
-            recommended = cls._existing_gpg_openpgp(gpg_keys[0])
         elif capabilities.has_gpg:
             recommended = cls._managed_gpg_openpgp()
-        elif github_allowed and capabilities.has_gh and not capabilities.gh_authed:
+        elif github_lookup_allowed and capabilities.has_gh and not capabilities.gh_authed:
             return SetupPlan(intervention=SetupIntervention.SIGN_IN_GH)
-        elif github_allowed and not username and capabilities.has_ssh_keygen:
+        elif github_lookup_allowed and not username and capabilities.has_ssh_keygen:
             return SetupPlan(intervention=SetupIntervention.USERNAME)
-        elif github_allowed and username and capabilities.has_ssh_keygen:
+        elif github_lookup_allowed and username and capabilities.has_ssh_keygen:
             recommended = cls._managed_ssh_manual_gist()
         else:
             return SetupPlan(intervention=SetupIntervention.INSTALL_TOOLS)
@@ -268,7 +266,7 @@ class SetupRoutePlanner:
             *(
                 cls._existing_ssh_manual_gist(ssh)
                 for ssh in ssh_keys
-                if github_allowed and username and capabilities.has_ssh_keygen
+                if github_lookup_allowed and username and capabilities.has_ssh_keygen
             ),
             *(
                 cls._existing_ssh_github(ssh)
@@ -533,7 +531,7 @@ class GistDiscovery:
 
 class DiscoveryRunner:
     @classmethod
-    def run(cls, saved_username: str = "", github_allowed: bool = True) -> DiscoveryResult:
+    def run(cls, saved_username: str = "", github_lookup_allowed: bool = True) -> DiscoveryResult:
         capabilities = CapabilityProbe.detect()
         identity = IdentityProbe.detect(saved_username=saved_username)
         if identity.github_username and not identity.email_usable:
@@ -550,7 +548,7 @@ class DiscoveryRunner:
         gpg_keys = LocalKeysProbe.detect_gpg()
         plan = SetupRoutePlanner.plan(
             capabilities, identity, ssh_keys, gpg_keys,
-            github_allowed=github_allowed,
+            github_lookup_allowed=github_lookup_allowed,
         )
         rows = cls._build_rows(capabilities, identity, ssh_keys, gpg_keys)
         return DiscoveryResult(

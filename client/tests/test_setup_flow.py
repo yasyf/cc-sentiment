@@ -159,15 +159,19 @@ class TestPlanner:
         assert recommended is not None
         assert recommended.publish_method is not PublishMethod.GITHUB_SSH
 
-    def test_existing_gpg_only_recommends_openpgp_no_method_detour(self):
+    def test_existing_gpg_offered_as_alternative_to_managed_gpg_openpgp(self):
         caps = _capabilities(has_gpg=True)
         gpg = _gpg_key()
         plan = SetupRoutePlanner.plan(caps, _identity(), (), (gpg,))
         recommended = plan.recommended
         assert recommended is not None
-        assert recommended.route_id is RouteId.EXISTING_GPG_OPENPGP
+        assert recommended.route_id is RouteId.MANAGED_GPG_OPENPGP
         assert recommended.publish_method is PublishMethod.OPENPGP
-        assert isinstance(recommended.key_plan, ExistingGPGKey)
+        assert any(
+            alt.route_id is RouteId.EXISTING_GPG_OPENPGP
+            and isinstance(alt.key_plan, ExistingGPGKey)
+            for alt in plan.alternatives
+        )
 
     def test_no_tools_offers_install_route(self):
         plan = SetupRoutePlanner.plan(_capabilities(), _identity(), (), ())
@@ -278,7 +282,7 @@ def stub_discovery(monkeypatch):
     def push(result: DiscoveryResult) -> None:
         discoveries.append(result)
 
-    def fake_run(saved_username: str = "", github_allowed: bool = True) -> DiscoveryResult:
+    def fake_run(saved_username: str = "", github_lookup_allowed: bool = True) -> DiscoveryResult:
         if discoveries:
             return discoveries.pop(0)
         return DiscoveryResult()
@@ -552,13 +556,16 @@ async def test_managed_gist_flow_completes_to_settings(
 async def test_resume_pending_sends_user_to_guide(
     tmp_path: Path, auth_unauthorized, stub_discovery,
 ):
+    key_path = tmp_path / "id_ed25519"
+    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA cc-sentiment")
+    key_path.write_text("private")
     state = AppState(
         pending_setup=PendingSetupModel(
             route_id="managed-ssh-manual-gist",
             publish_method="gist-manual",
             key_kind="ssh",
             key_managed=True,
-            key_path=tmp_path / "id_ed25519",
+            key_path=key_path,
             username="alice",
         ),
     )
@@ -567,6 +574,29 @@ async def test_resume_pending_sends_user_to_guide(
         assert screen.current_stage is SetupStage.GUIDE
         instructions = str(screen.query_one("#guide-instructions", Static).render())
         assert RESUME_COPY in instructions
+
+
+async def test_resume_pending_with_missing_ssh_key_clears_pending_and_runs_discovery(
+    tmp_path: Path, auth_unauthorized, stub_discovery,
+):
+    state = AppState(
+        pending_setup=PendingSetupModel(
+            route_id="managed-ssh-manual-gist",
+            publish_method="gist-manual",
+            key_kind="ssh",
+            key_managed=True,
+            key_path=tmp_path / "missing_id_ed25519",
+            username="alice",
+        ),
+    )
+    stub_discovery(DiscoveryResult(
+        capabilities=_capabilities(has_ssh_keygen=True),
+        identity=_identity("alice"),
+        plan=SetupPlan(_managed_ssh_route()),
+    ))
+    async with SetupHarness(state).run_test() as pilot:
+        await wait_for_stage(pilot, SetupStage.PROPOSE)
+    assert state.pending_setup is None
 
 
 async def test_escape_dismisses_setup(stub_discovery):
@@ -768,14 +798,19 @@ class TestGistDiscoveryHelpers:
 
 
 class TestPlannerEdgeCases:
-    def test_existing_gpg_only_emits_no_alternatives_to_skip_method_detour(self):
+    def test_existing_gpg_only_recommends_managed_gpg_with_existing_alternative(self):
         caps = _capabilities(has_gpg=True)
         gpg = _gpg_key()
         plan = SetupRoutePlanner.plan(caps, _identity(), (), (gpg,))
         recommended = plan.recommended
         assert recommended is not None
         assert recommended.publish_method is PublishMethod.OPENPGP
-        assert isinstance(recommended.key_plan, ExistingGPGKey)
+        assert isinstance(recommended.key_plan, GenerateGPGKey)
+        assert any(
+            alt.route_id is RouteId.EXISTING_GPG_OPENPGP
+            and isinstance(alt.key_plan, ExistingGPGKey)
+            for alt in plan.alternatives
+        )
 
     def test_existing_ssh_with_gh_skips_username_gate_for_recommendation(self):
         caps = _capabilities(has_gh=True, gh_authed=True, has_ssh_keygen=True)
@@ -790,7 +825,7 @@ class TestPlannerEdgeCases:
         ssh = _ssh_key()
         gpg = _gpg_key()
         plan = SetupRoutePlanner.plan(
-            caps, _identity("alice"), (ssh,), (gpg,), github_allowed=False,
+            caps, _identity("alice"), (ssh,), (gpg,), github_lookup_allowed=False,
         )
         recommended = plan.recommended
         alternatives = plan.alternatives
@@ -808,7 +843,7 @@ class TestPlannerEdgeCases:
     def test_github_disallowed_with_only_gh_capability_falls_back_to_install_tools(self):
         caps = _capabilities(has_gh=True, gh_authed=True, has_ssh_keygen=True)
         plan = SetupRoutePlanner.plan(
-            caps, _identity("alice"), (), (), github_allowed=False,
+            caps, _identity("alice"), (), (), github_lookup_allowed=False,
         )
         assert plan.recommended is None
         assert plan.alternatives == ()
@@ -1059,13 +1094,14 @@ async def test_manual_gist_description_mismatch_persists_status(
 async def test_resume_pending_with_last_error_renders_error_in_guide(
     tmp_path: Path, auth_unauthorized, stub_discovery,
 ):
+    key_path = _write_ssh_key(tmp_path)
     state = AppState(
         pending_setup=PendingSetupModel(
             route_id="managed-ssh-manual-gist",
             publish_method="gist-manual",
             key_kind="ssh",
             key_managed=True,
-            key_path=tmp_path / "id_ed25519",
+            key_path=key_path,
             username="alice",
             last_status="verify-unauthorized",
             last_error="sentiments.cc still couldn't verify the public key.",
@@ -1085,13 +1121,14 @@ async def test_resume_choose_another_method_uses_fresh_discovery(
         identity=_identity("alice"),
         plan=SetupPlan(_managed_ssh_route()),
     ))
+    key_path = _write_ssh_key(tmp_path)
     state = AppState(
         pending_setup=PendingSetupModel(
             route_id="managed-ssh-manual-gist",
             publish_method="gist-manual",
             key_kind="ssh",
             key_managed=True,
-            key_path=tmp_path / "id_ed25519",
+            key_path=key_path,
             username="alice",
         ),
     )
@@ -1116,9 +1153,9 @@ async def test_username_skip_marks_github_disallowed(
         screen.query_one("#username-skip", Button).press()
         for _ in range(20):
             await pilot.pause(delay=0.1)
-            if not screen.github_allowed:
+            if not screen.github_lookup_allowed:
                 break
-    assert screen.github_allowed is False
+    assert screen.github_lookup_allowed is False
 
 
 async def test_username_skip_without_gpg_stays_in_tools_without_manual_loop(

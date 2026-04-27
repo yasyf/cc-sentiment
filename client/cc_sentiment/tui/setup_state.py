@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+from textual.worker import Worker
+
 from cc_sentiment.models import (
     GistGPGConfig,
     GistConfig,

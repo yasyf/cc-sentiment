@@ -135,6 +135,10 @@ SAVED_KEY_INVALID_COPY_2 = "We'll help publish a new public key or choose anothe
 SAVED_KEY_TEMPORARY_COPY = (
     "sentiments.cc is having trouble. We'll keep your setup and you can retry later."
 )
+PENDING_SSH_KEY_MISSING_COPY = (
+    "The previously saved private key on this device is no longer available. "
+    "We'll start setup again from scratch."
+)
 
 USERNAME_TITLE = "GitHub username"
 USERNAME_BODY = (
@@ -227,6 +231,10 @@ OPENPGP_AFTER_SEND = (
     "Verification email sent to {email}. "
     "Open it, click the verification link, then return here. We'll keep checking."
 )
+OPENPGP_NO_EMAIL_NEEDED = (
+    "The public key is already published or no email verification is needed. "
+    "We'll verify the signature now."
+)
 OPENPGP_API_FAILURE = (
     "keys.openpgp.org didn't accept the automatic request: {error}. "
     "We opened the upload page and copied the public key to your clipboard."
@@ -311,7 +319,7 @@ class SetupScreen(Dialog[bool]):
         self.state = state
         self.aggregate = SetupAggregate(verification_poll=VerificationPollState(started_at=monotonic()))
         self.verify_worker: Worker[None] | None = None
-        self.github_allowed: bool = True
+        self.github_lookup_allowed: bool = True
 
     @property
     def actions(self) -> SetupActionState:
@@ -511,7 +519,20 @@ class SetupScreen(Dialog[bool]):
         pending_model = self.state.pending_setup
         if pending_model is None:
             return False
-        self.aggregate.pending = self._pending_from_model(pending_model)
+        pending = self._pending_from_model(pending_model)
+        if pending.key_kind is KeyKind.SSH and (
+            pending.key_path is None
+            or KeyDiscovery.ssh_key_info(pending.key_path) is None
+        ):
+            self.state.pending_setup = None
+            await anyio.to_thread.run_sync(self.state.save)
+            self._update_status(
+                "discover-status",
+                PENDING_SSH_KEY_MISSING_COPY,
+                Tone.WARNING,
+            )
+            return False
+        self.aggregate.pending = pending
         await self._enter_guide_for_resume()
         return True
 
@@ -534,7 +555,7 @@ class SetupScreen(Dialog[bool]):
         self._update_status("discover-status", "Looking for keys, GitHub identity, and tools…")
         username_hint = self._best_known_username()
         result = await anyio.to_thread.run_sync(
-            DiscoveryRunner.run, username_hint, self.github_allowed,
+            DiscoveryRunner.run, username_hint, self.github_lookup_allowed,
         )
         self.aggregate.discovery = result
         self._render_discover_rows(result.rows)
@@ -691,7 +712,15 @@ class SetupScreen(Dialog[bool]):
 
     @on(Button.Pressed, "#discover-retry")
     async def on_discover_retry(self) -> None:
-        await self._run_discover_phase()
+        match await self._verify_saved_state():
+            case "ok":
+                return
+            case "temporary":
+                return
+            case "invalid":
+                await self._run_discover_phase(saved_invalid=True)
+            case "none":
+                await self._run_discover_phase()
 
     @on(Button.Pressed, "#username-next")
     async def on_username_next(self) -> None:
@@ -711,7 +740,7 @@ class SetupScreen(Dialog[bool]):
             case "unreachable":
                 self._update_status("username-status", USERNAME_ERROR_UNREACHABLE, Tone.ERROR)
                 return
-        self.github_allowed = True
+        self.github_lookup_allowed = True
         await self._set_username(username, UsernameSource.USER)
         self.state.github_username = username
         await anyio.to_thread.run_sync(self.state.save)
@@ -720,7 +749,7 @@ class SetupScreen(Dialog[bool]):
 
     @on(Button.Pressed, "#username-skip")
     async def on_username_skip(self) -> None:
-        self.github_allowed = False
+        self.github_lookup_allowed = False
         await self._set_username("", UsernameSource.NONE)
         self._hide_inline_username_prompt()
         self._update_status("discover-status", USERNAME_SKIP_GPG_ONLY, Tone.MUTED)
@@ -758,7 +787,7 @@ class SetupScreen(Dialog[bool]):
             new_identity,
             self.discovery.existing_ssh,
             self.discovery.existing_gpg,
-            github_allowed=self.github_allowed,
+            github_lookup_allowed=self.github_lookup_allowed,
         )
         self.aggregate.discovery = DiscoveryResult(
             capabilities=self.discovery.capabilities,
@@ -912,7 +941,7 @@ class SetupScreen(Dialog[bool]):
             return
         chosen = alternatives[idx]
         previous = self.selected_route
-        rest = tuple(r for r in alternatives if r.route_id != chosen.route_id)
+        rest = (*alternatives[:idx], *alternatives[idx + 1:])
         new_alternatives = (previous, *rest) if previous else rest
         self.aggregate.discovery = DiscoveryResult(
             capabilities=self.discovery.capabilities,
@@ -1171,7 +1200,11 @@ class SetupScreen(Dialog[bool]):
 
         location = "keys.openpgp.org"
         lookup = f"GPG {resolved.info.fpr[-8:]}"
-        instructions = OPENPGP_AFTER_SEND.format(email=", ".join(emails))
+        instructions = (
+            OPENPGP_AFTER_SEND.format(email=", ".join(emails))
+            if emails
+            else OPENPGP_NO_EMAIL_NEEDED
+        )
         call(self._step_running, idx)
         call(
             self._on_working_pending,
@@ -1669,6 +1702,8 @@ class SetupScreen(Dialog[bool]):
         with suppress(NoMatches):
             self.query_one("#guide-instructions", Static).update(
                 OPENPGP_AFTER_SEND.format(email=", ".join(emails))
+                if emails
+                else OPENPGP_NO_EMAIL_NEEDED
             )
         self._render_guide_buttons(route)
         self.aggregate.verification_poll.restart(monotonic())
@@ -1746,20 +1781,23 @@ class SetupScreen(Dialog[bool]):
         try:
             caps = self.discovery.capabilities
             if self.discovery.intervention is SetupIntervention.SIGN_IN_GH:
-                self.github_allowed = False
                 suppressed = replace(caps, has_gh=False, gh_authed=False)
                 plan = SetupRoutePlanner.plan(
                     suppressed,
                     self.discovery.identity,
                     self.discovery.existing_ssh,
                     self.discovery.existing_gpg,
-                    github_allowed=self.github_allowed,
+                    github_lookup_allowed=self.github_lookup_allowed,
                 )
                 self.aggregate.discovery = replace(
                     self.discovery,
                     capabilities=suppressed,
                     plan=plan,
                 )
+                if plan.intervention is SetupIntervention.USERNAME:
+                    self.transition_to(SetupStage.DISCOVER)
+                    self._show_inline_username_prompt()
+                    return
                 await self._enter_propose()
                 return
             if caps.has_brew:
@@ -1897,7 +1935,7 @@ class SetupScreen(Dialog[bool]):
         discovered = await anyio.to_thread.run_sync(
             DiscoveryRunner.run,
             pending.username,
-            bool(pending.username) or self.github_allowed,
+            bool(pending.username) or self.github_lookup_allowed,
         )
         self.aggregate.discovery = replace(
             discovered,
@@ -2045,9 +2083,9 @@ class SetupScreen(Dialog[bool]):
 
     @staticmethod
     def _rehydrate_ssh_info(key_path: Path) -> SSHKeyInfo:
-        return KeyDiscovery.ssh_key_info(key_path) or SSHKeyInfo(
-            path=key_path, algorithm="", comment="",
-        )
+        info = KeyDiscovery.ssh_key_info(key_path)
+        assert info is not None
+        return info
 
     @staticmethod
     def _rehydrate_gpg_info(fpr: str, fallback_email: str) -> GPGKeyInfo:
