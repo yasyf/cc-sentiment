@@ -9,6 +9,7 @@ from cc_sentiment.engines.claude_cli import (
 )
 from cc_sentiment.engines.factory import ClaudeUnavailable, EngineFactory
 from cc_sentiment.engines.filter import FrustrationFilter
+from cc_sentiment.engines.imperative_filter import ImperativeMildIrritationFilter
 from cc_sentiment.engines.protocol import (
     DEFAULT_MODEL,
     NOOP_PROGRESS,
@@ -28,5 +29,6 @@ __all__ = [
     "ClaudeUnavailable",
     "EngineFactory",
     "FrustrationFilter",
+    "ImperativeMildIrritationFilter",
     "InferenceEngine",
 ]

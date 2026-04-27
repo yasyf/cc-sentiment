@@ -13,6 +13,8 @@ cc-sentiment/
 └── README.md         # Project overview
 ```
 
+Training and eval live in a sibling repo at `~/Code/cc-sentiments-local/` (note the `-local` suffix and the plural). Dataset build, LoRA training, DSPy/SIMBA prompt optimization, swarm dispatcher (`harness/run_swarm.py`), leaderboard, and pre-ship regression gates are there. The shipped adapter at `client/cc_sentiment/adapter/adapters.safetensors.zst` is the output of that repo's ship recipe — see its `README.md`.
+
 ## Python Style (server/ and client/)
 
 Target Python 3.14 for server, 3.12+ for client. Both use `uv` for dependency management.

@@ -21,6 +21,7 @@ from cc_sentiment.engines import (
     ClaudeUnavailable,
     EngineFactory,
     FrustrationFilter,
+    ImperativeMildIrritationFilter,
 )
 from cc_sentiment.engines.protocol import DEFAULT_MODEL
 from cc_sentiment.text import extract_score
@@ -313,10 +314,11 @@ class TestDefaultEngine:
 @pytest.mark.slow
 @pytest.mark.skipif(not MLX_AVAILABLE, reason="requires mlx-lm (Apple Silicon)")
 class TestMlxBuild:
-    async def test_build_returns_frustration_filter(self) -> None:
+    async def test_build_wraps_with_filter_chain(self) -> None:
         engine = await EngineFactory.build("mlx", DEFAULT_MODEL)
         try:
-            assert isinstance(engine, FrustrationFilter)
+            assert isinstance(engine, ImperativeMildIrritationFilter)
+            assert isinstance(engine.inner, FrustrationFilter)
         finally:
             await engine.close()
 
@@ -482,6 +484,175 @@ class TestFrustrationFilter:
     async def test_close_and_peak_memory_delegate(self) -> None:
         stub = StubEngine(scores=[])
         wrapper = FrustrationFilter(stub)
+        assert wrapper.peak_memory_gb() == 0.42
+        await wrapper.close()
+        assert stub.closed is True
+
+
+class TestImperativeMildIrritationTrigger:
+    def test_and_again_with_exclamation(self) -> None:
+        assert ImperativeMildIrritationFilter.matches_trigger(
+            "and again! dont modify the repo, just do it in a python call"
+        )
+
+    def test_and_again_with_comma(self) -> None:
+        assert ImperativeMildIrritationFilter.matches_trigger(
+            "and again, dont touch the config"
+        )
+
+    def test_yet_again(self) -> None:
+        assert ImperativeMildIrritationFilter.matches_trigger("yet again, please use X")
+
+    def test_once_again(self) -> None:
+        assert ImperativeMildIrritationFilter.matches_trigger("once again, do this")
+
+    def test_for_the_third_time(self) -> None:
+        assert ImperativeMildIrritationFilter.matches_trigger(
+            "for the third time, dont touch that file"
+        )
+
+    def test_for_the_umpteenth_time(self) -> None:
+        assert ImperativeMildIrritationFilter.matches_trigger(
+            "for the umpteenth time, please run pytest first"
+        )
+
+    def test_case_insensitive(self) -> None:
+        assert ImperativeMildIrritationFilter.matches_trigger(
+            "AND AGAIN! dont break it"
+        )
+
+    def test_no_match_for_bare_again(self) -> None:
+        assert not ImperativeMildIrritationFilter.matches_trigger(
+            "again, dont modify the repo"
+        )
+
+    def test_no_match_for_neutral_imperative(self) -> None:
+        assert not ImperativeMildIrritationFilter.matches_trigger(
+            "dont modify the repo, just do it in a python call"
+        )
+
+    def test_no_match_for_question_with_again(self) -> None:
+        assert not ImperativeMildIrritationFilter.matches_trigger(
+            "can you try this approach again?"
+        )
+
+    def test_no_match_for_for_the_first_time(self) -> None:
+        assert not ImperativeMildIrritationFilter.matches_trigger(
+            "for the first time, this works"
+        )
+
+
+class TestImperativeMildIrritationDemote:
+    @staticmethod
+    def patch_hostile(monkeypatch: pytest.MonkeyPatch, hostile: bool) -> None:
+        monkeypatch.setattr(
+            ImperativeMildIrritationFilter,
+            "has_hostile_lexicon",
+            staticmethod(lambda _text: hostile),
+        )
+
+    def test_demotes_when_trigger_no_hostile(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self.patch_hostile(monkeypatch, hostile=False)
+        bucket = make_bucket("and again! dont modify the repo")
+        assert ImperativeMildIrritationFilter.should_demote(bucket) is True
+
+    def test_no_demote_when_trigger_with_hostile(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self.patch_hostile(monkeypatch, hostile=True)
+        bucket = make_bucket("and again! this is broken")
+        assert ImperativeMildIrritationFilter.should_demote(bucket) is False
+
+    def test_no_demote_without_trigger(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self.patch_hostile(monkeypatch, hostile=False)
+        bucket = make_bucket("dont modify the repo")
+        assert ImperativeMildIrritationFilter.should_demote(bucket) is False
+
+    def test_ignores_assistant_message_trigger(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self.patch_hostile(monkeypatch, hostile=False)
+        bucket = ConversationBucket(
+            session_id=SessionId("test"),
+            bucket_index=BucketIndex(0),
+            bucket_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            messages=(
+                make_message("assistant", "and again! I will retry"),
+                make_message("user", "ok proceed"),
+            ),
+        )
+        assert ImperativeMildIrritationFilter.should_demote(bucket) is False
+
+
+class TestImperativeMildIrritationFilter:
+    async def test_demotes_one_when_trigger_matches(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            ImperativeMildIrritationFilter,
+            "has_hostile_lexicon",
+            staticmethod(lambda _text: False),
+        )
+        stub = StubEngine(scores=[SentimentScore(1)])
+        wrapper = ImperativeMildIrritationFilter(stub)
+        scores = await wrapper.score(
+            [make_bucket("and again! dont modify the repo, just do it in a python call")]
+        )
+        assert scores == [SentimentScore(2)]
+
+    async def test_passes_through_non_one_scores(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            ImperativeMildIrritationFilter,
+            "has_hostile_lexicon",
+            staticmethod(lambda _text: False),
+        )
+        stub = StubEngine(scores=[SentimentScore(3), SentimentScore(4), SentimentScore(5)])
+        wrapper = ImperativeMildIrritationFilter(stub)
+        buckets = [
+            make_bucket("and again! dont modify the repo"),
+            make_bucket("yet again, please use X"),
+            make_bucket("once again, do this"),
+        ]
+        scores = await wrapper.score(buckets)
+        assert scores == [SentimentScore(3), SentimentScore(4), SentimentScore(5)]
+
+    async def test_keeps_one_when_hostile_lexicon_present(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            ImperativeMildIrritationFilter,
+            "has_hostile_lexicon",
+            staticmethod(lambda _text: True),
+        )
+        stub = StubEngine(scores=[SentimentScore(1)])
+        wrapper = ImperativeMildIrritationFilter(stub)
+        scores = await wrapper.score([make_bucket("and again! this is broken garbage")])
+        assert scores == [SentimentScore(1)]
+
+    async def test_keeps_one_without_trigger(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            ImperativeMildIrritationFilter,
+            "has_hostile_lexicon",
+            staticmethod(lambda _text: False),
+        )
+        stub = StubEngine(scores=[SentimentScore(1)])
+        wrapper = ImperativeMildIrritationFilter(stub)
+        scores = await wrapper.score(
+            [make_bucket("you are wrong, this approach won't work")]
+        )
+        assert scores == [SentimentScore(1)]
+
+    async def test_close_and_peak_memory_delegate(self) -> None:
+        stub = StubEngine(scores=[])
+        wrapper = ImperativeMildIrritationFilter(stub)
         assert wrapper.peak_memory_gb() == 0.42
         await wrapper.close()
         assert stub.closed is True

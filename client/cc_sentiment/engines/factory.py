@@ -9,6 +9,7 @@ import anyio.to_thread
 
 from cc_sentiment.engines.claude_cli import ClaudeCLIEngine, ClaudeReady, ClaudeStatus
 from cc_sentiment.engines.filter import FrustrationFilter
+from cc_sentiment.engines.imperative_filter import ImperativeMildIrritationFilter
 from cc_sentiment.engines.protocol import DEFAULT_MODEL, InferenceEngine
 
 
@@ -59,4 +60,4 @@ class EngineFactory:
                 inner = ClaudeCLIEngine(model_repo or ClaudeCLIEngine.HAIKU_MODEL)
             case _:
                 raise ValueError(f"Unknown engine: {kind}")
-        return FrustrationFilter(inner)
+        return ImperativeMildIrritationFilter(FrustrationFilter(inner))
