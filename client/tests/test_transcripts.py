@@ -161,6 +161,18 @@ class TestStreamTranscripts:
         assert msg is not None
         assert msg.content == "hello"
 
+    def test_allows_user_message_without_version(self, tmp_path: Path) -> None:
+        line = (
+            '{"parentUuid":null,"isSidechain":false,"type":"user",'
+            '"message":{"role":"user","content":"hello"},'
+            '"uuid":"u","timestamp":"2026-04-10T07:36:00.000Z",'
+            '"sessionId":"s"}'
+        )
+        msg = parse_single_line(tmp_path, line)
+        assert isinstance(msg, UserMessage)
+        assert msg.content == "hello"
+        assert msg.cc_version == ""
+
     def test_drops_user_message_with_system_reminder(self, tmp_path: Path) -> None:
         line = (
             '{"parentUuid":null,"isSidechain":false,"type":"user",'

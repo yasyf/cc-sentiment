@@ -215,7 +215,7 @@ fn parse_envelope(env: Envelope<'_>) -> Option<Parsed> {
                 timestamp: ts,
                 session_id: env.session_id?.into_owned(),
                 uuid: env.uuid?.into_owned(),
-                cc_version: env.version?.into_owned(),
+                cc_version: env.version.map(|v| v.into_owned()).unwrap_or_default(),
             })
         }
         "assistant" => {
