@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from textual.widgets import Button, DataTable, Input
+from textual.widgets import Button, DataTable, Input, ProgressBar
 
 from cc_sentiment.onboarding import Stage, State as GlobalState
 from cc_sentiment.onboarding.ui.screens import UserFormScreen
@@ -71,7 +71,6 @@ class TestUserFormScreen:
     async def test_no_progress_bar(self):
         # Plan: no tables, no progress bars, no debug.
         async with mounted(UserFormScreen, gs_user_form()) as pilot:
-            from textual.widgets import ProgressBar
             assert not pilot.app.screen.query(ProgressBar)
 
     async def test_no_debug_text(self):

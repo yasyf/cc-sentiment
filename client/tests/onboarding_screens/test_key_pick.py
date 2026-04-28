@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from textual.widgets import DataTable
+from textual.widgets import Button, DataTable
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.state import ExistingKey, ExistingKeys
@@ -120,7 +120,6 @@ class TestKeyPickScreen:
 
     async def test_no_separate_action_buttons(self):
         # Plan: "No separate buttons. Each card IS the action."
-        from textual.widgets import Button
         async with mounted(KeyPickScreen, gs_key_pick(ssh_keys=(ssh(),))) as pilot:
             standalone = [
                 b for b in pilot.app.screen.query(Button)

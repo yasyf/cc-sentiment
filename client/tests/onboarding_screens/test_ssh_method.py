@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from textual.widgets import Button, Input
+from textual.widgets import Button, DataTable, Input
 
 from cc_sentiment.onboarding import Stage, State as GlobalState
 from cc_sentiment.onboarding.state import (
@@ -143,6 +143,5 @@ class TestSshMethodScreen:
             assert not has_text(pilot, "Documentation")
 
     async def test_no_comparison_table(self):
-        from textual.widgets import DataTable
         async with mounted(SshMethodScreen, gs_ssh_method()) as pilot:
             assert not pilot.app.screen.query(DataTable)

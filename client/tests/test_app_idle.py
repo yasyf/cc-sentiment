@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from cc_sentiment.models import AppState, ContributorId, GPGConfig, SSHConfig
 from cc_sentiment.repo import Repository
@@ -26,7 +26,6 @@ async def test_auto_open_dashboard_opens_url_after_delay(tmp_path: Path, auth_ok
     db_path = tmp_path / "records.db"
 
     monkeypatch.setattr(DashboardScreen, "AUTO_OPEN_DASHBOARD_DELAY_SECONDS", 0.0)
-    monkeypatch.setattr(CCSentimentApp, "open_url", MagicMock())
 
     with patch("cc_sentiment.tui.dashboard.screen.EngineFactory.resolve", return_value="mlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
@@ -37,11 +36,9 @@ async def test_auto_open_dashboard_opens_url_after_delay(tmp_path: Path, auth_ok
             app.open_url.assert_called_once_with(DASHBOARD_URL)
 
 
-async def test_action_open_dashboard_opens_browser(tmp_path: Path, auth_ok, monkeypatch):
+async def test_action_open_dashboard_opens_browser(tmp_path: Path, auth_ok):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
-
-    monkeypatch.setattr(CCSentimentApp, "open_url", MagicMock())
 
     with patch("cc_sentiment.tui.dashboard.screen.EngineFactory.resolve", return_value="mlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
+from afinn import Afinn
 
 from cc_sentiment.highlight import Highlighter, HighlightSpan, WindowedSlice
 
@@ -28,7 +29,6 @@ def real_nlp(monkeypatch):
 
 @pytest.fixture
 def real_lexicon(monkeypatch):
-    from afinn import Afinn
     monkeypatch.setattr(
         "cc_sentiment.lexicon.Lexicon.afinn",
         Afinn(language="en", emoticons=False),

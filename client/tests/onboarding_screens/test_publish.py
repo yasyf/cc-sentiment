@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from textual.widgets import Button
+from textual.widgets import Button, DataTable, Input
 
 from cc_sentiment.onboarding import Stage, State as GlobalState
 from cc_sentiment.onboarding.state import (
@@ -76,7 +76,6 @@ class TestPublishScreen:
             assert "Watching for your gist" in str(watcher.renderable)
 
     async def test_no_url_input(self):
-        from textual.widgets import Input
         async with mounted(PublishScreen, gs_publish()) as pilot:
             inputs = [i for i in pilot.app.screen.query(Input) if i.id != "username-input"]
             assert not inputs
@@ -91,7 +90,6 @@ class TestPublishScreen:
             assert not has_text(pilot, "Elapsed")
 
     async def test_no_debug_table(self):
-        from textual.widgets import DataTable
         async with mounted(PublishScreen, gs_publish()) as pilot:
             assert not pilot.app.screen.query(DataTable)
 

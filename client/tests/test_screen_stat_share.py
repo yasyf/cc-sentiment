@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
+import anyio
 from textual.app import App
 from textual.widgets import Button
 
@@ -11,6 +13,7 @@ from cc_sentiment.models import (
     GistConfig,
     GPGConfig,
     MyStat,
+    ShareMintResponse,
     SSHConfig,
 )
 from cc_sentiment.tui.dashboard.popovers import StatShareScreen
@@ -46,7 +49,6 @@ class StatShareHarness(App[None]):
 
 
 def stub_mint_share(share_id: str = "sh-abc123") -> AsyncMock:
-    from cc_sentiment.models import ShareMintResponse
     return AsyncMock(return_value=ShareMintResponse(
         id=share_id,
         url=f"https://sentiments.cc/share/{share_id}",
@@ -64,9 +66,8 @@ async def test_stat_share_renders_stat_text():
             assert "nicer to Claude than 72% of developers" in text
 
 
-async def test_stat_share_tweet_button_opens_share_url(monkeypatch):
+async def test_stat_share_tweet_button_opens_share_url():
     harness = StatShareHarness(GITHUB_CONFIG, STAT)
-    monkeypatch.setattr(StatShareHarness, "open_url", MagicMock())
     with patch("cc_sentiment.tui.dashboard.popovers.stat_share.Uploader.mint_share", new=stub_mint_share("sh-xyz789")):
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
@@ -80,14 +81,12 @@ async def test_stat_share_tweet_button_opens_share_url(monkeypatch):
     assert "nicer+to+Claude" in url or "nicer%20to%20Claude" in url
 
 
-async def test_stat_share_tweet_button_disabled_until_mint_resolves(monkeypatch):
+async def test_stat_share_tweet_button_disabled_until_mint_resolves():
     harness = StatShareHarness(GITHUB_CONFIG, STAT)
-    monkeypatch.setattr(StatShareHarness, "open_url", MagicMock())
-    mint_event = __import__("anyio").Event()
+    mint_event = anyio.Event()
 
     async def slow_mint(self, config):
         await mint_event.wait()
-        from cc_sentiment.models import ShareMintResponse
         return ShareMintResponse(id="sh-late", url="https://sentiments.cc/share/sh-late")
 
     with patch("cc_sentiment.tui.dashboard.popovers.stat_share.Uploader.mint_share", new=slow_mint):
@@ -105,8 +104,6 @@ async def test_stat_share_tweet_button_disabled_until_mint_resolves(monkeypatch)
 
 
 async def test_stat_share_surfaces_signing_failure_on_label():
-    import subprocess
-
     harness = StatShareHarness(GITHUB_CONFIG, STAT)
     failing_mint = AsyncMock(
         side_effect=subprocess.CalledProcessError(1, ["ssh-keygen"])
@@ -130,9 +127,8 @@ async def test_stat_share_surfaces_signing_timeout_on_label():
             assert tweet.disabled is True
 
 
-async def test_stat_share_skip_dismisses_without_opening_browser(monkeypatch):
+async def test_stat_share_skip_dismisses_without_opening_browser():
     harness = StatShareHarness(GITHUB_CONFIG, STAT)
-    monkeypatch.setattr(StatShareHarness, "open_url", MagicMock())
     with patch("cc_sentiment.tui.dashboard.popovers.stat_share.Uploader.mint_share", new=stub_mint_share()):
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
@@ -142,9 +138,8 @@ async def test_stat_share_skip_dismisses_without_opening_browser(monkeypatch):
     harness.open_url.assert_not_called()
 
 
-async def test_stat_share_escape_dismisses(monkeypatch):
+async def test_stat_share_escape_dismisses():
     harness = StatShareHarness(GITHUB_CONFIG, STAT)
-    monkeypatch.setattr(StatShareHarness, "open_url", MagicMock())
     with patch("cc_sentiment.tui.dashboard.popovers.stat_share.Uploader.mint_share", new=stub_mint_share()):
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)

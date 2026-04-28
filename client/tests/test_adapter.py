@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import struct
+from datetime import datetime, timezone
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -9,6 +11,13 @@ import orjson
 import pytest
 
 from cc_sentiment.adapter import AdapterCodec
+from cc_sentiment.engines import EngineFactory
+from cc_sentiment.models import (
+    BucketIndex,
+    ConversationBucket,
+    SessionId,
+    UserMessage,
+)
 
 FIXTURES: Path = Path(__file__).parent / "fixtures"
 F32_SAMPLE: Path = FIXTURES / "adapter_f32_sample.safetensors"
@@ -45,8 +54,6 @@ class TestAdapterCodecRoundtrip:
         assert AdapterCodec.dtype() == "BF16"
 
     def test_rejects_mixed_dtype(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        import struct
-
         mixed_header = {
             "a": {"dtype": "F32", "shape": [4], "data_offsets": [0, 16]},
             "b": {"dtype": "BF16", "shape": [4], "data_offsets": [16, 24]},
@@ -100,16 +107,6 @@ class TestSmokeEvalAccuracy:
             pytest.skip("metadata.json not shipped yet (no production adapter ready)")
 
     async def _predict_all(self) -> list[tuple[int, int, str]]:
-        from datetime import datetime, timezone
-
-        from cc_sentiment.engines import EngineFactory
-        from cc_sentiment.models import (
-            BucketIndex,
-            ConversationBucket,
-            SessionId,
-            UserMessage,
-        )
-
         samples = [
             orjson.loads(line) for line in SMOKE_EVAL.read_text().splitlines() if line.strip()
         ]

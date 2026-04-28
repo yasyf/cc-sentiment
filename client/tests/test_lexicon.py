@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import pytest
+from afinn import Afinn
 
 from cc_sentiment.lexicon import Lexicon
 
 
 @pytest.fixture
 def real_lexicon(monkeypatch):
-    from afinn import Afinn
     monkeypatch.setattr(
         "cc_sentiment.lexicon.Lexicon.afinn",
         Afinn(language="en", emoticons=False),
