@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from typing import Any
 
 import sentry_sdk
 from textual.app import App
@@ -38,7 +40,14 @@ class CCSentimentApp(App[None]):
             sentry_sdk.capture_exception(error)
         super()._handle_exception(error)
 
+    @staticmethod
+    def _loop_exception_handler(loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+        if isinstance(context.get("exception"), asyncio.InvalidStateError):
+            return
+        loop.default_exception_handler(context)
+
     async def on_mount(self) -> None:
+        asyncio.get_running_loop().set_exception_handler(self._loop_exception_handler)
         self.title = "cc-sentiment"
         if self.setup_only:
             await self.push_screen(OnboardingScreen(self.state), lambda _: self.exit())
