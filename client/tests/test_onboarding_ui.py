@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
-from textual.widget import Widget
+from textual.screen import Screen as TextualScreen
 
 from cc_sentiment.onboarding import Stage
 from cc_sentiment.onboarding.ui import Screen
@@ -23,13 +23,13 @@ def test_concrete_subclass_satisfies_contract():
         STAGE = Stage.WELCOME
         State = WelcomeState
 
-        def screen(self) -> Widget:
-            return Widget()
+        def screen(self) -> TextualScreen:
+            return TextualScreen()
 
     instance = WelcomeScreen()
     assert instance.STAGE is Stage.WELCOME
     assert instance.State is WelcomeState
-    assert isinstance(instance.screen(), Widget)
+    assert isinstance(instance.screen(), TextualScreen)
 
 
 def test_stage_class_attr_works_as_match_pattern():
@@ -37,15 +37,15 @@ def test_stage_class_attr_works_as_match_pattern():
         STAGE = Stage.WELCOME
         State = type("State", (), {})
 
-        def screen(self) -> Widget:
-            return Widget()
+        def screen(self) -> TextualScreen:
+            return TextualScreen()
 
     class TroubleScreen(Screen):
         STAGE = Stage.TROUBLE
         State = type("State", (), {})
 
-        def screen(self) -> Widget:
-            return Widget()
+        def screen(self) -> TextualScreen:
+            return TextualScreen()
 
     def dispatch(stage: Stage) -> str:
         match stage:

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import sys
-import webbrowser
 from functools import cached_property
 from typing import ClassVar
 
@@ -40,23 +38,6 @@ class Capabilities:
     @cached_property
     def has_brew(self) -> bool:
         return self._has_tool("brew")
-
-    @cached_property
-    def can_clipboard(self) -> bool:
-        match sys.platform:
-            case "darwin":
-                return self._has_tool("pbcopy")
-            case "win32":
-                return self._has_tool("clip")
-            case _:
-                return any(self._has_tool(t) for t in ("wl-copy", "xclip", "xsel"))
-
-    @cached_property
-    def can_open_browser(self) -> bool:
-        try:
-            return webbrowser.get() is not None
-        except webbrowser.Error:
-            return False
 
     @staticmethod
     def _has_tool(name: str) -> bool:

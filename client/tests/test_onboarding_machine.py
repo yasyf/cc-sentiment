@@ -48,8 +48,6 @@ CAPABILITY_DEFAULTS: dict[str, bool] = {
     "has_gh": False,
     "gh_authenticated": False,
     "has_brew": False,
-    "can_clipboard": True,
-    "can_open_browser": True,
 }
 
 

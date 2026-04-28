@@ -44,25 +44,6 @@ class TestProperties:
             run.return_value.returncode = 0
             assert Capabilities().gh_authenticated is True
 
-    def test_clipboard_macos_uses_pbcopy(self):
-        with patch("cc_sentiment.onboarding.capabilities.shutil.which", side_effect=has_only("pbcopy")), \
-             patch("cc_sentiment.onboarding.capabilities.sys.platform", "darwin"):
-            assert Capabilities().can_clipboard is True
-
-    def test_clipboard_linux_accepts_any_of_three(self):
-        with patch("cc_sentiment.onboarding.capabilities.shutil.which", side_effect=has_only("xsel")), \
-             patch("cc_sentiment.onboarding.capabilities.sys.platform", "linux"):
-            assert Capabilities().can_clipboard is True
-
-    def test_browser_falls_back_to_false_on_error(self):
-        import webbrowser
-        with patch(
-            "cc_sentiment.onboarding.capabilities.webbrowser.get",
-            side_effect=webbrowser.Error("none"),
-        ):
-            assert Capabilities().can_open_browser is False
-
-
 class TestCaching:
     def test_property_evaluated_once_then_memoized(self):
         with patch("cc_sentiment.onboarding.capabilities.shutil.which", return_value="/usr/bin/ssh-keygen") as which:
