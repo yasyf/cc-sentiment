@@ -18,7 +18,7 @@ class TestInitialScreen:
     async def test_status_line_renders_checking_text(self):
         async with mounted(InitialScreen, gs_initial()) as pilot:
             status = pilot.app.screen.query_one("#status")
-            assert "Checking your setup" in str(status.renderable)
+            assert "Checking your setup" in str(status.render())
 
     async def test_no_buttons(self):
         async with mounted(InitialScreen, gs_initial()) as pilot:

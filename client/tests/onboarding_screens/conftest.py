@@ -58,17 +58,23 @@ async def mounted(
         yield pilot
 
 
+def text_of(widget) -> str:
+    """Pull rendered text from a widget (Textual 8.x: Static.render() / Button.label)."""
+    render = getattr(widget, "render", None)
+    if callable(render):
+        try:
+            return str(render())
+        except Exception:
+            pass
+    label = getattr(widget, "label", None)
+    if label is not None:
+        return str(getattr(label, "plain", label))
+    return ""
+
+
 def texts_in(pilot: Pilot[None]) -> list[str]:
-    """Flat list of every Static-like widget's rendered text. Used for forbidden-text assertions."""
-    out: list[str] = []
-    for widget in pilot.app.screen.walk_children():
-        renderable = getattr(widget, "renderable", None)
-        if renderable is not None:
-            out.append(str(renderable))
-        label = getattr(widget, "label", None)
-        if label is not None:
-            out.append(str(label))
-    return out
+    """Flat list of every widget's rendered text. Used for forbidden-text assertions."""
+    return [text for widget in pilot.app.screen.walk_children() if (text := text_of(widget))]
 
 
 def has_text(pilot: Pilot[None], needle: str) -> bool:

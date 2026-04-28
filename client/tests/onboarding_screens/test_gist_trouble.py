@@ -23,13 +23,13 @@ class TestGistTroubleScreen:
     async def test_title(self):
         async with mounted(GistTroubleScreen, gs_gist_trouble()) as pilot:
             assert (
-                str(pilot.app.screen.query_one("#title").renderable)
+                str(pilot.app.screen.query_one("#title").render())
                 == "Still watching for your gist"
             )
 
     async def test_body_explains_typo_likely(self):
         async with mounted(GistTroubleScreen, gs_gist_trouble()) as pilot:
-            body = str(pilot.app.screen.query_one("#body").renderable)
+            body = str(pilot.app.screen.query_one("#body").render())
             assert "GitHub usually takes a moment" in body
             assert "username" in body
             assert "never find it" in body

@@ -19,7 +19,7 @@ class TestUserFormScreen:
         # Plan: "the title IS the question" — no body paragraph above input.
         async with mounted(UserFormScreen, gs_user_form()) as pilot:
             title = pilot.app.screen.query_one("#title")
-            assert str(title.renderable) == "What's your GitHub username?"
+            assert str(title.render()) == "What's your GitHub username?"
 
     async def test_no_body_paragraph(self):
         async with mounted(UserFormScreen, gs_user_form()) as pilot:
@@ -62,7 +62,7 @@ class TestUserFormScreen:
         # Status only appears for validating / errors — not on first render.
         async with mounted(UserFormScreen, gs_user_form()) as pilot:
             status = pilot.app.screen.query("#status")
-            assert not status or not str(status[0].renderable).strip()
+            assert not status or not str(status[0].render()).strip()
 
     async def test_no_table(self):
         async with mounted(UserFormScreen, gs_user_form()) as pilot:

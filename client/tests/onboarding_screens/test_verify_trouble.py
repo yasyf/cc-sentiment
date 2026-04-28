@@ -23,7 +23,7 @@ class TestVerifyTroubleScreen:
     async def test_title(self):
         async with mounted(VerifyTroubleScreen, gs_verify_trouble()) as pilot:
             assert (
-                str(pilot.app.screen.query_one("#title").renderable)
+                str(pilot.app.screen.query_one("#title").render())
                 == "We couldn't verify your signature"
             )
 
@@ -45,23 +45,23 @@ class TestVerifyTroubleScreen:
 
     async def test_message_key_not_found(self):
         async with mounted(VerifyTroubleScreen, gs_verify_trouble("key-not-found")) as pilot:
-            msg = str(pilot.app.screen.query_one("#message").renderable)
+            msg = str(pilot.app.screen.query_one("#message").render())
             assert "couldn't see your published signature" in msg
 
     async def test_message_signature_failed(self):
         async with mounted(VerifyTroubleScreen, gs_verify_trouble("signature-failed")) as pilot:
-            msg = str(pilot.app.screen.query_one("#message").renderable)
+            msg = str(pilot.app.screen.query_one("#message").render())
             assert "signature wasn't accepted" in msg
 
     async def test_message_rate_limited(self):
         async with mounted(VerifyTroubleScreen, gs_verify_trouble("rate-limited")) as pilot:
-            msg = str(pilot.app.screen.query_one("#message").renderable)
+            msg = str(pilot.app.screen.query_one("#message").render())
             assert "busy" in msg
             assert "Wait a minute" in msg
 
     async def test_message_unknown_fallback(self):
         async with mounted(VerifyTroubleScreen, gs_verify_trouble("unknown")) as pilot:
-            msg = str(pilot.app.screen.query_one("#message").renderable)
+            msg = str(pilot.app.screen.query_one("#message").render())
             assert "don't recognize" in msg
 
     # ─── Forbidden ───────────────────────────────────────────────────────

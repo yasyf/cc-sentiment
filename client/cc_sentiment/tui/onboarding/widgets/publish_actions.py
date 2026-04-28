@@ -51,7 +51,9 @@ class PublishActions(Section):
         self.no_github_label = no_github_label
 
     def compose(self) -> ComposeResult:
-        yield Button(self.open_label, id="open-btn", variant="primary")
+        btn = Button(self.open_label, id="open-btn", variant="primary")
+        btn.url = self.open_url
+        yield btn
         yield LinkRow(self.copy_label, id="copy-again-link")
         if self.show_no_github:
             yield LinkRow(self.no_github_label, id="no-github-link")

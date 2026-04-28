@@ -22,19 +22,19 @@ class TestInboxScreen:
     async def test_title_says_check_inbox(self):
         async with mounted(InboxScreen, gs_inbox()) as pilot:
             assert (
-                str(pilot.app.screen.query_one("#title").renderable) == "Check your inbox"
+                str(pilot.app.screen.query_one("#title").render()) == "Check your inbox"
             )
 
     async def test_body_includes_email_address(self):
         async with mounted(InboxScreen, gs_inbox("alice@example.com")) as pilot:
-            body = str(pilot.app.screen.query_one("#body").renderable)
+            body = str(pilot.app.screen.query_one("#body").render())
             assert "alice@example.com" in body
             assert "Open it" in body
 
     async def test_polling_status_present(self):
         async with mounted(InboxScreen, gs_inbox()) as pilot:
             status = pilot.app.screen.query_one("#polling-status")
-            assert "Waiting for verification" in str(status.renderable)
+            assert "Waiting for verification" in str(status.render())
 
     async def test_no_primary_button(self):
         # Plan: "NONE primary. The screen passively polls". Stricter: no buttons

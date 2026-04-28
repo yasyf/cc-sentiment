@@ -1,16 +1,73 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from textual import screen as t
+from textual.app import ComposeResult
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
+from cc_sentiment.tui.onboarding.widgets import WatcherRow
+from cc_sentiment.tui.widgets.body import Body
+from cc_sentiment.tui.widgets.card_screen import CardScreen
+from cc_sentiment.tui.widgets.link_row import LinkRow
 
 
 @dataclass(frozen=True)
 class State(BaseState):
     pass
+
+
+class InboxView(CardScreen[None]):
+    DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
+    InboxView > Card { min-width: 60; max-width: 70; }
+    InboxView LinkRow { margin: 1 0 0 0; }
+    """
+
+    SECONDARY_LINKS_DELAY_SECONDS: ClassVar[float] = 60.0
+    STATUS_ROTATION_SECONDS: ClassVar[float] = 10.0
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        body: str,
+        waiting_label: str,
+        rotation: tuple[str, ...],
+        different_email_label: str,
+        recheck_label: str,
+        rate_limit_text: str,
+    ) -> None:
+        super().__init__()
+        self.title = title
+        self.body_text = body
+        self.waiting_label = waiting_label
+        self.rotation = rotation
+        self.different_email_label = different_email_label
+        self.recheck_label = recheck_label
+        self.rate_limit_text = rate_limit_text
+        self._rotation_index = 0
+
+    def compose_card(self) -> ComposeResult:
+        yield Body(self.body_text, id="body")
+        yield WatcherRow(self.waiting_label, id="polling-status", rate_limit_text=self.rate_limit_text)
+        yield LinkRow(self.different_email_label, id="different-email-link", classes="muted")
+        yield LinkRow(self.recheck_label, id="recheck-link", classes="muted")
+
+    def on_mount(self) -> None:
+        self.query_one("#different-email-link", LinkRow).display = False
+        self.query_one("#recheck-link", LinkRow).display = False
+        self.set_timer(self.SECONDARY_LINKS_DELAY_SECONDS, self._reveal_secondary_links)
+        self.set_interval(self.STATUS_ROTATION_SECONDS, self._rotate_status)
+
+    def _reveal_secondary_links(self) -> None:
+        self.query_one("#different-email-link", LinkRow).display = True
+        self.query_one("#recheck-link", LinkRow).display = True
+
+    def _rotate_status(self) -> None:
+        self._rotation_index = (self._rotation_index + 1) % len(self.rotation)
+        self.query_one("#polling-status", WatcherRow).text = self.rotation[self._rotation_index]
 
 
 class InboxScreen(Screen[State]):
@@ -78,4 +135,13 @@ class InboxScreen(Screen[State]):
           - On a transient rate-limit during polling, a tiny muted note
             appears: "Service busy — retrying soon." Polling continues.
         """
-        ...
+        s = self.strings()
+        return InboxView(
+            title=s["title"],
+            body=s["body"].format(email=gs.identity.email),
+            waiting_label=s["waiting_label"],
+            rotation=(s["waiting_label"], s["still_waiting_label"], s["taking_a_moment_label"]),
+            different_email_label=s["different_email_link"],
+            recheck_label=s["recheck_link"],
+            rate_limit_text=s["rate_limit_note"],
+        )

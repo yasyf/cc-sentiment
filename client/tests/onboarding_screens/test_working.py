@@ -17,12 +17,12 @@ class TestWorkingScreen:
 
     async def test_title_renders(self):
         async with mounted(WorkingScreen, gs_working()) as pilot:
-            assert str(pilot.app.screen.query_one("#title").renderable) == "Setting up…"
+            assert str(pilot.app.screen.query_one("#title").render()) == "Setting up…"
 
     async def test_status_line_present(self):
         async with mounted(WorkingScreen, gs_working()) as pilot:
             status = pilot.app.screen.query_one("#status")
-            assert "Creating your signature" in str(status.renderable)
+            assert "Creating your signature" in str(status.render())
 
     async def test_no_buttons(self):
         # Plan: "NONE. The screen has no buttons".

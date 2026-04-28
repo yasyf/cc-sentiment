@@ -1,16 +1,84 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from textual import screen as t
+from textual.app import ComposeResult
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
+from cc_sentiment.tui.onboarding.widgets import (
+    KeyPreview,
+    PublishActions,
+    WatcherRow,
+)
+from cc_sentiment.tui.widgets.body import Body
+from cc_sentiment.tui.widgets.card_screen import CardScreen
+
+
+GIST_NEW_URL = "https://gist.github.com/new"
 
 
 @dataclass(frozen=True)
 class State(BaseState):
     pass
+
+
+class PublishView(CardScreen[None]):
+    DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
+    PublishView > Card { min-width: 60; max-width: 80; }
+    """
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        body: str,
+        key_text: str,
+        key_preview_title: str,
+        show_no_github: bool,
+        no_github_label: str,
+        open_label: str,
+        copy_label: str,
+        watch_label: str,
+        rate_limit_text: str,
+        fallback_intro: str,
+        fallback_confirm_label: str,
+        resumed: bool,
+    ) -> None:
+        super().__init__()
+        self.title = title
+        self.body_text = body
+        self.key_text = key_text
+        self.key_preview_title = key_preview_title
+        self.show_no_github = show_no_github
+        self.no_github_label = no_github_label
+        self.open_label = open_label
+        self.copy_label = copy_label
+        self.watch_label = watch_label
+        self.rate_limit_text = rate_limit_text
+        self.fallback_intro = fallback_intro
+        self.fallback_confirm_label = fallback_confirm_label
+        self.resumed = resumed
+
+    def compose_card(self) -> ComposeResult:
+        yield Body(self.body_text, id="body")
+        yield KeyPreview(self.key_text, title=self.key_preview_title)
+        yield PublishActions(
+            open_url=GIST_NEW_URL,
+            show_no_github=self.show_no_github,
+            open_label=self.open_label,
+            copy_label=self.copy_label,
+            no_github_label=self.no_github_label,
+        )
+        yield WatcherRow(self.watch_label, rate_limit_text=self.rate_limit_text)
+
+    def on_mount(self) -> None:
+        if self.resumed:
+            self.add_class("resumed")
+            self.app.copy_to_clipboard(self.key_text)
+            self.app.open_url(GIST_NEW_URL)
 
 
 class PublishScreen(Screen[State]):
@@ -108,4 +176,20 @@ class PublishScreen(Screen[State]):
             continuing").
           - No eager verify before a candidate gist exists (per plan).
         """
-        ...
+        s = self.strings()
+        key_text = gs.selected.key.fingerprint if gs.selected and gs.selected.key else ""
+        return PublishView(
+            title=s["title"],
+            body=s["body"],
+            key_text=key_text,
+            key_preview_title=s["key_preview_title"],
+            show_no_github=caps.has_gpg,
+            no_github_label=s["no_github_link"],
+            open_label=s["open_button"],
+            copy_label=s["copy_again_link"],
+            watch_label=s["watch_label"],
+            rate_limit_text=s["rate_limit_note"],
+            fallback_intro=s["fallback_intro"],
+            fallback_confirm_label=s["fallback_confirm_button"],
+            resumed=gs.resumed_from_pending,
+        )

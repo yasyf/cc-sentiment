@@ -32,16 +32,9 @@ from cc_sentiment.signing import (
     SSHBackend,
 )
 from cc_sentiment.tui.popovers.dialog import Dialog
-from cc_sentiment.tui.legacy.setup.alternate import AlternateStageMixin
-from cc_sentiment.tui.legacy.setup.blocked import BlockedStageMixin
-from cc_sentiment.tui.legacy.setup.done import DoneStageMixin
 from cc_sentiment.tui.legacy.setup.pending import PendingLifecycleMixin
-from cc_sentiment.tui.legacy.setup.publish import PublishStageMixin
 from cc_sentiment.tui.legacy.setup.resume import ResumeMixin
-from cc_sentiment.tui.legacy.setup.trouble import TroubleStageMixin
 from cc_sentiment.tui.legacy.setup.verify import VerifyMixin
-from cc_sentiment.tui.legacy.setup.welcome import WelcomeStageMixin
-from cc_sentiment.tui.legacy.setup.working import WorkingStageMixin
 from cc_sentiment.tui.legacy.setup_helpers import (
     DiscoveryRunner,
     IdentityProbe,
@@ -73,13 +66,6 @@ Config = SSHConfig | GPGConfig | GistConfig | GistGPGConfig
 
 
 class SetupScreen(
-    WelcomeStageMixin,
-    AlternateStageMixin,
-    WorkingStageMixin,
-    PublishStageMixin,
-    BlockedStageMixin,
-    TroubleStageMixin,
-    DoneStageMixin,
     PendingLifecycleMixin,
     ResumeMixin,
     VerifyMixin,

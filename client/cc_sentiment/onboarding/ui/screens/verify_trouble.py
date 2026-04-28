@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from textual import screen as t
+from textual.app import ComposeResult
+from textual.containers import Center
+from textual.widgets import Button
 
 from cc_sentiment.onboarding import (
     Capabilities,
@@ -10,12 +14,35 @@ from cc_sentiment.onboarding import (
     State as GlobalState,
     VerifyTimeout,
 )
+from cc_sentiment.onboarding.state import VerifyErrorCode
 from cc_sentiment.onboarding.ui import BaseState, Screen
+from cc_sentiment.tui.widgets.body import Body
+from cc_sentiment.tui.widgets.card_screen import CardScreen
+from cc_sentiment.tui.widgets.muted_line import MutedLine
 
 
 @dataclass(frozen=True)
 class State(BaseState):
     pass
+
+
+class VerifyTroubleView(CardScreen[None]):
+    DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
+    VerifyTroubleView > Card { min-width: 50; max-width: 60; }
+    VerifyTroubleView Center > Button#restart-btn { width: auto; margin: 1 0 0 0; }
+    """
+
+    def __init__(self, *, title: str, message: str, subhint: str, restart_label: str) -> None:
+        super().__init__()
+        self.title = title
+        self.message = message
+        self.subhint = subhint
+        self.restart_label = restart_label
+
+    def compose_card(self) -> ComposeResult:
+        yield Body(self.message, id="message")
+        yield MutedLine(self.subhint)
+        yield Center(Button(self.restart_label, id="restart-btn", variant="primary"))
 
 
 class VerifyTroubleScreen(Screen[State]):
@@ -36,6 +63,19 @@ class VerifyTroubleScreen(Screen[State]):
             "error_rate_limited": "sentiments.cc is busy. Wait a minute and retry.",
             "error_unknown": "sentiments.cc reported an issue we don't recognize.",
         }
+
+    @classmethod
+    def message_for(cls, error_code: VerifyErrorCode) -> str:
+        s = cls.strings()
+        match error_code:
+            case "key-not-found":
+                return s["error_key_not_found"]
+            case "signature-failed":
+                return s["error_signature_failed"]
+            case "rate-limited":
+                return s["error_rate_limited"]
+            case _:
+                return s["error_unknown"]
 
     def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
         """
@@ -78,4 +118,11 @@ class VerifyTroubleScreen(Screen[State]):
           - No links to docs / support inside this card — restart is the
             single useful action.
         """
-        ...
+        s = self.strings()
+        assert isinstance(gs.trouble, VerifyTimeout)
+        return VerifyTroubleView(
+            title=s["title"],
+            message=self.message_for(gs.trouble.error_code),
+            subhint=s["subhint"],
+            restart_label=s["restart_button"],
+        )

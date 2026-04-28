@@ -1,16 +1,68 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from textual import screen as t
+from textual.app import ComposeResult
+from textual.containers import Center
+from textual.widgets import Button, Static
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
+from cc_sentiment.tui.widgets.body import Body
+from cc_sentiment.tui.widgets.card_screen import CardScreen
+
+
+SSH_DOCS_URL = "https://docs.github.com/en/authentication/connecting-to-github-with-ssh/checking-for-existing-ssh-keys"
+GPG_DOCS_URL = "https://gnupg.org/download/index.html"
 
 
 @dataclass(frozen=True)
 class State(BaseState):
     pass
+
+
+class BlockedView(CardScreen[None]):
+    DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
+    BlockedView > Card { min-width: 60; max-width: 70; }
+    BlockedView Static#install-hint {
+        width: 100%;
+        color: $text-muted;
+        margin: 1 0 1 0;
+    }
+    BlockedView Center > Button { width: auto; margin: 0 1 0 1; }
+    """
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        body: str,
+        install_hint: str,
+        install_label: str,
+        quit_label: str,
+        kind: str,
+    ) -> None:
+        super().__init__()
+        self.title = title
+        self.body_text = body
+        self.install_hint = install_hint
+        self.install_label = install_label
+        self.quit_label = quit_label
+        self.kind = kind
+
+    def compose_card(self) -> ComposeResult:
+        yield Body(self.body_text)
+        yield Static(self.install_hint, id="install-hint")
+        with Center():
+            yield Button(
+                self.install_label,
+                id="install-guide-btn",
+                variant="primary",
+                classes=self.kind,
+            )
+            yield Button(self.quit_label, id="quit-btn")
 
 
 class BlockedScreen(Screen[State]):
@@ -71,4 +123,12 @@ class BlockedScreen(Screen[State]):
           - No big red error UI, no "we can't help you" tone — we're
             just telling them what to install.
         """
-        ...
+        s = self.strings()
+        return BlockedView(
+            title=s["title"],
+            body=s["body"],
+            install_hint=s["install_hint_brew"] if caps.has_brew else s["install_hint_generic"],
+            install_label=s["install_button"],
+            quit_label=s["quit_button"],
+            kind="ssh" if not caps.has_ssh_keygen else "gpg",
+        )

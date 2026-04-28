@@ -1,16 +1,44 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from textual import screen as t
+from textual.app import ComposeResult
+from textual.containers import Horizontal
+from textual.widgets import Static
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
+from cc_sentiment.tui.widgets.card_screen import CardScreen
+from cc_sentiment.tui.widgets.pending_status import PendingSpinner
 
 
 @dataclass(frozen=True)
 class State(BaseState):
     pass
+
+
+class WorkingView(CardScreen[None]):
+    DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
+    WorkingView > Card { min-width: 50; max-width: 60; }
+    WorkingView Horizontal { width: auto; height: auto; }
+    WorkingView Horizontal > PendingSpinner { margin: 0 1 0 0; }
+    WorkingView Static#status {
+        width: auto;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, *, title: str, status: str) -> None:
+        super().__init__()
+        self.title = title
+        self._initial_status = status
+
+    def compose_card(self) -> ComposeResult:
+        with Horizontal():
+            yield PendingSpinner()
+            yield Static(self._initial_status, id="status")
 
 
 class WorkingScreen(Screen[State]):
@@ -60,4 +88,5 @@ class WorkingScreen(Screen[State]):
             same and the spinner keeps spinning. The user never sees
             the retry.
         """
-        ...
+        s = self.strings()
+        return WorkingView(title=s["title"], status=s["status_creating_key"])

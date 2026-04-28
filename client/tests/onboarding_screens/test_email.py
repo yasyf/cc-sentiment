@@ -25,13 +25,13 @@ class TestEmailScreen:
     async def test_title_asks_for_email(self):
         async with mounted(EmailScreen, gs_email()) as pilot:
             assert (
-                str(pilot.app.screen.query_one("#title").renderable)
+                str(pilot.app.screen.query_one("#title").render())
                 == "What email should we use?"
             )
 
     async def test_body_explains_one_time_link(self):
         async with mounted(EmailScreen, gs_email()) as pilot:
-            body = str(pilot.app.screen.query_one("#body").renderable)
+            body = str(pilot.app.screen.query_one("#body").render())
             assert "one-time" in body
             assert "verification" in body
 

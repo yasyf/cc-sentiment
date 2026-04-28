@@ -33,13 +33,13 @@ class TestSshMethodScreen:
     async def test_title_asks_where_to_publish(self):
         async with mounted(SshMethodScreen, gs_ssh_method()) as pilot:
             assert (
-                str(pilot.app.screen.query_one("#title").renderable)
+                str(pilot.app.screen.query_one("#title").render())
                 == "Where should we publish your signature?"
             )
 
     async def test_body_explains_why(self):
         async with mounted(SshMethodScreen, gs_ssh_method()) as pilot:
-            body = str(pilot.app.screen.query_one("#body").renderable)
+            body = str(pilot.app.screen.query_one("#body").render())
             assert "public" in body
             assert "sentiments.cc" in body
 
@@ -68,7 +68,7 @@ class TestSshMethodScreen:
     async def test_gist_subline_includes_username(self):
         async with mounted(SshMethodScreen, gs_ssh_method(username="alice")) as pilot:
             sub = pilot.app.screen.query_one("#gist-subline")
-            text = str(sub.renderable)
+            text = str(sub.render())
             assert "alice" in text
             assert "github.com/" in text
             assert "Delete it any time" in text
@@ -77,7 +77,7 @@ class TestSshMethodScreen:
         # When username is missing, the subline must not render `{username}`.
         async with mounted(SshMethodScreen, gs_ssh_method(username="")) as pilot:
             sub = pilot.app.screen.query_one("#gist-subline")
-            assert "{username}" not in str(sub.renderable)
+            assert "{username}" not in str(sub.render())
 
     async def test_username_input_placeholder_is_yasyf(self):
         async with mounted(SshMethodScreen, gs_ssh_method(username="")) as pilot:
@@ -96,7 +96,7 @@ class TestSshMethodScreen:
             fake_caps(gh_authenticated=True),
         ) as pilot:
             sub = pilot.app.screen.query_one("#gh-add-subline")
-            assert "We'll add it for you" in str(sub.renderable)
+            assert "We'll add it for you" in str(sub.render())
 
     async def test_gh_add_subline_manual_when_not_authed(self):
         async with mounted(
@@ -105,7 +105,7 @@ class TestSshMethodScreen:
             fake_caps(gh_authenticated=False),
         ) as pilot:
             sub = pilot.app.screen.query_one("#gh-add-subline")
-            assert "github.com/settings/keys" in str(sub.renderable)
+            assert "github.com/settings/keys" in str(sub.render())
 
     async def test_gh_add_de_emphasized_when_not_authed(self):
         # Plan Q&A: "de-emphasize manual if not gh-authenticated".

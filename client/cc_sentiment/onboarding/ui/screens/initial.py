@@ -1,16 +1,51 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from textual import screen as t
+from textual.app import ComposeResult
+from textual.containers import Horizontal
+from textual.widgets import Static
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
+from cc_sentiment.tui.widgets.pending_status import PendingSpinner
 
 
 @dataclass(frozen=True)
 class State(BaseState):
     pass
+
+
+class InitialView(t.Screen[None]):
+    DEFAULT_CSS: ClassVar[str] = """
+    InitialView { align: center middle; }
+    InitialView > Horizontal { width: auto; height: auto; }
+    InitialView > Horizontal > PendingSpinner { margin: 0 1 0 0; }
+    InitialView > Horizontal > Static#status {
+        width: auto;
+        color: $text-muted;
+    }
+    """
+
+    STILL_CHECKING_AFTER_SECONDS: ClassVar[float] = 2.0
+
+    def __init__(self, *, checking: str, still_checking: str) -> None:
+        super().__init__()
+        self.checking = checking
+        self.still_checking = still_checking
+
+    def compose(self) -> ComposeResult:
+        with Horizontal():
+            yield PendingSpinner()
+            yield Static(self.checking, id="status")
+
+    def on_mount(self) -> None:
+        self.set_timer(self.STILL_CHECKING_AFTER_SECONDS, self._mark_still_checking)
+
+    def _mark_still_checking(self) -> None:
+        self.query_one("#status", Static).update(self.still_checking)
 
 
 class InitialScreen(Screen[State]):
@@ -46,4 +81,5 @@ class InitialScreen(Screen[State]):
           line can update once to "Still checking…" — calm, never
           alarming.
         """
-        ...
+        s = self.strings()
+        return InitialView(checking=s["checking"], still_checking=s["still_checking"])

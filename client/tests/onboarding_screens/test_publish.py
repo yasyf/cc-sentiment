@@ -34,11 +34,11 @@ class TestPublishScreen:
 
     async def test_title(self):
         async with mounted(PublishScreen, gs_publish()) as pilot:
-            assert str(pilot.app.screen.query_one("#title").renderable) == "One more step"
+            assert str(pilot.app.screen.query_one("#title").render()) == "One more step"
 
     async def test_body_explains_clipboard_and_auto_find(self):
         async with mounted(PublishScreen, gs_publish()) as pilot:
-            body = str(pilot.app.screen.query_one("#body").renderable)
+            body = str(pilot.app.screen.query_one("#body").render())
             assert "clipboard" in body
             assert "automatically" in body
 
@@ -73,7 +73,7 @@ class TestPublishScreen:
     async def test_watcher_row_present(self):
         async with mounted(PublishScreen, gs_publish()) as pilot:
             watcher = pilot.app.screen.query_one("#watcher-row")
-            assert "Watching for your gist" in str(watcher.renderable)
+            assert "Watching for your gist" in str(watcher.render())
 
     async def test_no_url_input(self):
         async with mounted(PublishScreen, gs_publish()) as pilot:

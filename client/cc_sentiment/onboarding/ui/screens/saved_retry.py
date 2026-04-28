@@ -1,16 +1,55 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from textual import screen as t
+from textual.app import ComposeResult
+from textual.containers import Center
+from textual.widgets import Button
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
+from cc_sentiment.tui.widgets.body import Body
+from cc_sentiment.tui.widgets.card_screen import CardScreen
+from cc_sentiment.tui.widgets.link_row import LinkRow
+from cc_sentiment.tui.widgets.title import Title
 
 
 @dataclass(frozen=True)
 class State(BaseState):
     pass
+
+
+class SavedRetryView(CardScreen[None]):
+    DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
+    SavedRetryView > Card { min-width: 50; max-width: 60; }
+    SavedRetryView Center > Button#retry-btn { width: auto; margin: 1 0 1 0; }
+    """
+
+    def __init__(self, *, title: str, body: str, retry_label: str, restart_label: str) -> None:
+        super().__init__()
+        self.title = title
+        self.body_text = body
+        self.retry_label = retry_label
+        self.restart_label = restart_label
+
+    def compose(self) -> ComposeResult:
+        # Override CardScreen.compose to control title placement and not yield extra
+        from cc_sentiment.tui.widgets.card import Card
+        yield Card(
+            Title(self.title),
+            Body(self.body_text),
+            Center(Button(self.retry_label, id="retry-btn", variant="primary")),
+            LinkRow(self.restart_label, id="restart-link"),
+            title="",
+        )
+
+    def compose_card(self) -> ComposeResult:
+        return iter(())
+
+    def on_mount(self) -> None:
+        self.query_one("#retry-btn", Button).focus()
 
 
 class SavedRetryScreen(Screen[State]):
@@ -56,4 +95,10 @@ class SavedRetryScreen(Screen[State]):
           - During an in-flight retry, "Retry" disables and a tiny spinner
             sits beside it.
         """
-        ...
+        s = self.strings()
+        return SavedRetryView(
+            title=s["title"],
+            body=s["body"],
+            retry_label=s["retry_button"],
+            restart_label=s["restart_link"],
+        )

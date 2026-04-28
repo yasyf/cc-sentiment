@@ -1,16 +1,82 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from textual import screen as t
+from textual.app import ComposeResult
+from textual.containers import Center
+from textual.widgets import Button, Static
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
+from cc_sentiment.tui.onboarding.widgets import InlineUsernameRow
+from cc_sentiment.tui.widgets.body import Body
+from cc_sentiment.tui.widgets.card_screen import CardScreen
+from cc_sentiment.tui.widgets.link_row import LinkRow
 
 
 @dataclass(frozen=True)
 class State(BaseState):
     pass
+
+
+class SshMethodView(CardScreen[None]):
+    DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
+    SshMethodView > Card { min-width: 60; max-width: 70; }
+    SshMethodView Center > Button#gist-btn { width: auto; margin: 1 0 0 0; }
+    SshMethodView Static.action-subline {
+        width: 100%;
+        color: $text-muted;
+        margin: 0 0 1 0;
+    }
+    SshMethodView LinkRow#gh-add-link { margin: 1 0 0 0; }
+    """
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        body: str,
+        show_username_row: bool,
+        username: str,
+        username_label: str,
+        username_placeholder: str,
+        gist_label: str,
+        gist_subline: str,
+        gh_add_label: str,
+        gh_add_subline: str,
+        gh_add_muted: bool,
+    ) -> None:
+        super().__init__()
+        self.title = title
+        self.body_text = body
+        self.show_username_row = show_username_row
+        self.username = username
+        self.username_label = username_label
+        self.username_placeholder = username_placeholder
+        self.gist_label = gist_label
+        self.gist_subline = gist_subline
+        self.gh_add_label = gh_add_label
+        self.gh_add_subline = gh_add_subline
+        self.gh_add_muted = gh_add_muted
+
+    def compose_card(self) -> ComposeResult:
+        yield Body(self.body_text)
+        if self.show_username_row:
+            yield InlineUsernameRow(
+                current=self.username,
+                label=self.username_label,
+                placeholder=self.username_placeholder,
+            )
+        yield Center(Button(self.gist_label, id="gist-btn", variant="primary"))
+        yield Static(self.gist_subline, id="gist-subline", classes="action-subline")
+        link_classes = "muted" if self.gh_add_muted else ""
+        yield LinkRow(self.gh_add_label, id="gh-add-link", classes=link_classes)
+        yield Static(self.gh_add_subline, id="gh-add-subline", classes="action-subline")
+
+    def on_mount(self) -> None:
+        self.query_one("#gist-btn", Button).focus()
 
 
 class SshMethodScreen(Screen[State]):
@@ -94,4 +160,27 @@ class SshMethodScreen(Screen[State]):
           - Plan: "default gist; explain tradeoffs" — sub-lines under
             each option carry the tradeoff in one line each.
         """
-        ...
+        s = self.strings()
+        username = gs.identity.github_username
+        gist_subline_text = (
+            s["gist_subline"].format(username=username)
+            if username
+            else "Public gist on github.com/. Delete it any time."
+        )
+        return SshMethodView(
+            title=s["title"],
+            body=s["body"],
+            show_username_row=not gs.identity.has_username,
+            username=username,
+            username_label=s["username_label"],
+            username_placeholder=s["username_placeholder"],
+            gist_label=s["gist_button"],
+            gist_subline=gist_subline_text,
+            gh_add_label=s["gh_add_link"],
+            gh_add_subline=(
+                s["gh_add_subline_authed"]
+                if caps.gh_authenticated
+                else s["gh_add_subline_manual"]
+            ),
+            gh_add_muted=not caps.gh_authenticated,
+        )

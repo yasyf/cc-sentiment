@@ -1,16 +1,75 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from textual import screen as t
+from textual.app import ComposeResult
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
+from cc_sentiment.onboarding.state import ExistingKey
 from cc_sentiment.onboarding.ui import BaseState, Screen
+from cc_sentiment.tui.onboarding.widgets import (
+    GpgKeyCard,
+    ManagedKeyCard,
+    SshKeyCard,
+)
+from cc_sentiment.tui.widgets.card_screen import CardScreen
 
 
 @dataclass(frozen=True)
 class State(BaseState):
     pass
+
+
+class KeyPickView(CardScreen[None]):
+    DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
+    KeyPickView > Card { min-width: 60; max-width: 80; }
+    """
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        ssh_keys: tuple[ExistingKey, ...],
+        gpg_keys: tuple[ExistingKey, ...],
+        managed_recommended: bool,
+        managed_label: str,
+        managed_subline: str,
+        recommended_pill: str,
+    ) -> None:
+        super().__init__()
+        self.title = title
+        self.ssh_keys = ssh_keys
+        self.gpg_keys = gpg_keys
+        self.managed_recommended = managed_recommended
+        self.managed_label = managed_label
+        self.managed_subline = managed_subline
+        self.recommended_pill = recommended_pill
+
+    def compose_card(self) -> ComposeResult:
+        managed_focused = self.managed_recommended
+        first_focused = (not managed_focused) and bool(self.ssh_keys or self.gpg_keys)
+
+        for index, key in enumerate(self.ssh_keys):
+            yield SshKeyCard(
+                key,
+                index=index,
+                focused=first_focused and index == 0,
+            )
+        for index, key in enumerate(self.gpg_keys):
+            yield GpgKeyCard(
+                key,
+                index=index,
+                focused=first_focused and not self.ssh_keys and index == 0,
+            )
+        yield ManagedKeyCard(
+            recommended=self.managed_recommended,
+            focused=managed_focused,
+            label=self.managed_label,
+            subline=self.managed_subline,
+            recommended_label=self.recommended_pill,
+        )
 
 
 class KeyPickScreen(Screen[State]):
@@ -83,4 +142,14 @@ class KeyPickScreen(Screen[State]):
           - GPG keys with no usable email never appear here at all
             (per plan Q&A: "omit GPG keys without usable email").
         """
-        ...
+        s = self.strings()
+        usable_gpg = tuple(k for k in gs.existing_keys.gpg if k.label)
+        return KeyPickView(
+            title=s["title"],
+            ssh_keys=gs.existing_keys.ssh,
+            gpg_keys=usable_gpg,
+            managed_recommended=caps.gh_authenticated,
+            managed_label=s["managed_card_label"],
+            managed_subline=s["managed_card_subline"],
+            recommended_pill=s["recommended_pill"],
+        )

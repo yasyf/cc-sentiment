@@ -1,16 +1,52 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from textual import screen as t
+from textual.app import ComposeResult
+from textual.containers import Center
+from textual.widgets import Button, Input
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
+from cc_sentiment.tui.widgets.body import Body
+from cc_sentiment.tui.widgets.card_screen import CardScreen
 
 
 @dataclass(frozen=True)
 class State(BaseState):
     pass
+
+
+class EmailView(CardScreen[None]):
+    DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
+    EmailView > Card { min-width: 60; max-width: 70; }
+    EmailView Input#email-input { margin: 0 0 1 0; }
+    EmailView Center > Button#send-btn { width: auto; }
+    """
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        body: str,
+        prefilled_email: str,
+        send_label: str,
+    ) -> None:
+        super().__init__()
+        self.title = title
+        self.body_text = body
+        self.prefilled_email = prefilled_email
+        self.send_label = send_label
+
+    def compose_card(self) -> ComposeResult:
+        yield Body(self.body_text)
+        yield Input(value=self.prefilled_email, id="email-input")
+        yield Center(Button(self.send_label, id="send-btn", variant="primary"))
+
+    def on_mount(self) -> None:
+        self.query_one("#email-input", Input).focus()
 
 
 class EmailScreen(Screen[State]):
@@ -76,4 +112,10 @@ class EmailScreen(Screen[State]):
           - Words "GPG" / "OpenPGP" never appear in the user-facing copy
             on this screen.
         """
-        ...
+        s = self.strings()
+        return EmailView(
+            title=s["title"],
+            body=s["body"],
+            prefilled_email=gs.identity.email if gs.identity.email_usable else "",
+            send_label=s["send_button"],
+        )

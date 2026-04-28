@@ -18,12 +18,12 @@ class TestSavedRetryScreen:
     async def test_title_says_couldnt_reach_sentiments(self):
         async with mounted(SavedRetryScreen, gs_saved_retry()) as pilot:
             title = pilot.app.screen.query_one("#title")
-            assert str(title.renderable) == "Couldn't reach sentiments.cc"
+            assert str(title.render()) == "Couldn't reach sentiments.cc"
 
     async def test_body_reassures_will_try_again(self):
         async with mounted(SavedRetryScreen, gs_saved_retry()) as pilot:
             body = pilot.app.screen.query_one("#body")
-            assert "try again" in str(body.renderable).lower()
+            assert "try again" in str(body.render()).lower()
 
     async def test_retry_button_focused(self):
         async with mounted(SavedRetryScreen, gs_saved_retry()) as pilot:

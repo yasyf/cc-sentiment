@@ -52,7 +52,7 @@ class TestDoneScreen:
 
     async def test_title(self):
         async with mounted(DoneScreen, gs_done_ssh_managed_gist()) as pilot:
-            assert str(pilot.app.screen.query_one("#title").renderable) == "All set"
+            assert str(pilot.app.screen.query_one("#title").render()) == "All set"
 
     async def test_verification_card_present(self):
         async with mounted(DoneScreen, gs_done_ssh_managed_gist()) as pilot:
@@ -68,7 +68,7 @@ class TestDoneScreen:
     async def test_payload_exclusion_line(self):
         async with mounted(DoneScreen, gs_done_ssh_managed_gist()) as pilot:
             excl = pilot.app.screen.query_one("#payload-exclusion")
-            text = str(excl.renderable)
+            text = str(excl.render())
             assert "No transcript text" in text
             assert "tool inputs" in text
             assert "code" in text
@@ -103,7 +103,7 @@ class TestDoneScreen:
             gs_done_ssh_managed_gist("alice"),
             fake_caps(gh_authenticated=False),
         ) as pilot:
-            line = str(pilot.app.screen.query_one("#verification-line").renderable)
+            line = str(pilot.app.screen.query_one("#verification-line").render())
             assert "@alice" in line
             assert "via public gist" in line or "on GitHub" in line
 
@@ -113,13 +113,13 @@ class TestDoneScreen:
             gs_done_ssh_existing_gh_added("alice"),
             fake_caps(gh_authenticated=True),
         ) as pilot:
-            line = str(pilot.app.screen.query_one("#verification-line").renderable)
+            line = str(pilot.app.screen.query_one("#verification-line").render())
             assert "@alice" in line
             assert "on GitHub" in line
 
     async def test_verification_gpg_uses_fpr_short(self):
         async with mounted(DoneScreen, gs_done_gpg_email()) as pilot:
-            line = str(pilot.app.screen.query_one("#verification-line").renderable)
+            line = str(pilot.app.screen.query_one("#verification-line").render())
             # fpr[-8:] for DEADBEEFCAFE0001 is "CAFE0001"
             assert "CAFE0001" in line
 
@@ -134,5 +134,5 @@ class TestDoneScreen:
             ),
         )
         async with mounted(DoneScreen, gs_managed_gpg) as pilot:
-            line = str(pilot.app.screen.query_one("#verification-line").renderable)
+            line = str(pilot.app.screen.query_one("#verification-line").render())
             assert "CAFE0001" in line

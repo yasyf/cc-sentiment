@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from textual import screen as t
+from textual.app import ComposeResult
+from textual.containers import Center
+from textual.widgets import Button
 
 from cc_sentiment.onboarding import (
     Capabilities,
@@ -11,11 +15,56 @@ from cc_sentiment.onboarding import (
     State as GlobalState,
 )
 from cc_sentiment.onboarding.ui import BaseState, Screen
+from cc_sentiment.tui.onboarding.widgets import InlineUsernameRow
+from cc_sentiment.tui.widgets.body import Body
+from cc_sentiment.tui.widgets.card_screen import CardScreen
+from cc_sentiment.tui.widgets.link_row import LinkRow
 
 
 @dataclass(frozen=True)
 class State(BaseState):
     pass
+
+
+class GistTroubleView(CardScreen[None]):
+    DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
+    GistTroubleView > Card { min-width: 60; max-width: 70; }
+    GistTroubleView Center > Button#submit-btn { width: auto; margin: 0 0 1 0; }
+    GistTroubleView LinkRow#email-link { margin: 1 0 0 0; }
+    """
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        body: str,
+        username: str,
+        username_label: str,
+        username_placeholder: str,
+        submit_label: str,
+        show_email_link: bool,
+        email_label: str,
+    ) -> None:
+        super().__init__()
+        self.title = title
+        self.body_text = body
+        self.username = username
+        self.username_label = username_label
+        self.username_placeholder = username_placeholder
+        self.submit_label = submit_label
+        self.show_email_link = show_email_link
+        self.email_label = email_label
+
+    def compose_card(self) -> ComposeResult:
+        yield Body(self.body_text, id="body")
+        yield InlineUsernameRow(
+            current=self.username,
+            label=self.username_label,
+            placeholder=self.username_placeholder,
+        )
+        yield Center(Button(self.submit_label, id="submit-btn", variant="primary"))
+        if self.show_email_link:
+            yield LinkRow(self.email_label, id="email-link", classes="muted")
 
 
 class GistTroubleScreen(Screen[State]):
@@ -34,6 +83,7 @@ class GistTroubleScreen(Screen[State]):
                 "we'll never find it."
             ),
             "username_label": "GitHub username",
+            "username_placeholder": "yasyf",
             "submit_button": "Try this username",
             "email_link": "Use email instead →",
             "rate_limit_note": "GitHub busy. Still trying.",
@@ -85,4 +135,14 @@ class GistTroubleScreen(Screen[State]):
           - On gist API rate-limit during the still-running watcher, a
             tiny muted note appears: "GitHub busy — still trying."
         """
-        ...
+        s = self.strings()
+        return GistTroubleView(
+            title=s["title"],
+            body=s["body"],
+            username=gs.identity.github_username,
+            username_label=s["username_label"],
+            username_placeholder=s["username_placeholder"],
+            submit_label=s["submit_button"],
+            show_email_link=caps.has_gpg,
+            email_label=s["email_link"],
+        )

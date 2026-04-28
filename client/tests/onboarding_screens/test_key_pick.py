@@ -37,7 +37,7 @@ class TestKeyPickScreen:
 
     async def test_title(self):
         async with mounted(KeyPickScreen, gs_key_pick()) as pilot:
-            assert str(pilot.app.screen.query_one("#title").renderable) == "Pick your signature"
+            assert str(pilot.app.screen.query_one("#title").render()) == "Pick your signature"
 
     async def test_no_table_widget(self):
         # Plan: "Existing-key UI must be large, readable, card-based, and not table-like".
@@ -107,7 +107,7 @@ class TestKeyPickScreen:
         ) as pilot:
             assert pilot.app.screen.query("#recommended-pill")
             assert "recommended" in str(
-                pilot.app.screen.query_one("#recommended-pill").renderable
+                pilot.app.screen.query_one("#recommended-pill").render()
             )
 
     async def test_no_recommended_pill_when_not_recommended(self):

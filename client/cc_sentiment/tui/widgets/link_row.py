@@ -30,6 +30,10 @@ class LinkRow(Static):
 
     can_focus = True
 
+    @property
+    def label(self):
+        return self.render()
+
     class Pressed(Message):
         def __init__(self, link: LinkRow) -> None:
             super().__init__()

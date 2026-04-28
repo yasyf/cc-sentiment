@@ -43,3 +43,6 @@ class WatcherRow(Section):
 
     def watch_rate_limited(self, value: bool) -> None:
         self._note.display = value
+
+    def render(self) -> str:
+        return self.text

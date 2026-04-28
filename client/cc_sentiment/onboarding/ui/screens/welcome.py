@@ -1,16 +1,67 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from textual import screen as t
+from textual.app import ComposeResult
+from textual.containers import Center, Horizontal
+from textual.widgets import Button, Static
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
+from cc_sentiment.tui.widgets.body import Body
+from cc_sentiment.tui.widgets.card_screen import CardScreen
+from cc_sentiment.tui.widgets.muted_line import MutedLine
+from cc_sentiment.tui.widgets.pending_status import PendingSpinner
 
 
 @dataclass(frozen=True)
 class State(BaseState):
     pass
+
+
+class WelcomeView(CardScreen[None]):
+    DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
+    WelcomeView > Card { min-width: 60; max-width: 70; }
+    WelcomeView Center > Button#get-started-btn { width: auto; margin: 0 0 1 0; }
+    WelcomeView Horizontal#checking-row {
+        width: auto;
+        height: auto;
+        align: center middle;
+    }
+    WelcomeView Horizontal#checking-row > PendingSpinner { margin: 0 1 0 0; }
+    WelcomeView Static#checking-status {
+        width: auto;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        body: str,
+        primary_label: str,
+        checking: str,
+        saved_invalid_line: str | None,
+    ) -> None:
+        super().__init__()
+        self.title = title
+        self.body_text = body
+        self.primary_label = primary_label
+        self.checking = checking
+        self.saved_invalid_line = saved_invalid_line
+
+    def compose_card(self) -> ComposeResult:
+        if self.saved_invalid_line:
+            yield MutedLine(self.saved_invalid_line, id="saved-invalid-line")
+        yield Body(self.body_text)
+        yield Center(Button(self.primary_label, id="get-started-btn", variant="primary"))
+        with Center():
+            with Horizontal(id="checking-row"):
+                yield PendingSpinner()
+                yield Static(self.checking, id="checking-status")
 
 
 class WelcomeScreen(Screen[State]):
@@ -74,4 +125,11 @@ class WelcomeScreen(Screen[State]):
             label can shift to "Continue" so the action stays obvious.
           - No tables of detected tools, no debug rows.
         """
-        ...
+        s = self.strings()
+        return WelcomeView(
+            title=s["title"],
+            body=s["body"],
+            primary_label=s["primary_button"],
+            checking=s["checking"],
+            saved_invalid_line=s["saved_invalid_line"] if gs.has_saved_config else None,
+        )

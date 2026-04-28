@@ -33,7 +33,7 @@ class TestGhAddScreenAuto:
             GhAddScreen, gs_gh_add(), fake_caps(gh_authenticated=True)
         ) as pilot:
             assert (
-                str(pilot.app.screen.query_one("#title").renderable) == "Adding to GitHub…"
+                str(pilot.app.screen.query_one("#title").render()) == "Adding to GitHub…"
             )
 
     async def test_status_line_present(self):
@@ -41,7 +41,7 @@ class TestGhAddScreenAuto:
             GhAddScreen, gs_gh_add(), fake_caps(gh_authenticated=True)
         ) as pilot:
             status = pilot.app.screen.query_one("#status", Static)
-            assert "Adding your signature" in str(status.renderable)
+            assert "Adding your signature" in str(status.render())
 
     async def test_no_buttons_in_auto_flavor(self):
         async with mounted(
@@ -64,7 +64,7 @@ class TestGhAddScreenManual:
             GhAddScreen, gs_gh_add(), fake_caps(gh_authenticated=False)
         ) as pilot:
             assert (
-                str(pilot.app.screen.query_one("#title").renderable)
+                str(pilot.app.screen.query_one("#title").render())
                 == "Add your signature to GitHub"
             )
 
@@ -72,7 +72,7 @@ class TestGhAddScreenManual:
         async with mounted(
             GhAddScreen, gs_gh_add(), fake_caps(gh_authenticated=False)
         ) as pilot:
-            body = str(pilot.app.screen.query_one("#body").renderable)
+            body = str(pilot.app.screen.query_one("#body").render())
             assert "github.com/settings/keys" in body
 
     async def test_key_preview_present_in_manual_flavor(self):
@@ -101,7 +101,7 @@ class TestGhAddScreenManual:
             GhAddScreen, gs_gh_add(), fake_caps(gh_authenticated=False)
         ) as pilot:
             watcher = pilot.app.screen.query_one("#watcher-row")
-            assert "GitHub" in str(watcher.renderable)
+            assert "GitHub" in str(watcher.render())
 
 
 class TestGhAddScreenForbidden:

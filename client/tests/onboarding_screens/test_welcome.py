@@ -18,11 +18,11 @@ class TestWelcomeScreen:
     async def test_title_renders(self):
         async with mounted(WelcomeScreen, gs_welcome()) as pilot:
             title = pilot.app.screen.query_one("#title")
-            assert str(title.renderable) == "Set up cc-sentiment"
+            assert str(title.render()) == "Set up cc-sentiment"
 
     async def test_body_explains_signature_and_duration(self):
         async with mounted(WelcomeScreen, gs_welcome()) as pilot:
-            body = str(pilot.app.screen.query_one("#body").renderable)
+            body = str(pilot.app.screen.query_one("#body").render())
             assert "signature" in body
             assert "30 seconds" in body
             assert "confirm uploads" in body
@@ -41,7 +41,7 @@ class TestWelcomeScreen:
     async def test_checking_status_present(self):
         async with mounted(WelcomeScreen, gs_welcome()) as pilot:
             status = pilot.app.screen.query_one("#checking-status")
-            assert "Checking your setup" in str(status.renderable)
+            assert "Checking your setup" in str(status.render())
 
     async def test_saved_invalid_line_absent_when_fresh(self):
         async with mounted(WelcomeScreen, gs_welcome(has_saved_config=False)) as pilot:
@@ -50,7 +50,7 @@ class TestWelcomeScreen:
     async def test_saved_invalid_line_present_when_has_saved_config(self):
         async with mounted(WelcomeScreen, gs_welcome(has_saved_config=True)) as pilot:
             line = pilot.app.screen.query_one("#saved-invalid-line")
-            assert "needs refreshing" in str(line.renderable)
+            assert "needs refreshing" in str(line.render())
 
     async def test_saved_invalid_line_appears_above_body(self):
         # Docstring: "One extra muted line ABOVE the body".

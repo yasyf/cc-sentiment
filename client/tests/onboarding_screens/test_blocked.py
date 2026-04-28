@@ -18,20 +18,20 @@ class TestBlockedScreen:
     async def test_title(self):
         async with mounted(BlockedScreen, gs_blocked()) as pilot:
             assert (
-                str(pilot.app.screen.query_one("#title").renderable)
+                str(pilot.app.screen.query_one("#title").render())
                 == "We need an SSH client or GPG"
             )
 
     async def test_body_explains_and_instructs(self):
         async with mounted(BlockedScreen, gs_blocked()) as pilot:
-            body = str(pilot.app.screen.query_one("#body").renderable)
+            body = str(pilot.app.screen.query_one("#body").render())
             assert "install" in body
             assert "cc-sentiment setup" in body
 
     async def test_install_hint_brew_when_brew_available(self):
         async with mounted(BlockedScreen, gs_blocked(), fake_caps(has_brew=True)) as pilot:
             hint = pilot.app.screen.query_one("#install-hint")
-            text = str(hint.renderable)
+            text = str(hint.render())
             assert "brew install" in text
             assert "gnupg" in text
 
@@ -64,7 +64,7 @@ class TestBlockedScreen:
     async def test_install_hint_generic_when_no_brew(self):
         async with mounted(BlockedScreen, gs_blocked(), fake_caps(has_brew=False)) as pilot:
             hint = pilot.app.screen.query_one("#install-hint")
-            text = str(hint.renderable)
+            text = str(hint.render())
             assert "Install OpenSSH or GPG" in text
 
     async def test_install_guide_button(self):
