@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import ClassVar
 
 from .capabilities import Capabilities
 from .events import (
@@ -39,12 +40,32 @@ from .state import (
 
 
 class InvalidTransition(Exception):
-    pass
+    def __init__(self, state: State, event: Event) -> None:
+        super().__init__(f"no transition from {state.stage} for {type(event).__name__}")
 
 
-class SetupMachine:
+class Router:
+    @staticmethod
+    def main_path(state: State, caps: Capabilities) -> Stage:
+        ssh_path = caps.has_ssh_keygen and state.github_lookup_allowed
+        return (
+            Stage.WORKING if ssh_path and caps.gh_authenticated
+            else Stage.PUBLISH if ssh_path and state.identity.has_username
+            else Stage.EMAIL if caps.has_gpg
+            else Stage.USER_FORM if ssh_path
+            else Stage.BLOCKED
+        )
+
+    @staticmethod
+    def to_trouble(state: State, reason: TroubleReason) -> State:
+        return replace(state, stage=Stage.TROUBLE, trouble_reason=reason)
+
+
+class StartMachine:
+    OWNS: ClassVar[frozenset[Stage]] = frozenset({Stage.INITIAL, Stage.SAVED_RETRY})
+
     @classmethod
-    async def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
+    def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
         match (state.stage, event):
             case (Stage.INITIAL, ResumePendingGist()):
                 return replace(state, stage=Stage.PUBLISH)
@@ -62,28 +83,42 @@ class SetupMachine:
                 return state
             case (Stage.SAVED_RETRY, SavedRetryRestart()):
                 return replace(state, stage=Stage.WELCOME)
+        raise InvalidTransition(state, event)
 
+
+class DiscoveryMachine:
+    OWNS: ClassVar[frozenset[Stage]] = frozenset({Stage.WELCOME, Stage.USER_FORM})
+
+    @classmethod
+    def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
+        match (state.stage, event):
             case (Stage.WELCOME, DiscoveryComplete(auto_verified=True) as e):
                 return replace(
                     state, stage=Stage.DONE,
                     identity=e.identity, existing_keys=e.existing_keys,
                 )
             case (Stage.WELCOME, DiscoveryComplete() as e):
-                return await cls._dispatch_after_discovery(
-                    replace(state, identity=e.identity, existing_keys=e.existing_keys),
-                    caps,
+                hydrated = replace(
+                    state, identity=e.identity, existing_keys=e.existing_keys,
                 )
-
+                if hydrated.existing_keys.any_usable:
+                    return replace(hydrated, stage=Stage.KEY_PICK)
+                return replace(hydrated, stage=Router.main_path(hydrated, caps))
             case (Stage.USER_FORM, UsernameSubmitted(username=u)):
-                return await cls._route_main_path(
-                    replace(state, identity=replace(state.identity, github_username=u)),
-                    caps,
-                )
+                hydrated = replace(state, identity=replace(state.identity, github_username=u))
+                return replace(hydrated, stage=Router.main_path(hydrated, caps))
             case (Stage.USER_FORM, NoGitHubChosen()):
-                return await cls._route_main_path(
-                    replace(state, github_lookup_allowed=False), caps,
-                )
+                hydrated = replace(state, github_lookup_allowed=False)
+                return replace(hydrated, stage=Router.main_path(hydrated, caps))
+        raise InvalidTransition(state, event)
 
+
+class KeyMachine:
+    OWNS: ClassVar[frozenset[Stage]] = frozenset({Stage.KEY_PICK, Stage.SSH_METHOD})
+
+    @classmethod
+    def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
+        match (state.stage, event):
             case (Stage.KEY_PICK, KeyPicked(source=KeySource.EXISTING_SSH, key=k)):
                 return replace(
                     state, stage=Stage.SSH_METHOD,
@@ -95,39 +130,50 @@ class SetupMachine:
                     selected=SelectedKey(source=KeySource.EXISTING_GPG, key=k),
                 )
             case (Stage.KEY_PICK, KeyPicked(source=KeySource.MANAGED)):
-                return await cls._route_main_path(
-                    replace(state, selected=SelectedKey(source=KeySource.MANAGED)),
-                    caps,
-                )
-
+                hydrated = replace(state, selected=SelectedKey(source=KeySource.MANAGED))
+                return replace(hydrated, stage=Router.main_path(hydrated, caps))
             case (Stage.SSH_METHOD, MethodPicked(method=SshMethod.GIST)):
                 return replace(state, stage=Stage.PUBLISH)
             case (Stage.SSH_METHOD, MethodPicked(method=SshMethod.GH_ADD)):
                 return replace(state, stage=Stage.GH_ADD)
+        raise InvalidTransition(state, event)
 
+
+class WorkflowMachine:
+    OWNS: ClassVar[frozenset[Stage]] = frozenset({
+        Stage.WORKING, Stage.PUBLISH, Stage.GH_ADD, Stage.EMAIL, Stage.INBOX,
+    })
+
+    @classmethod
+    def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
+        match (state.stage, event):
             case (Stage.WORKING, WorkingSucceeded()):
                 return replace(state, stage=Stage.DONE)
             case (Stage.WORKING, WorkingFailed()):
-                return cls._enter_trouble(state, TroubleReason.GIST_TIMEOUT)
-
+                return Router.to_trouble(state, TroubleReason.GIST_TIMEOUT)
             case (Stage.PUBLISH, GistVerified()):
                 return replace(state, stage=Stage.DONE)
             case (Stage.PUBLISH, GistTimedOut()):
-                return cls._enter_trouble(state, TroubleReason.GIST_TIMEOUT)
-
+                return Router.to_trouble(state, TroubleReason.GIST_TIMEOUT)
             case (Stage.GH_ADD, GhAddVerified()):
                 return replace(state, stage=Stage.DONE)
             case (Stage.GH_ADD, GhAddFailed()):
-                return cls._enter_trouble(state, TroubleReason.GIST_TIMEOUT)
-
+                return Router.to_trouble(state, TroubleReason.GIST_TIMEOUT)
             case (Stage.EMAIL, EmailSent()):
                 return replace(state, stage=Stage.INBOX)
-
             case (Stage.INBOX, VerificationOk()):
                 return replace(state, stage=Stage.DONE)
             case (Stage.INBOX, VerificationTimedOut()):
-                return cls._enter_trouble(state, TroubleReason.VERIFY_TIMEOUT)
+                return Router.to_trouble(state, TroubleReason.VERIFY_TIMEOUT)
+        raise InvalidTransition(state, event)
 
+
+class TroubleMachine:
+    OWNS: ClassVar[frozenset[Stage]] = frozenset({Stage.TROUBLE})
+
+    @classmethod
+    def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
+        match (state.stage, event):
             case (Stage.TROUBLE, TroubleEditUsername(new_username=u)):
                 return replace(
                     state, stage=Stage.PUBLISH, trouble_reason=None,
@@ -137,29 +183,24 @@ class SetupMachine:
                 return replace(state, stage=Stage.EMAIL, trouble_reason=None)
             case (Stage.TROUBLE, TroubleRestart()):
                 return replace(state, stage=Stage.WELCOME, trouble_reason=None)
+        raise InvalidTransition(state, event)
 
-        raise InvalidTransition(
-            f"no transition from {state.stage} for {type(event).__name__}"
-        )
+
+SubMachine = type[StartMachine | DiscoveryMachine | KeyMachine | WorkflowMachine | TroubleMachine]
+
+
+class SetupMachine:
+    SUB_MACHINES: ClassVar[tuple[SubMachine, ...]] = (
+        StartMachine, DiscoveryMachine, KeyMachine, WorkflowMachine, TroubleMachine,
+    )
+    DISPATCH: ClassVar[dict[Stage, SubMachine]] = {
+        stage: sub for sub in SUB_MACHINES for stage in sub.OWNS
+    }
 
     @classmethod
-    def _enter_trouble(cls, state: State, reason: TroubleReason) -> State:
-        return replace(state, stage=Stage.TROUBLE, trouble_reason=reason)
-
-    @classmethod
-    async def _dispatch_after_discovery(cls, state: State, caps: Capabilities) -> State:
-        if state.existing_keys.any_usable:
-            return replace(state, stage=Stage.KEY_PICK)
-        return await cls._route_main_path(state, caps)
-
-    @classmethod
-    async def _route_main_path(cls, state: State, caps: Capabilities) -> State:
-        ssh_path = await caps.has_ssh_keygen and state.github_lookup_allowed
-        next_stage = (
-            Stage.WORKING if ssh_path and await caps.gh_authenticated
-            else Stage.PUBLISH if ssh_path and state.identity.has_username
-            else Stage.EMAIL if await caps.has_gpg
-            else Stage.USER_FORM if ssh_path
-            else Stage.BLOCKED
-        )
-        return replace(state, stage=next_stage)
+    def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
+        try:
+            sub = cls.DISPATCH[state.stage]
+        except KeyError as exc:
+            raise InvalidTransition(state, event) from exc
+        return sub.transition(state, event, caps)

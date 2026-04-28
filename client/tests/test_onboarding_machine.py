@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import Mock
+
 import pytest
 
 from cc_sentiment.onboarding import (
@@ -40,27 +42,21 @@ from cc_sentiment.onboarding import (
 )
 
 
-@pytest.fixture(autouse=True)
-def reset_caps():
-    Capabilities.reset()
-    yield
-    Capabilities.reset()
+CAPABILITY_DEFAULTS: dict[str, bool] = {
+    "has_ssh_keygen": False,
+    "has_gpg": False,
+    "has_gh": False,
+    "gh_authenticated": False,
+    "has_brew": False,
+    "can_clipboard": True,
+    "can_open_browser": True,
+}
 
 
-def with_caps(**overrides: bool) -> Capabilities:
-    seed: dict[str, bool] = {
-        "has_ssh_keygen": False,
-        "has_gpg": False,
-        "has_gh": False,
-        "gh_authenticated": False,
-        "has_brew": False,
-        "can_clipboard": True,
-        "can_open_browser": True,
-    }
-    seed.update(overrides)
-    Capabilities.reset()
-    Capabilities.seed(**seed)
-    return Capabilities()
+def fake_caps(**overrides: bool) -> Capabilities:
+    mock = Mock(spec=Capabilities)
+    mock.configure_mock(**(CAPABILITY_DEFAULTS | overrides))
+    return mock
 
 
 def state_at(stage: Stage, **overrides) -> State:
@@ -75,260 +71,259 @@ def existing_gpg(label: str = "alice@example.com") -> ExistingKey:
     return ExistingKey(fingerprint="DEADBEEF", label=label)
 
 
-async def step(state: State, event, caps: Capabilities | None = None) -> State:
-    return await SetupMachine.transition(state, event, caps or with_caps())
+def step(state: State, event, caps: Capabilities | None = None) -> State:
+    return SetupMachine.transition(state, event, caps or fake_caps())
 
 
 # ===========================================================================
-# INITIAL → DONE | SAVED_RETRY | WELCOME | PUBLISH | INBOX
+# Start subtree: INITIAL → DONE | SAVED_RETRY | WELCOME | PUBLISH | INBOX
 # ===========================================================================
 
 
 class TestInitialTransitions:
-    async def test_resume_pending_gist_to_publish(self):
-        result = await step(state_at(Stage.INITIAL), ResumePendingGist())
+    def test_resume_pending_gist_to_publish(self):
+        result = step(state_at(Stage.INITIAL), ResumePendingGist())
         assert result.stage is Stage.PUBLISH
 
-    async def test_resume_pending_email_to_inbox(self):
-        result = await step(state_at(Stage.INITIAL), ResumePendingEmail())
+    def test_resume_pending_email_to_inbox(self):
+        result = step(state_at(Stage.INITIAL), ResumePendingEmail())
         assert result.stage is Stage.INBOX
 
-    async def test_no_saved_config_to_welcome(self):
-        result = await step(state_at(Stage.INITIAL), NoSavedConfig())
+    def test_no_saved_config_to_welcome(self):
+        result = step(state_at(Stage.INITIAL), NoSavedConfig())
         assert result.stage is Stage.WELCOME
         assert result.has_saved_config is False
 
-    async def test_saved_ok_to_done(self):
-        result = await step(state_at(Stage.INITIAL), SavedConfigChecked(result="ok"))
+    def test_saved_ok_to_done(self):
+        result = step(state_at(Stage.INITIAL), SavedConfigChecked(result="ok"))
         assert result.stage is Stage.DONE
 
-    async def test_saved_invalid_to_welcome_with_flag(self):
-        result = await step(state_at(Stage.INITIAL), SavedConfigChecked(result="invalid"))
+    def test_saved_invalid_to_welcome_with_flag(self):
+        result = step(state_at(Stage.INITIAL), SavedConfigChecked(result="invalid"))
         assert result.stage is Stage.WELCOME
         assert result.has_saved_config is True
 
-    async def test_saved_unreachable_to_saved_retry(self):
-        result = await step(state_at(Stage.INITIAL), SavedConfigChecked(result="unreachable"))
+    def test_saved_unreachable_to_saved_retry(self):
+        result = step(state_at(Stage.INITIAL), SavedConfigChecked(result="unreachable"))
         assert result.stage is Stage.SAVED_RETRY
         assert result.has_saved_config is True
 
 
 # ===========================================================================
-# SAVED_RETRY → DONE | WELCOME | (stay)
+# Start subtree: SAVED_RETRY → DONE | WELCOME | (stay)
 # ===========================================================================
 
 
 class TestSavedRetryTransitions:
-    async def test_retry_ok_to_done(self):
-        result = await step(
+    def test_retry_ok_to_done(self):
+        result = step(
             state_at(Stage.SAVED_RETRY, has_saved_config=True),
             SavedConfigChecked(result="ok"),
         )
         assert result.stage is Stage.DONE
 
-    async def test_retry_invalid_to_welcome(self):
-        result = await step(
+    def test_retry_invalid_to_welcome(self):
+        result = step(
             state_at(Stage.SAVED_RETRY, has_saved_config=True),
             SavedConfigChecked(result="invalid"),
         )
         assert result.stage is Stage.WELCOME
 
-    async def test_retry_unreachable_stays(self):
+    def test_retry_unreachable_stays(self):
         prev = state_at(Stage.SAVED_RETRY, has_saved_config=True)
-        result = await step(prev, SavedConfigChecked(result="unreachable"))
-        assert result == prev
+        assert step(prev, SavedConfigChecked(result="unreachable")) == prev
 
-    async def test_restart_to_welcome(self):
-        result = await step(state_at(Stage.SAVED_RETRY), SavedRetryRestart())
+    def test_restart_to_welcome(self):
+        result = step(state_at(Stage.SAVED_RETRY), SavedRetryRestart())
         assert result.stage is Stage.WELCOME
 
 
 # ===========================================================================
-# WELCOME → DONE | KEY_PICK | WORKING | PUBLISH | EMAIL | USER_FORM | BLOCKED
+# Discovery subtree: WELCOME → DONE | KEY_PICK | WORKING | PUBLISH | EMAIL | USER_FORM | BLOCKED
 # ===========================================================================
 
 
 class TestWelcomeTransitions:
-    async def test_auto_verified_to_done(self):
+    def test_auto_verified_to_done(self):
         event = DiscoveryComplete(
             identity=Identity(github_username="alice"),
             existing_keys=ExistingKeys(ssh=(existing_ssh(),)),
             auto_verified=True,
         )
-        result = await step(
+        result = step(
             state_at(Stage.WELCOME), event,
-            with_caps(has_ssh_keygen=True, has_gh=True, gh_authenticated=True),
+            fake_caps(has_ssh_keygen=True, has_gh=True, gh_authenticated=True),
         )
         assert result.stage is Stage.DONE
         assert result.identity.github_username == "alice"
 
-    async def test_existing_keys_to_key_pick(self):
+    def test_existing_keys_to_key_pick(self):
         event = DiscoveryComplete(
             identity=Identity(github_username="alice"),
             existing_keys=ExistingKeys(ssh=(existing_ssh(),)),
         )
-        result = await step(
+        result = step(
             state_at(Stage.WELCOME), event,
-            with_caps(has_ssh_keygen=True, has_gh=True, gh_authenticated=True),
+            fake_caps(has_ssh_keygen=True, has_gh=True, gh_authenticated=True),
         )
         assert result.stage is Stage.KEY_PICK
 
-    async def test_gh_authed_to_working(self):
+    def test_gh_authed_to_working(self):
         event = DiscoveryComplete(
             identity=Identity(github_username="alice"), existing_keys=ExistingKeys(),
         )
-        result = await step(
+        result = step(
             state_at(Stage.WELCOME), event,
-            with_caps(has_ssh_keygen=True, has_gh=True, gh_authenticated=True),
+            fake_caps(has_ssh_keygen=True, has_gh=True, gh_authenticated=True),
         )
         assert result.stage is Stage.WORKING
 
-    async def test_username_no_gh_to_publish(self):
+    def test_username_no_gh_to_publish(self):
         event = DiscoveryComplete(
             identity=Identity(github_username="alice"), existing_keys=ExistingKeys(),
         )
-        result = await step(
-            state_at(Stage.WELCOME), event, with_caps(has_ssh_keygen=True),
+        result = step(
+            state_at(Stage.WELCOME), event, fake_caps(has_ssh_keygen=True),
         )
         assert result.stage is Stage.PUBLISH
 
-    async def test_no_username_with_gpg_to_email(self):
+    def test_no_username_with_gpg_to_email(self):
         event = DiscoveryComplete(identity=Identity(), existing_keys=ExistingKeys())
-        result = await step(
+        result = step(
             state_at(Stage.WELCOME), event,
-            with_caps(has_ssh_keygen=True, has_gpg=True),
+            fake_caps(has_ssh_keygen=True, has_gpg=True),
         )
         assert result.stage is Stage.EMAIL
 
-    async def test_gpg_only_to_email(self):
+    def test_gpg_only_to_email(self):
         event = DiscoveryComplete(identity=Identity(), existing_keys=ExistingKeys())
-        result = await step(state_at(Stage.WELCOME), event, with_caps(has_gpg=True))
+        result = step(state_at(Stage.WELCOME), event, fake_caps(has_gpg=True))
         assert result.stage is Stage.EMAIL
 
-    async def test_ssh_only_no_username_to_user_form(self):
+    def test_ssh_only_no_username_to_user_form(self):
         event = DiscoveryComplete(identity=Identity(), existing_keys=ExistingKeys())
-        result = await step(state_at(Stage.WELCOME), event, with_caps(has_ssh_keygen=True))
+        result = step(state_at(Stage.WELCOME), event, fake_caps(has_ssh_keygen=True))
         assert result.stage is Stage.USER_FORM
 
-    async def test_no_path_to_blocked(self):
+    def test_no_path_to_blocked(self):
         event = DiscoveryComplete(identity=Identity(), existing_keys=ExistingKeys())
-        result = await step(state_at(Stage.WELCOME), event, with_caps())
+        result = step(state_at(Stage.WELCOME), event, fake_caps())
         assert result.stage is Stage.BLOCKED
 
-    async def test_github_disallowed_with_no_gpg_to_blocked(self):
+    def test_github_disallowed_with_no_gpg_to_blocked(self):
         event = DiscoveryComplete(
             identity=Identity(github_username="alice"), existing_keys=ExistingKeys(),
         )
-        result = await step(
+        result = step(
             state_at(Stage.WELCOME, github_lookup_allowed=False), event,
-            with_caps(has_ssh_keygen=True),
+            fake_caps(has_ssh_keygen=True),
         )
         assert result.stage is Stage.BLOCKED
 
-    async def test_github_disallowed_with_gpg_to_email(self):
+    def test_github_disallowed_with_gpg_to_email(self):
         event = DiscoveryComplete(
             identity=Identity(github_username="alice"), existing_keys=ExistingKeys(),
         )
-        result = await step(
+        result = step(
             state_at(Stage.WELCOME, github_lookup_allowed=False), event,
-            with_caps(has_ssh_keygen=True, has_gpg=True),
+            fake_caps(has_ssh_keygen=True, has_gpg=True),
         )
         assert result.stage is Stage.EMAIL
 
 
 # ===========================================================================
-# USER_FORM → PUBLISH | WORKING | EMAIL | BLOCKED
+# Discovery subtree: USER_FORM → PUBLISH | WORKING | EMAIL | BLOCKED
 # ===========================================================================
 
 
 class TestUserFormTransitions:
-    async def test_username_no_gh_to_publish(self):
-        result = await step(
+    def test_username_no_gh_to_publish(self):
+        result = step(
             state_at(Stage.USER_FORM), UsernameSubmitted(username="alice"),
-            with_caps(has_ssh_keygen=True),
+            fake_caps(has_ssh_keygen=True),
         )
         assert result.stage is Stage.PUBLISH
         assert result.identity.github_username == "alice"
 
-    async def test_username_with_gh_to_working(self):
-        result = await step(
+    def test_username_with_gh_to_working(self):
+        result = step(
             state_at(Stage.USER_FORM), UsernameSubmitted(username="alice"),
-            with_caps(has_ssh_keygen=True, has_gh=True, gh_authenticated=True),
+            fake_caps(has_ssh_keygen=True, has_gh=True, gh_authenticated=True),
         )
         assert result.stage is Stage.WORKING
 
-    async def test_no_github_with_gpg_to_email(self):
-        result = await step(
+    def test_no_github_with_gpg_to_email(self):
+        result = step(
             state_at(Stage.USER_FORM), NoGitHubChosen(),
-            with_caps(has_ssh_keygen=True, has_gpg=True),
+            fake_caps(has_ssh_keygen=True, has_gpg=True),
         )
         assert result.stage is Stage.EMAIL
         assert result.github_lookup_allowed is False
 
-    async def test_no_github_without_gpg_to_blocked(self):
-        result = await step(
+    def test_no_github_without_gpg_to_blocked(self):
+        result = step(
             state_at(Stage.USER_FORM), NoGitHubChosen(),
-            with_caps(has_ssh_keygen=True),
+            fake_caps(has_ssh_keygen=True),
         )
         assert result.stage is Stage.BLOCKED
 
 
 # ===========================================================================
-# KEY_PICK → SSH_METHOD | EMAIL | WORKING | PUBLISH | EMAIL | BLOCKED
+# Key subtree: KEY_PICK → SSH_METHOD | EMAIL | WORKING | PUBLISH | EMAIL | BLOCKED
 # ===========================================================================
 
 
 class TestKeyPickTransitions:
-    async def test_existing_ssh_to_ssh_method(self):
+    def test_existing_ssh_to_ssh_method(self):
         key = existing_ssh()
-        result = await step(
+        result = step(
             state_at(Stage.KEY_PICK), KeyPicked(source=KeySource.EXISTING_SSH, key=key),
-            with_caps(has_ssh_keygen=True, has_gh=True, gh_authenticated=True),
+            fake_caps(has_ssh_keygen=True, has_gh=True, gh_authenticated=True),
         )
         assert result.stage is Stage.SSH_METHOD
         assert result.selected == SelectedKey(source=KeySource.EXISTING_SSH, key=key)
 
-    async def test_existing_gpg_to_email(self):
+    def test_existing_gpg_to_email(self):
         key = existing_gpg()
-        result = await step(
+        result = step(
             state_at(Stage.KEY_PICK), KeyPicked(source=KeySource.EXISTING_GPG, key=key),
-            with_caps(has_gpg=True),
+            fake_caps(has_gpg=True),
         )
         assert result.stage is Stage.EMAIL
         assert result.selected == SelectedKey(source=KeySource.EXISTING_GPG, key=key)
 
-    async def test_managed_with_gh_to_working(self):
-        result = await step(
+    def test_managed_with_gh_to_working(self):
+        result = step(
             state_at(Stage.KEY_PICK), KeyPicked(source=KeySource.MANAGED),
-            with_caps(has_ssh_keygen=True, has_gh=True, gh_authenticated=True),
+            fake_caps(has_ssh_keygen=True, has_gh=True, gh_authenticated=True),
         )
         assert result.stage is Stage.WORKING
         assert result.selected == SelectedKey(source=KeySource.MANAGED)
 
-    async def test_managed_with_username_no_gh_to_publish(self):
-        result = await step(
+    def test_managed_with_username_no_gh_to_publish(self):
+        result = step(
             state_at(Stage.KEY_PICK, identity=Identity(github_username="alice")),
             KeyPicked(source=KeySource.MANAGED),
-            with_caps(has_ssh_keygen=True),
+            fake_caps(has_ssh_keygen=True),
         )
         assert result.stage is Stage.PUBLISH
 
-    async def test_managed_with_gpg_to_email(self):
-        result = await step(
+    def test_managed_with_gpg_to_email(self):
+        result = step(
             state_at(Stage.KEY_PICK), KeyPicked(source=KeySource.MANAGED),
-            with_caps(has_gpg=True),
+            fake_caps(has_gpg=True),
         )
         assert result.stage is Stage.EMAIL
 
-    async def test_managed_with_no_path_to_blocked(self):
-        result = await step(
-            state_at(Stage.KEY_PICK), KeyPicked(source=KeySource.MANAGED), with_caps(),
+    def test_managed_with_no_path_to_blocked(self):
+        result = step(
+            state_at(Stage.KEY_PICK), KeyPicked(source=KeySource.MANAGED), fake_caps(),
         )
         assert result.stage is Stage.BLOCKED
 
 
 # ===========================================================================
-# SSH_METHOD → PUBLISH | GH_ADD
+# Key subtree: SSH_METHOD → PUBLISH | GH_ADD
 # ===========================================================================
 
 
@@ -340,96 +335,106 @@ class TestSshMethodTransitions:
             selected=SelectedKey(source=KeySource.EXISTING_SSH, key=existing_ssh()),
         )
 
-    async def test_gist_to_publish(self, prior_ssh_pick: State):
-        result = await step(prior_ssh_pick, MethodPicked(method=SshMethod.GIST))
-        assert result.stage is Stage.PUBLISH
+    def test_gist_to_publish(self, prior_ssh_pick: State):
+        assert step(prior_ssh_pick, MethodPicked(method=SshMethod.GIST)).stage is Stage.PUBLISH
 
-    async def test_gh_add_to_gh_add_stage(self, prior_ssh_pick: State):
-        result = await step(prior_ssh_pick, MethodPicked(method=SshMethod.GH_ADD))
-        assert result.stage is Stage.GH_ADD
+    def test_gh_add_to_gh_add_stage(self, prior_ssh_pick: State):
+        assert step(prior_ssh_pick, MethodPicked(method=SshMethod.GH_ADD)).stage is Stage.GH_ADD
 
 
 # ===========================================================================
-# WORKING / PUBLISH / GH_ADD → DONE | TROUBLE
+# Workflow subtree: WORKING / PUBLISH / GH_ADD / INBOX → DONE | TROUBLE
 # ===========================================================================
 
 
-class TestWorkingTransitions:
-    async def test_succeeded_to_done(self):
-        assert (await step(state_at(Stage.WORKING), WorkingSucceeded())).stage is Stage.DONE
+class TestWorkflowTransitions:
+    def test_working_succeeded_to_done(self):
+        assert step(state_at(Stage.WORKING), WorkingSucceeded()).stage is Stage.DONE
 
-    async def test_failed_to_trouble_gist_timeout(self):
-        result = await step(state_at(Stage.WORKING), WorkingFailed())
+    def test_working_failed_to_trouble_gist(self):
+        result = step(state_at(Stage.WORKING), WorkingFailed())
         assert result.stage is Stage.TROUBLE
         assert result.trouble_reason is TroubleReason.GIST_TIMEOUT
 
+    def test_publish_verified_to_done(self):
+        assert step(state_at(Stage.PUBLISH), GistVerified()).stage is Stage.DONE
 
-class TestPublishTransitions:
-    async def test_gist_verified_to_done(self):
-        assert (await step(state_at(Stage.PUBLISH), GistVerified())).stage is Stage.DONE
-
-    async def test_timed_out_to_trouble_gist(self):
-        result = await step(state_at(Stage.PUBLISH), GistTimedOut())
+    def test_publish_timeout_to_trouble_gist(self):
+        result = step(state_at(Stage.PUBLISH), GistTimedOut())
         assert result.stage is Stage.TROUBLE
         assert result.trouble_reason is TroubleReason.GIST_TIMEOUT
 
+    def test_gh_add_verified_to_done(self):
+        assert step(state_at(Stage.GH_ADD), GhAddVerified()).stage is Stage.DONE
 
-class TestGhAddTransitions:
-    async def test_verified_to_done(self):
-        assert (await step(state_at(Stage.GH_ADD), GhAddVerified())).stage is Stage.DONE
-
-    async def test_failed_to_trouble_gist(self):
-        result = await step(state_at(Stage.GH_ADD), GhAddFailed())
+    def test_gh_add_failed_to_trouble_gist(self):
+        result = step(state_at(Stage.GH_ADD), GhAddFailed())
         assert result.stage is Stage.TROUBLE
         assert result.trouble_reason is TroubleReason.GIST_TIMEOUT
 
+    def test_email_sent_to_inbox(self):
+        assert step(state_at(Stage.EMAIL), EmailSent()).stage is Stage.INBOX
 
-# ===========================================================================
-# EMAIL → INBOX; INBOX → DONE | TROUBLE
-# ===========================================================================
+    def test_inbox_verified_to_done(self):
+        assert step(state_at(Stage.INBOX), VerificationOk()).stage is Stage.DONE
 
-
-class TestEmailInboxTransitions:
-    async def test_email_sent_to_inbox(self):
-        assert (await step(state_at(Stage.EMAIL), EmailSent())).stage is Stage.INBOX
-
-    async def test_inbox_verified_to_done(self):
-        assert (await step(state_at(Stage.INBOX), VerificationOk())).stage is Stage.DONE
-
-    async def test_inbox_timeout_to_trouble_verify(self):
-        result = await step(state_at(Stage.INBOX), VerificationTimedOut())
+    def test_inbox_timeout_to_trouble_verify(self):
+        result = step(state_at(Stage.INBOX), VerificationTimedOut())
         assert result.stage is Stage.TROUBLE
         assert result.trouble_reason is TroubleReason.VERIFY_TIMEOUT
 
 
 # ===========================================================================
-# TROUBLE → PUBLISH | EMAIL | WELCOME
+# Trouble subtree: TROUBLE → PUBLISH | EMAIL | WELCOME
 # ===========================================================================
 
 
 class TestTroubleTransitions:
-    async def test_edit_username_to_publish_with_new_name(self):
+    def test_edit_username_to_publish_with_new_name(self):
         prev = state_at(
             Stage.TROUBLE,
             identity=Identity(github_username="old"),
             trouble_reason=TroubleReason.GIST_TIMEOUT,
         )
-        result = await step(prev, TroubleEditUsername(new_username="new"))
+        result = step(prev, TroubleEditUsername(new_username="new"))
         assert result.stage is Stage.PUBLISH
         assert result.identity.github_username == "new"
         assert result.trouble_reason is None
 
-    async def test_chose_email_to_email(self):
+    def test_chose_email_to_email(self):
         prev = state_at(Stage.TROUBLE, trouble_reason=TroubleReason.GIST_TIMEOUT)
-        result = await step(prev, TroubleChoseEmail())
+        result = step(prev, TroubleChoseEmail())
         assert result.stage is Stage.EMAIL
         assert result.trouble_reason is None
 
-    async def test_restart_to_welcome(self):
+    def test_restart_to_welcome(self):
         prev = state_at(Stage.TROUBLE, trouble_reason=TroubleReason.VERIFY_TIMEOUT)
-        result = await step(prev, TroubleRestart())
+        result = step(prev, TroubleRestart())
         assert result.stage is Stage.WELCOME
         assert result.trouble_reason is None
+
+
+# ===========================================================================
+# Dispatcher: SetupMachine routes by stage to the right sub-machine
+# ===========================================================================
+
+
+class TestDispatcher:
+    def test_every_stage_has_a_handler_except_terminal(self):
+        terminal = {Stage.DONE, Stage.BLOCKED}
+        owned = set(SetupMachine.DISPATCH)
+        assert owned | terminal == set(Stage)
+
+    def test_stages_are_disjoint_across_sub_machines(self):
+        seen: dict[Stage, type] = {}
+        for sub in SetupMachine.SUB_MACHINES:
+            for stage in sub.OWNS:
+                assert stage not in seen, f"{stage} owned by {seen[stage]} and {sub}"
+                seen[stage] = sub
+
+    def test_unknown_stage_raises(self):
+        with pytest.raises(InvalidTransition):
+            step(state_at(Stage.DONE), GistVerified())
 
 
 # ===========================================================================
@@ -438,13 +443,13 @@ class TestTroubleTransitions:
 
 
 class TestInvariants:
-    async def test_unmodeled_transition_raises(self):
+    def test_unmodeled_event_for_owned_stage_raises(self):
         with pytest.raises(InvalidTransition):
-            await step(state_at(Stage.DONE), GistVerified())
+            step(state_at(Stage.PUBLISH), TroubleRestart())
 
-    async def test_state_is_immutable(self):
+    def test_state_is_immutable(self):
         prev = state_at(Stage.INITIAL)
-        await step(prev, NoSavedConfig())
+        step(prev, NoSavedConfig())
         assert prev.stage is Stage.INITIAL
 
     def test_default_state_starts_in_initial(self):

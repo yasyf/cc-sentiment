@@ -26,7 +26,16 @@ from .events import (
     WorkingFailed,
     WorkingSucceeded,
 )
-from .machine import InvalidTransition, SetupMachine
+from .machine import (
+    DiscoveryMachine,
+    InvalidTransition,
+    KeyMachine,
+    Router,
+    SetupMachine,
+    StartMachine,
+    TroubleMachine,
+    WorkflowMachine,
+)
 from .state import (
     ExistingKey,
     ExistingKeys,
@@ -42,6 +51,7 @@ from .state import (
 __all__ = [
     "Capabilities",
     "DiscoveryComplete",
+    "DiscoveryMachine",
     "EmailSent",
     "Event",
     "ExistingKey",
@@ -52,6 +62,7 @@ __all__ = [
     "GistVerified",
     "Identity",
     "InvalidTransition",
+    "KeyMachine",
     "KeyPicked",
     "KeySource",
     "MethodPicked",
@@ -59,20 +70,24 @@ __all__ = [
     "NoSavedConfig",
     "ResumePendingEmail",
     "ResumePendingGist",
+    "Router",
     "SavedConfigChecked",
     "SavedRetryRestart",
     "SelectedKey",
     "SetupMachine",
     "SshMethod",
     "Stage",
+    "StartMachine",
     "State",
     "TroubleChoseEmail",
     "TroubleEditUsername",
+    "TroubleMachine",
     "TroubleReason",
     "TroubleRestart",
     "UsernameSubmitted",
     "VerificationOk",
     "VerificationTimedOut",
+    "WorkflowMachine",
     "WorkingFailed",
     "WorkingSucceeded",
 ]
