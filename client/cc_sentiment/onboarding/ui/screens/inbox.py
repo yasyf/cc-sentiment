@@ -10,7 +10,7 @@ from cc_sentiment.onboarding.ui import BaseState, Screen
 
 @dataclass(frozen=True)
 class State(BaseState):
-    pass
+    email: str = ""
 
 
 class InboxScreen(Screen[State]):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from textual import screen as t
 
@@ -8,9 +9,12 @@ from cc_sentiment.onboarding import Stage, State as GlobalState, TroubleReason
 from cc_sentiment.onboarding.ui import BaseState, Screen
 
 
+ErrorCode = Literal["key-not-found", "signature-failed", "rate-limited", "unknown"]
+
+
 @dataclass(frozen=True)
 class State(BaseState):
-    pass
+    error_code: ErrorCode = "unknown"
 
 
 class VerifyTroubleScreen(Screen[State]):

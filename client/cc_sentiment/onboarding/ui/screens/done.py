@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from textual import screen as t
 
@@ -8,9 +9,14 @@ from cc_sentiment.onboarding import Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
 
 
+VerificationKind = Literal["ssh-github", "gist", "gpg-github", "gpg-fpr"]
+
+
 @dataclass(frozen=True)
 class State(BaseState):
-    pass
+    verification_kind: VerificationKind = "ssh-github"
+    contributor_id: str = ""
+    fpr_short: str = ""
 
 
 class DoneScreen(Screen[State]):

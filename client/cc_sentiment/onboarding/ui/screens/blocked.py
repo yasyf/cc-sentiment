@@ -10,7 +10,8 @@ from cc_sentiment.onboarding.ui import BaseState, Screen
 
 @dataclass(frozen=True)
 class State(BaseState):
-    pass
+    has_brew: bool = False
+    needs_ssh: bool = False
 
 
 class BlockedScreen(Screen[State]):

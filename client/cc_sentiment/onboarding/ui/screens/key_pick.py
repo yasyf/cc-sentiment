@@ -4,13 +4,15 @@ from dataclasses import dataclass
 
 from textual import screen as t
 
-from cc_sentiment.onboarding import Stage, State as GlobalState
+from cc_sentiment.onboarding import ExistingKey, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
 
 
 @dataclass(frozen=True)
 class State(BaseState):
-    pass
+    existing_ssh: tuple[ExistingKey, ...] = ()
+    existing_gpg: tuple[ExistingKey, ...] = ()
+    managed_recommended: bool = False
 
 
 class KeyPickScreen(Screen[State]):

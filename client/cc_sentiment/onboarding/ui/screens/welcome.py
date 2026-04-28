@@ -10,7 +10,7 @@ from cc_sentiment.onboarding.ui import BaseState, Screen
 
 @dataclass(frozen=True)
 class State(BaseState):
-    pass
+    came_from_saved_invalid: bool = False
 
 
 class WelcomeScreen(Screen[State]):

@@ -10,7 +10,8 @@ from cc_sentiment.onboarding.ui import BaseState, Screen
 
 @dataclass(frozen=True)
 class State(BaseState):
-    pass
+    current_username: str = ""
+    has_gpg_alternative: bool = False
 
 
 class GistTroubleScreen(Screen[State]):
