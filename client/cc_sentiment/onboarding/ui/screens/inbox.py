@@ -32,7 +32,7 @@ class InboxScreen(Screen[State]):
             "still_waiting_label": "Still waiting…",
             "taking_a_moment_label": "These sometimes take a moment…",
             "different_email_link": "Send to a different email →",
-            "recheck_link": "Re-check now",
+            "recheck_link": "Check again",
             "rate_limit_note": "Service busy — retrying soon.",
         }
 

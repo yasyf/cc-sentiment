@@ -24,7 +24,7 @@ class GhAddScreen(Screen[State]):
     def strings(cls) -> dict[str, str]:
         return {
             "title_auto": "Adding to GitHub…",
-            "status_auto": "Adding key via gh CLI…",
+            "status_auto": "Adding your key…",
             "title_manual": "Add this key to GitHub",
             "body_manual": "We copied the key. Paste it on github.com/settings/keys.",
             "key_preview_title": "Verification key",

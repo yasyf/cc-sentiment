@@ -29,7 +29,7 @@ class SshMethodScreen(Screen[State]):
             "gist_button": "Publish as a gist",
             "gist_subline": "Public gist on github.com/{username}. Delete it any time.",
             "gh_add_link": "Add it to GitHub →",
-            "gh_add_subline_authed": "We'll add it via the GitHub CLI.",
+            "gh_add_subline_authed": "We'll add it for you.",
             "gh_add_subline_manual": "You'll paste it into github.com/settings/keys.",
         }
 
