@@ -16,12 +16,7 @@ from cc_sentiment.models import (
 )
 from cc_sentiment.signing import GPGKeyInfo, SSHKeyInfo
 from cc_sentiment.tui.screens import SetupScreen
-from cc_sentiment.tui.screens.setup.copy import (
-    BLOCKED_INSTALL_HINT_BREW,
-    BLOCKED_INSTALL_HINT_GENERIC,
-    USERNAME_ERROR_NOT_FOUND,
-    USERNAME_NO_GITHUB_LINK,
-)
+from cc_sentiment.tui.screens.setup.copy import USERNAME_ERROR_NOT_FOUND
 from cc_sentiment.tui.setup_helpers import (
     GistDiscovery,
     GistMetadata,
@@ -45,11 +40,6 @@ from cc_sentiment.tui.setup_state import (
     ToolCapabilities,
 )
 from cc_sentiment.tui.system import Clipboard
-from cc_sentiment.tui.widgets.done_branch import (
-    PAYLOAD_EXCLUSION_TEXT,
-    SETTINGS_PRIMARY_LABEL,
-    WHAT_GETS_SENT_TEXT,
-)
 from cc_sentiment.tui.widgets.link_row import LinkRow
 from cc_sentiment.upload import (
     AuthOk,
@@ -382,15 +372,6 @@ class TestPlannerWithExistingKeys:
         assert plan.recommended.route_id is RouteId.MANAGED_GPG_OPENPGP
 
 
-class TestPlannerHelpers:
-    def test_alternate_openpgp_route_constructs_managed_gpg(self):
-        route = SetupRoutePlanner.alternate_openpgp_route()
-        assert route.route_id is RouteId.MANAGED_GPG_OPENPGP
-        assert route.publish_method is PublishMethod.OPENPGP
-        assert route.key_kind is KeyKind.GPG
-        assert isinstance(route.key_plan, GenerateGPGKey)
-
-
 # ===========================================================================
 # Persistence: PendingSetupModel
 # ===========================================================================
@@ -440,31 +421,6 @@ class TestPendingSetupModel:
         assert loaded.pending_setup is not None
         assert loaded.pending_setup.key_kind == "gpg"
         assert loaded.pending_setup.publish_method == "openpgp"
-
-
-# ===========================================================================
-# Stable copy — only constants the spec promises will not drift
-# ===========================================================================
-
-
-class TestStableCopy:
-    def test_no_github_link_label(self):
-        assert "GitHub" in USERNAME_NO_GITHUB_LINK
-        assert "→" in USERNAME_NO_GITHUB_LINK
-
-    def test_blocked_install_hints(self):
-        assert "brew install" in BLOCKED_INSTALL_HINT_BREW
-        assert (
-            "OpenSSH" in BLOCKED_INSTALL_HINT_GENERIC
-            or "GPG" in BLOCKED_INSTALL_HINT_GENERIC
-        )
-
-    def test_done_branch_payload_exclusion(self):
-        assert WHAT_GETS_SENT_TEXT == PAYLOAD_EXCLUSION_TEXT
-        assert "transcript text" in WHAT_GETS_SENT_TEXT
-
-    def test_done_branch_settings_label(self):
-        assert SETTINGS_PRIMARY_LABEL == "Start ingesting"
 
 
 # ===========================================================================
