@@ -44,7 +44,7 @@ class InvalidTransition(Exception):
 
 class SetupMachine:
     @classmethod
-    def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
+    async def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
         match (state.stage, event):
             case (Stage.INITIAL, ResumePendingGist()):
                 return replace(state, stage=Stage.PUBLISH)
@@ -69,18 +69,18 @@ class SetupMachine:
                     identity=e.identity, existing_keys=e.existing_keys,
                 )
             case (Stage.WELCOME, DiscoveryComplete() as e):
-                return cls._dispatch_after_discovery(
+                return await cls._dispatch_after_discovery(
                     replace(state, identity=e.identity, existing_keys=e.existing_keys),
                     caps,
                 )
 
             case (Stage.USER_FORM, UsernameSubmitted(username=u)):
-                return cls._route_main_path(
+                return await cls._route_main_path(
                     replace(state, identity=replace(state.identity, github_username=u)),
                     caps,
                 )
             case (Stage.USER_FORM, NoGitHubChosen()):
-                return cls._route_main_path(
+                return await cls._route_main_path(
                     replace(state, github_lookup_allowed=False), caps,
                 )
 
@@ -95,7 +95,7 @@ class SetupMachine:
                     selected=SelectedKey(source=KeySource.EXISTING_GPG, key=k),
                 )
             case (Stage.KEY_PICK, KeyPicked(source=KeySource.MANAGED)):
-                return cls._route_main_path(
+                return await cls._route_main_path(
                     replace(state, selected=SelectedKey(source=KeySource.MANAGED)),
                     caps,
                 )
@@ -147,18 +147,18 @@ class SetupMachine:
         return replace(state, stage=Stage.TROUBLE, trouble_reason=reason)
 
     @classmethod
-    def _dispatch_after_discovery(cls, state: State, caps: Capabilities) -> State:
+    async def _dispatch_after_discovery(cls, state: State, caps: Capabilities) -> State:
         if state.existing_keys.any_usable:
             return replace(state, stage=Stage.KEY_PICK)
-        return cls._route_main_path(state, caps)
+        return await cls._route_main_path(state, caps)
 
     @classmethod
-    def _route_main_path(cls, state: State, caps: Capabilities) -> State:
-        ssh_path = caps.has_ssh_keygen and state.github_lookup_allowed
+    async def _route_main_path(cls, state: State, caps: Capabilities) -> State:
+        ssh_path = await caps.has_ssh_keygen and state.github_lookup_allowed
         next_stage = (
-            Stage.WORKING if ssh_path and caps.gh_authenticated
+            Stage.WORKING if ssh_path and await caps.gh_authenticated
             else Stage.PUBLISH if ssh_path and state.identity.has_username
-            else Stage.EMAIL if caps.has_gpg
+            else Stage.EMAIL if await caps.has_gpg
             else Stage.USER_FORM if ssh_path
             else Stage.BLOCKED
         )

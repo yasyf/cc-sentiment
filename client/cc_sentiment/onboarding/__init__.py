@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .capabilities import Capabilities, CapabilityCache, CapabilityProbe
+from .capabilities import Capabilities
 from .events import (
     DiscoveryComplete,
     EmailSent,
@@ -41,8 +41,6 @@ from .state import (
 
 __all__ = [
     "Capabilities",
-    "CapabilityCache",
-    "CapabilityProbe",
     "DiscoveryComplete",
     "EmailSent",
     "Event",
