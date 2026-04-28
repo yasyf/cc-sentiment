@@ -9,7 +9,6 @@ from textual.app import App
 
 from cc_sentiment.models import AppState
 from cc_sentiment.tui.dashboard import DashboardScreen
-from cc_sentiment.tui.legacy.system import Browser, Clipboard
 from cc_sentiment.upload import AuthOk, AuthUnauthorized
 
 
@@ -20,17 +19,13 @@ def no_real_browser_or_clipboard(monkeypatch: pytest.MonkeyPatch) -> Iterator[No
     system clipboard, or pickle a webbrowser handle. Installs fresh
     MagicMocks per test on App.open_url / App.copy_to_clipboard so any
     test can introspect calls (`pilot.app.open_url.assert_called_with(...)`)
-    without setting up its own mock. Also no-ops the legacy Browser /
-    Clipboard helpers and the underlying webbrowser module.
+    without setting up its own mock. Also no-ops the underlying webbrowser
+    module just in case.
     """
     monkeypatch.setattr(App, "open_url", MagicMock())
     monkeypatch.setattr(App, "copy_to_clipboard", MagicMock())
     monkeypatch.setattr("webbrowser.open", lambda url, *a, **kw: True)
     monkeypatch.setattr("webbrowser.get", lambda *a, **kw: object())
-    monkeypatch.setattr(Browser, "open", staticmethod(lambda url: True))
-    monkeypatch.setattr(Browser, "available", staticmethod(lambda: True))
-    monkeypatch.setattr(Clipboard, "copy", classmethod(lambda cls, text: True))
-    monkeypatch.setattr(Clipboard, "available", classmethod(lambda cls: True))
     yield
 
 

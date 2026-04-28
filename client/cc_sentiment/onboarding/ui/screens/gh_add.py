@@ -3,12 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
+from textual import on
 from textual import screen as t
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Static
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
+from cc_sentiment.onboarding.events import Event
 from cc_sentiment.onboarding.ui import BaseState, Screen
 from cc_sentiment.tui.onboarding.widgets import (
     KeyPreview,
@@ -28,7 +30,7 @@ class State(BaseState):
     pass
 
 
-class GhAddAutoView(CardScreen[None]):
+class GhAddAutoView(CardScreen[Event]):
     DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
     GhAddAutoView > Card { min-width: 50; max-width: 60; }
     GhAddAutoView Horizontal { width: auto; height: auto; }
@@ -47,7 +49,7 @@ class GhAddAutoView(CardScreen[None]):
             yield Static(self._status, id="status")
 
 
-class GhAddManualView(CardScreen[None]):
+class GhAddManualView(CardScreen[Event]):
     DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
     GhAddManualView > Card { min-width: 60; max-width: 80; }
     """
@@ -84,6 +86,18 @@ class GhAddManualView(CardScreen[None]):
             copy_label=self.copy_label,
         )
         yield WatcherRow(self.watch_label, rate_limit_text=self.rate_limit_text)
+
+    def on_mount(self) -> None:
+        self.app.copy_to_clipboard(self.key_text)
+        self.app.open_url(GH_KEYS_URL)
+
+    @on(PublishActions.Opened)
+    def _opened(self, event: PublishActions.Opened) -> None:
+        self.app.open_url(event.url)
+
+    @on(PublishActions.CopyAgain)
+    def _copy_again(self) -> None:
+        self.app.copy_to_clipboard(self.key_text)
 
 
 class GhAddScreen(Screen[State]):

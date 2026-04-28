@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import Literal
 
 
@@ -67,6 +68,8 @@ class ExistingKey:
     fingerprint: str
     label: str
     managed: bool = False
+    path: Path | None = None
+    algorithm: str = ""
 
 
 @dataclass(frozen=True, slots=True)

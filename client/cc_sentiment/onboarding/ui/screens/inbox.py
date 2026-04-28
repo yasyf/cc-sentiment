@@ -3,10 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
+from textual import on
 from textual import screen as t
 from textual.app import ComposeResult
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
+from cc_sentiment.onboarding.events import (
+    Event,
+    RecheckRequested,
+    TroubleChoseEmail,
+)
 from cc_sentiment.onboarding.ui import BaseState, Screen
 from cc_sentiment.tui.onboarding.widgets import WatcherRow
 from cc_sentiment.tui.widgets.body import Body
@@ -19,7 +25,7 @@ class State(BaseState):
     pass
 
 
-class InboxView(CardScreen[None]):
+class InboxView(CardScreen[Event]):
     DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
     InboxView > Card { min-width: 60; max-width: 70; }
     InboxView LinkRow { margin: 1 0 0 0; }
@@ -68,6 +74,14 @@ class InboxView(CardScreen[None]):
     def _rotate_status(self) -> None:
         self._rotation_index = (self._rotation_index + 1) % len(self.rotation)
         self.query_one("#polling-status", WatcherRow).text = self.rotation[self._rotation_index]
+
+    @on(LinkRow.Pressed, "#different-email-link")
+    def _different_email(self) -> None:
+        self.dismiss(TroubleChoseEmail())
+
+    @on(LinkRow.Pressed, "#recheck-link")
+    def _recheck(self) -> None:
+        self.dismiss(RecheckRequested())
 
 
 class InboxScreen(Screen[State]):

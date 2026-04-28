@@ -3,16 +3,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
+from textual import on
 from textual import screen as t
 from textual.app import ComposeResult
 from textual.containers import Center
-from textual.widgets import Button
+from textual.widgets import Button, Input
 
 from cc_sentiment.onboarding import (
     Capabilities,
     GistTimeout,
     Stage,
     State as GlobalState,
+)
+from cc_sentiment.onboarding.events import (
+    Event,
+    TroubleChoseEmail,
+    TroubleEditUsername,
 )
 from cc_sentiment.onboarding.ui import BaseState, Screen
 from cc_sentiment.tui.onboarding.widgets import InlineUsernameRow
@@ -26,7 +32,7 @@ class State(BaseState):
     pass
 
 
-class GistTroubleView(CardScreen[None]):
+class GistTroubleView(CardScreen[Event]):
     DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
     GistTroubleView > Card { min-width: 60; max-width: 70; }
     GistTroubleView Center > Button#submit-btn { width: auto; margin: 0 0 1 0; }
@@ -65,6 +71,17 @@ class GistTroubleView(CardScreen[None]):
         yield Center(Button(self.submit_label, id="submit-btn", variant="primary"))
         if self.show_email_link:
             yield LinkRow(self.email_label, id="email-link", classes="muted")
+
+    @on(Button.Pressed, "#submit-btn")
+    @on(Input.Submitted, "#username-input")
+    def _submit(self) -> None:
+        value = self.query_one("#username-input", Input).value.strip()
+        if value:
+            self.dismiss(TroubleEditUsername(new_username=value))
+
+    @on(LinkRow.Pressed, "#email-link")
+    def _email(self) -> None:
+        self.dismiss(TroubleChoseEmail())
 
 
 class GistTroubleScreen(Screen[State]):

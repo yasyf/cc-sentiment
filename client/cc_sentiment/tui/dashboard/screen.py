@@ -87,7 +87,7 @@ from cc_sentiment.tui.dashboard.widgets import (
     ProgressRow,
     SentimentPanel,
 )
-from cc_sentiment.tui.legacy import SetupScreen
+from cc_sentiment.tui.onboarding.runner import OnboardingScreen
 from cc_sentiment.tui.popovers import CostReviewScreen, PlatformErrorScreen
 from cc_sentiment.tui.widgets import Card
 
@@ -390,7 +390,7 @@ class DashboardScreen(Screen[None]):
     async def _authenticate(self) -> bool:
         while True:
             if self.state.config is None:
-                ok = await self.app.push_screen_wait(SetupScreen(self.state))
+                ok = await self.app.push_screen_wait(OnboardingScreen(self.state))
                 if not ok:
                     return False
                 continue

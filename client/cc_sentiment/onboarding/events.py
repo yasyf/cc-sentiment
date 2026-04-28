@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from cc_sentiment.models import ClientConfig
+
 from .state import (
     ExistingKey,
     ExistingKeys,
@@ -42,6 +44,7 @@ class DiscoveryComplete(Event):
     identity: Identity
     existing_keys: ExistingKeys
     auto_verified: bool = False
+    auto_verified_config: ClientConfig | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,4 +130,19 @@ class TroubleRestart(Event):
 
 @dataclass(frozen=True, slots=True)
 class SavedRetryRestart(Event):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class QuitOnboarding(Event):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class StartProcessing(Event):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class RecheckRequested(Event):
     pass

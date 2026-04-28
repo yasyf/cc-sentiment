@@ -3,14 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
+from textual import on
 from textual import screen as t
 from textual.app import ComposeResult
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
+from cc_sentiment.onboarding.events import Event, KeyPicked
 from cc_sentiment.onboarding.state import ExistingKey
 from cc_sentiment.onboarding.ui import BaseState, Screen
 from cc_sentiment.tui.onboarding.widgets import (
     GpgKeyCard,
+    KeyCard,
     ManagedKeyCard,
     SshKeyCard,
 )
@@ -22,7 +25,7 @@ class State(BaseState):
     pass
 
 
-class KeyPickView(CardScreen[None]):
+class KeyPickView(CardScreen[Event]):
     DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
     KeyPickView > Card { min-width: 60; max-width: 80; }
     """
@@ -70,6 +73,10 @@ class KeyPickView(CardScreen[None]):
             subline=self.managed_subline,
             recommended_label=self.recommended_pill,
         )
+
+    @on(KeyCard.Selected)
+    def _picked(self, event: KeyCard.Selected) -> None:
+        self.dismiss(KeyPicked(source=event.source, key=event.key))
 
 
 class KeyPickScreen(Screen[State]):

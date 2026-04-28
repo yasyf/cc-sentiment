@@ -3,12 +3,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
+from textual import on
 from textual import screen as t
 from textual.app import ComposeResult
 from textual.containers import Center
 from textual.widgets import Button, Static
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
+from cc_sentiment.onboarding.events import (
+    Event,
+    MethodPicked,
+    UsernameSubmitted,
+)
+from cc_sentiment.onboarding.state import SshMethod
 from cc_sentiment.onboarding.ui import BaseState, Screen
 from cc_sentiment.tui.onboarding.widgets import InlineUsernameRow
 from cc_sentiment.tui.widgets.body import Body
@@ -21,7 +28,7 @@ class State(BaseState):
     pass
 
 
-class SshMethodView(CardScreen[None]):
+class SshMethodView(CardScreen[Event]):
     DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
     SshMethodView > Card { min-width: 60; max-width: 70; }
     SshMethodView Center > Button#gist-btn { width: auto; margin: 1 0 0 0; }
@@ -77,6 +84,19 @@ class SshMethodView(CardScreen[None]):
 
     def on_mount(self) -> None:
         self.query_one("#gist-btn", Button).focus()
+
+    @on(InlineUsernameRow.Submitted)
+    def _username(self, event: InlineUsernameRow.Submitted) -> None:
+        if event.value:
+            self.dismiss(UsernameSubmitted(username=event.value))
+
+    @on(Button.Pressed, "#gist-btn")
+    def _gist(self) -> None:
+        self.dismiss(MethodPicked(method=SshMethod.GIST))
+
+    @on(LinkRow.Pressed, "#gh-add-link")
+    def _gh_add(self) -> None:
+        self.dismiss(MethodPicked(method=SshMethod.GH_ADD))
 
 
 class SshMethodScreen(Screen[State]):

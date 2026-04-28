@@ -3,13 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
+import anyio
+import httpx
+from textual import on, work
 from textual import screen as t
 from textual.app import ComposeResult
 from textual.containers import Center
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Static
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
+from cc_sentiment.onboarding.events import EmailSent, Event
 from cc_sentiment.onboarding.ui import BaseState, Screen
+from cc_sentiment.signing import GPGBackend, KeyDiscovery
 from cc_sentiment.tui.widgets.body import Body
 from cc_sentiment.tui.widgets.card_screen import CardScreen
 
@@ -19,7 +24,7 @@ class State(BaseState):
     pass
 
 
-class EmailView(CardScreen[None]):
+class EmailView(CardScreen[Event]):
     DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
     EmailView > Card { min-width: 60; max-width: 70; }
     EmailView Input#email-input { margin: 0 0 1 0; }
@@ -33,20 +38,68 @@ class EmailView(CardScreen[None]):
         body: str,
         prefilled_email: str,
         send_label: str,
+        sending_label: str,
+        error_empty: str,
+        error_unreachable: str,
+        gpg_fpr: str,
     ) -> None:
         super().__init__()
         self.title = title
         self.body_text = body
         self.prefilled_email = prefilled_email
         self.send_label = send_label
+        self.sending_label = sending_label
+        self.error_empty = error_empty
+        self.error_unreachable = error_unreachable
+        self.gpg_fpr = gpg_fpr
 
     def compose_card(self) -> ComposeResult:
         yield Body(self.body_text)
         yield Input(value=self.prefilled_email, id="email-input")
+        yield Static("", id="email-status")
         yield Center(Button(self.send_label, id="send-btn", variant="primary"))
 
     def on_mount(self) -> None:
+        self.query_one("#email-status", Static).display = False
         self.query_one("#email-input", Input).focus()
+
+    def _set_status(self, text: str) -> None:
+        status = self.query_one("#email-status", Static)
+        status.update(text)
+        status.display = bool(text)
+
+    @on(Button.Pressed, "#send-btn")
+    @on(Input.Submitted, "#email-input")
+    def _send(self) -> None:
+        email = self.query_one("#email-input", Input).value.strip()
+        if not email:
+            self._set_status(self.error_empty)
+            return
+        button = self.query_one("#send-btn", Button)
+        button.disabled = True
+        button.label = self.sending_label
+        self._send_worker(email)
+
+    @work(exit_on_error=False)
+    async def _send_worker(self, email: str) -> None:
+        try:
+            armor = await anyio.to_thread.run_sync(
+                lambda: GPGBackend(fpr=self.gpg_fpr).public_key_text()
+            )
+            token, statuses = await anyio.to_thread.run_sync(
+                KeyDiscovery.upload_openpgp_key, armor,
+            )
+            unverified = [a for a, s in statuses.items() if s == "unpublished"] or [email]
+            await anyio.to_thread.run_sync(
+                KeyDiscovery.request_openpgp_verify, token, unverified,
+            )
+        except (httpx.HTTPError, OSError):
+            self._set_status(self.error_unreachable)
+            button = self.query_one("#send-btn", Button)
+            button.disabled = False
+            button.label = self.send_label
+            return
+        self.dismiss(EmailSent())
 
 
 class EmailScreen(Screen[State]):
@@ -118,4 +171,8 @@ class EmailScreen(Screen[State]):
             body=s["body"],
             prefilled_email=gs.identity.email if gs.identity.email_usable else "",
             send_label=s["send_button"],
+            sending_label=s["sending_label"],
+            error_empty=s["error_empty"],
+            error_unreachable=s["error_unreachable"],
+            gpg_fpr=gs.selected.key.fingerprint if gs.selected and gs.selected.key else "",
         )

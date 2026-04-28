@@ -7,7 +7,7 @@ from textual.app import App
 
 from cc_sentiment.models import AppState
 from cc_sentiment.tui.dashboard.screen import DashboardScreen
-from cc_sentiment.tui.legacy import SetupScreen
+from cc_sentiment.tui.onboarding.runner import OnboardingScreen
 
 
 class CCSentimentApp(App[None]):
@@ -41,6 +41,6 @@ class CCSentimentApp(App[None]):
     async def on_mount(self) -> None:
         self.title = "cc-sentiment"
         if self.setup_only:
-            await self.push_screen(SetupScreen(self.state), lambda _: self.exit())
+            await self.push_screen(OnboardingScreen(self.state), lambda _: self.exit())
             return
         await self.push_screen(self.dashboard)

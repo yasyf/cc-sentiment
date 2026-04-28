@@ -3,17 +3,25 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
+from textual import on, work
 from textual import screen as t
 from textual.app import ComposeResult
 from textual.containers import Center
 from textual.widgets import Button
 
+from cc_sentiment.models import ClientConfig
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
+from cc_sentiment.onboarding.events import Event, SavedConfigChecked, SavedRetryRestart
 from cc_sentiment.onboarding.ui import BaseState, Screen
 from cc_sentiment.tui.widgets.body import Body
 from cc_sentiment.tui.widgets.card_screen import CardScreen
 from cc_sentiment.tui.widgets.link_row import LinkRow
 from cc_sentiment.tui.widgets.title import Title
+from cc_sentiment.upload import (
+    AuthOk,
+    AuthUnauthorized,
+    Uploader,
+)
 
 
 @dataclass(frozen=True)
@@ -21,18 +29,27 @@ class State(BaseState):
     pass
 
 
-class SavedRetryView(CardScreen[None]):
+class SavedRetryView(CardScreen[Event]):
     DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
     SavedRetryView > Card { min-width: 50; max-width: 60; }
     SavedRetryView Center > Button#retry-btn { width: auto; margin: 1 0 1 0; }
     """
 
-    def __init__(self, *, title: str, body: str, retry_label: str, restart_label: str) -> None:
+    def __init__(
+        self,
+        *,
+        title: str,
+        body: str,
+        retry_label: str,
+        restart_label: str,
+        config: ClientConfig | None,
+    ) -> None:
         super().__init__()
         self.title = title
         self.body_text = body
         self.retry_label = retry_label
         self.restart_label = restart_label
+        self.config = config
 
     def compose(self) -> ComposeResult:
         # Override CardScreen.compose to control title placement and not yield extra
@@ -50,6 +67,28 @@ class SavedRetryView(CardScreen[None]):
 
     def on_mount(self) -> None:
         self.query_one("#retry-btn", Button).focus()
+
+    @on(Button.Pressed, "#retry-btn")
+    def _retry(self) -> None:
+        if self.config is None:
+            return
+        self.query_one("#retry-btn", Button).disabled = True
+        self._reprobe()
+
+    @on(LinkRow.Pressed, "#restart-link")
+    def _restart(self) -> None:
+        self.dismiss(SavedRetryRestart())
+
+    @work(exit_on_error=False)
+    async def _reprobe(self) -> None:
+        assert self.config is not None
+        match await Uploader().probe_credentials(self.config):
+            case AuthOk():
+                self.dismiss(SavedConfigChecked(result="ok"))
+            case AuthUnauthorized():
+                self.dismiss(SavedConfigChecked(result="invalid"))
+            case _:
+                self.dismiss(SavedConfigChecked(result="unreachable"))
 
 
 class SavedRetryScreen(Screen[State]):
@@ -101,4 +140,11 @@ class SavedRetryScreen(Screen[State]):
             body=s["body"],
             retry_label=s["retry_button"],
             restart_label=s["restart_link"],
+            config=getattr(self, "_config", None),
         )
+
+    @classmethod
+    def with_config(cls, config: ClientConfig) -> SavedRetryScreen:
+        instance = cls()
+        instance._config = config
+        return instance

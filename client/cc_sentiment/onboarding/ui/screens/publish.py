@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
+from textual import on
 from textual import screen as t
 from textual.app import ComposeResult
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
+from cc_sentiment.onboarding.events import Event, TroubleChoseEmail
 from cc_sentiment.onboarding.ui import BaseState, Screen
 from cc_sentiment.tui.onboarding.widgets import (
     KeyPreview,
@@ -25,7 +27,7 @@ class State(BaseState):
     pass
 
 
-class PublishView(CardScreen[None]):
+class PublishView(CardScreen[Event]):
     DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
     PublishView > Card { min-width: 60; max-width: 80; }
     """
@@ -77,8 +79,20 @@ class PublishView(CardScreen[None]):
     def on_mount(self) -> None:
         if self.resumed:
             self.add_class("resumed")
-            self.app.copy_to_clipboard(self.key_text)
-            self.app.open_url(GIST_NEW_URL)
+        self.app.copy_to_clipboard(self.key_text)
+        self.app.open_url(GIST_NEW_URL)
+
+    @on(PublishActions.Opened)
+    def _opened(self, event: PublishActions.Opened) -> None:
+        self.app.open_url(event.url)
+
+    @on(PublishActions.CopyAgain)
+    def _copy_again(self) -> None:
+        self.app.copy_to_clipboard(self.key_text)
+
+    @on(PublishActions.NoGithub)
+    def _no_github(self) -> None:
+        self.dismiss(TroubleChoseEmail())
 
 
 class PublishScreen(Screen[State]):

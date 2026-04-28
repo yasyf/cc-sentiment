@@ -4,12 +4,14 @@ import json
 from dataclasses import dataclass
 from typing import ClassVar
 
+from textual import on
 from textual import screen as t
 from textual.app import ComposeResult
 from textual.containers import Center
 from textual.widgets import Button, Static
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
+from cc_sentiment.onboarding.events import Event, StartProcessing
 from cc_sentiment.onboarding.state import KeySource, SelectedKey
 from cc_sentiment.onboarding.ui import BaseState, Screen
 from cc_sentiment.tui.widgets.card import Card
@@ -35,7 +37,7 @@ class State(BaseState):
     pass
 
 
-class DoneView(CardScreen[None]):
+class DoneView(CardScreen[Event]):
     DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
     DoneView > Card { min-width: 60; max-width: 80; }
     DoneView Card.done-card { margin: 0 0 1 0; }
@@ -78,6 +80,10 @@ class DoneView(CardScreen[None]):
             classes="done-card",
         )
         yield Center(Button(self.primary_label, id="start-btn", variant="primary"))
+
+    @on(Button.Pressed, "#start-btn")
+    def _start(self) -> None:
+        self.dismiss(StartProcessing())
 
 
 class DoneScreen(Screen[State]):

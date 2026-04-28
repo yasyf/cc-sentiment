@@ -3,12 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
+from textual import on
 from textual import screen as t
 from textual.app import ComposeResult
 from textual.containers import Center
 from textual.widgets import Button, Static
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
+from cc_sentiment.onboarding.events import Event, QuitOnboarding
 from cc_sentiment.onboarding.ui import BaseState, Screen
 from cc_sentiment.tui.widgets.body import Body
 from cc_sentiment.tui.widgets.card_screen import CardScreen
@@ -23,7 +25,7 @@ class State(BaseState):
     pass
 
 
-class BlockedView(CardScreen[None]):
+class BlockedView(CardScreen[Event]):
     DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
     BlockedView > Card { min-width: 60; max-width: 70; }
     BlockedView Static#install-hint {
@@ -63,6 +65,15 @@ class BlockedView(CardScreen[None]):
                 classes=self.kind,
             )
             yield Button(self.quit_label, id="quit-btn")
+
+    @on(Button.Pressed, "#install-guide-btn")
+    def _open_guide(self) -> None:
+        url = SSH_DOCS_URL if self.kind == "ssh" else GPG_DOCS_URL
+        self.app.open_url(url)
+
+    @on(Button.Pressed, "#quit-btn")
+    def _quit(self) -> None:
+        self.dismiss(QuitOnboarding())
 
 
 class BlockedScreen(Screen[State]):

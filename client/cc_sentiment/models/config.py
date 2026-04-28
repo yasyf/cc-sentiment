@@ -1,38 +1,17 @@
 from __future__ import annotations
 
-from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Literal, NewType
 
-from pydantic import BaseModel, Discriminator, Tag, model_validator
+from pydantic import BaseModel, Discriminator, Tag
 
 ContributorId = NewType("ContributorId", str)
 
 ContributorType = Literal["github", "gpg", "gist"]
 
-RouteIdLiteral = Literal[
-    "managed-ssh-gist",
-    "managed-gpg-openpgp",
-    "managed-ssh-manual-gist",
-]
+KeySourceLiteral = Literal["existing-ssh", "existing-gpg", "managed"]
 
-PublishMethodLiteral = Literal[
-    "gist-auto",
-    "gist-manual",
-    "openpgp",
-]
-
-KeyKindLiteral = Literal["ssh", "gpg"]
-
-
-class PendingSetupStatus(StrEnum):
-    CREATED = "created"
-    AWAITING_USER = "awaiting-user"
-    GIST_NOT_FOUND = "gist-not-found"
-    OPENPGP_EMAIL_SENT = "openpgp-email-sent"
-    VERIFY_PENDING = "verify-pending"
-    VERIFY_UNAUTHORIZED = "verify-unauthorized"
-    NETWORK_PENDING = "network-pending"
+ResumeTargetLiteral = Literal["gist", "gh_add", "email"]
 
 
 class SSHConfig(BaseModel, frozen=True):
@@ -74,38 +53,24 @@ ClientConfig = Annotated[
 ]
 
 
+class PendingSelectedKey(BaseModel, frozen=True):
+    source: KeySourceLiteral
+    fingerprint: str = ""
+    label: str = ""
+    managed: bool = False
+    path: Path | None = None
+    algorithm: str = ""
+
+
 class PendingSetupModel(BaseModel, frozen=True):
     model_config = {"extra": "forbid"}
 
-    route_id: RouteIdLiteral
-    publish_method: PublishMethodLiteral
-    key_kind: KeyKindLiteral
-    key_managed: bool
-    key_path: Path | None = None
-    key_fpr: str | None = None
+    selected: PendingSelectedKey
     username: str = ""
     email: str = ""
-    public_location: str = ""
-    gist_id: str = ""
-    last_status: PendingSetupStatus = PendingSetupStatus.CREATED
-    last_error: str = ""
+    email_usable: bool = False
+    target: ResumeTargetLiteral
     started_at: float = 0.0
-    updated_at: float = 0.0
-
-    @model_validator(mode="after")
-    def _validate_key_fields(self) -> PendingSetupModel:
-        match self.key_kind:
-            case "ssh":
-                if self.key_path is None:
-                    raise ValueError("ssh route requires key_path")
-                if self.key_fpr is not None:
-                    raise ValueError("ssh route forbids key_fpr")
-            case "gpg":
-                if self.key_fpr is None:
-                    raise ValueError("gpg route requires key_fpr")
-                if self.key_path is not None:
-                    raise ValueError("gpg route forbids key_path")
-        return self
 
 
 class AppState(BaseModel):

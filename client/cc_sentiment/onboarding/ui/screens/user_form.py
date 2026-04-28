@@ -3,12 +3,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
+import anyio
+from textual import on, work
 from textual import screen as t
 from textual.app import ComposeResult
 from textual.containers import Center
 from textual.widgets import Button, Input, Static
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
+from cc_sentiment.onboarding.discovery import IdentityProbe
+from cc_sentiment.onboarding.events import (
+    Event,
+    NoGitHubChosen,
+    UsernameSubmitted,
+)
 from cc_sentiment.onboarding.ui import BaseState, Screen
 from cc_sentiment.tui.widgets.card_screen import CardScreen
 from cc_sentiment.tui.widgets.link_row import LinkRow
@@ -19,7 +27,7 @@ class State(BaseState):
     pass
 
 
-class UserFormView(CardScreen[None]):
+class UserFormView(CardScreen[Event]):
     DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
     UserFormView > Card { min-width: 60; max-width: 70; }
     UserFormView Input#username-input { margin: 0 0 1 0; }
@@ -34,12 +42,20 @@ class UserFormView(CardScreen[None]):
         placeholder: str,
         primary_label: str,
         no_github_label: str,
+        error_empty: str,
+        error_not_found: str,
+        error_unreachable: str,
+        validating: str,
     ) -> None:
         super().__init__()
         self.title = title
         self.placeholder = placeholder
         self.primary_label = primary_label
         self.no_github_label = no_github_label
+        self.error_empty = error_empty
+        self.error_not_found = error_not_found
+        self.error_unreachable = error_unreachable
+        self.validating = validating
 
     def compose_card(self) -> ComposeResult:
         yield Input(placeholder=self.placeholder, id="username-input")
@@ -50,6 +66,40 @@ class UserFormView(CardScreen[None]):
     def on_mount(self) -> None:
         self.query_one("#status", Static).display = False
         self.query_one("#username-input", Input).focus()
+
+    @on(Button.Pressed, "#continue-btn")
+    @on(Input.Submitted, "#username-input")
+    def _continue(self) -> None:
+        value = self.query_one("#username-input", Input).value.strip()
+        if not value:
+            self._set_status(self.error_empty)
+            return
+        self.query_one("#continue-btn", Button).disabled = True
+        self._set_status(self.validating.format(user=value))
+        self._validate(value)
+
+    @on(LinkRow.Pressed, "#no-github-link")
+    def _no_github(self) -> None:
+        self.dismiss(NoGitHubChosen())
+
+    def _set_status(self, text: str) -> None:
+        status = self.query_one("#status", Static)
+        status.update(text)
+        status.display = True
+
+    @work(exit_on_error=False)
+    async def _validate(self, username: str) -> None:
+        result = await anyio.to_thread.run_sync(IdentityProbe.validate_username, username)
+        match result:
+            case "ok":
+                self.dismiss(UsernameSubmitted(username=username))
+            case "not-found":
+                self._set_status(self.error_not_found.format(user=username))
+                self.query_one("#continue-btn", Button).disabled = False
+                self.query_one("#username-input", Input).focus()
+            case "unreachable":
+                self._set_status(self.error_unreachable)
+                self.query_one("#continue-btn", Button).disabled = False
 
 
 class UserFormScreen(Screen[State]):
@@ -123,4 +173,8 @@ class UserFormScreen(Screen[State]):
             placeholder=s["placeholder"],
             primary_label=s["primary_button"],
             no_github_label=s["no_github_link"],
+            error_empty=s["error_empty"],
+            error_not_found=s["error_not_found"],
+            error_unreachable=s["error_unreachable"],
+            validating=s["validating"],
         )

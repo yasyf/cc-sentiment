@@ -16,10 +16,13 @@ from .events import (
     MethodPicked,
     NoGitHubChosen,
     NoSavedConfig,
+    QuitOnboarding,
+    RecheckRequested,
     ResumePendingEmail,
     ResumePendingGist,
     SavedConfigChecked,
     SavedRetryRestart,
+    StartProcessing,
     TroubleChoseEmail,
     TroubleEditUsername,
     TroubleRestart,
@@ -157,6 +160,8 @@ class WorkflowMachine:
                 return replace(state, stage=Stage.DONE)
             case (Stage.PUBLISH, GistTimedOut()):
                 return Router.to_trouble(state, GistTimeout())
+            case (Stage.PUBLISH, TroubleChoseEmail()):
+                return replace(state, stage=Stage.EMAIL)
             case (Stage.GH_ADD, GhAddVerified()):
                 return replace(state, stage=Stage.DONE)
             case (Stage.GH_ADD, GhAddFailed()):
@@ -167,6 +172,10 @@ class WorkflowMachine:
                 return replace(state, stage=Stage.DONE)
             case (Stage.INBOX, VerificationTimedOut(error_code=ec)):
                 return Router.to_trouble(state, VerifyTimeout(error_code=ec))
+            case (Stage.INBOX, TroubleChoseEmail()):
+                return replace(state, stage=Stage.EMAIL, resumed_from_pending=False)
+            case (Stage.INBOX, RecheckRequested()):
+                return state
         raise InvalidTransition(state, event)
 
 
@@ -188,12 +197,27 @@ class TroubleMachine:
         raise InvalidTransition(state, event)
 
 
-SubMachine = type[StartMachine | DiscoveryMachine | KeyMachine | WorkflowMachine | TroubleMachine]
+class TerminalMachine:
+    OWNS: ClassVar[frozenset[Stage]] = frozenset({Stage.DONE, Stage.BLOCKED})
+
+    @classmethod
+    def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
+        match (state.stage, event):
+            case (Stage.DONE, StartProcessing()):
+                return state
+            case (Stage.BLOCKED, QuitOnboarding()):
+                return state
+        raise InvalidTransition(state, event)
+
+
+SubMachine = type[
+    StartMachine | DiscoveryMachine | KeyMachine | WorkflowMachine | TroubleMachine | TerminalMachine
+]
 
 
 class SetupMachine:
     SUB_MACHINES: ClassVar[tuple[SubMachine, ...]] = (
-        StartMachine, DiscoveryMachine, KeyMachine, WorkflowMachine, TroubleMachine,
+        StartMachine, DiscoveryMachine, KeyMachine, WorkflowMachine, TroubleMachine, TerminalMachine,
     )
     DISPATCH: ClassVar[dict[Stage, SubMachine]] = {
         stage: sub for sub in SUB_MACHINES for stage in sub.OWNS

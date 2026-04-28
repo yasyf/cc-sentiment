@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
+from textual import on
 from textual import screen as t
 from textual.app import ComposeResult
 from textual.containers import Center
@@ -14,6 +15,7 @@ from cc_sentiment.onboarding import (
     State as GlobalState,
     VerifyTimeout,
 )
+from cc_sentiment.onboarding.events import Event, TroubleRestart
 from cc_sentiment.onboarding.state import VerifyErrorCode
 from cc_sentiment.onboarding.ui import BaseState, Screen
 from cc_sentiment.tui.widgets.body import Body
@@ -26,7 +28,7 @@ class State(BaseState):
     pass
 
 
-class VerifyTroubleView(CardScreen[None]):
+class VerifyTroubleView(CardScreen[Event]):
     DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
     VerifyTroubleView > Card { min-width: 50; max-width: 60; }
     VerifyTroubleView Center > Button#restart-btn { width: auto; margin: 1 0 0 0; }
@@ -43,6 +45,10 @@ class VerifyTroubleView(CardScreen[None]):
         yield Body(self.message, id="message")
         yield MutedLine(self.subhint)
         yield Center(Button(self.restart_label, id="restart-btn", variant="primary"))
+
+    @on(Button.Pressed, "#restart-btn")
+    def _restart(self) -> None:
+        self.dismiss(TroubleRestart())
 
 
 class VerifyTroubleScreen(Screen[State]):
