@@ -32,8 +32,8 @@ STAT = MyStat(
 async def test_cta_shows_schedule_when_daemon_not_installed(tmp_path: Path, auth_ok, no_stat_share):
     state = AppState(config=GITHUB_CONFIG)
     db_path = tmp_path / "records.db"
-    with patch("cc_sentiment.tui.dashboard.screen.LaunchAgent.is_installed", return_value=False), \
-         patch("cc_sentiment.tui.dashboard.screen.EngineFactory.resolve", return_value="mlx"), \
+    with patch("cc_sentiment.tui.dashboard.lifecycle.LaunchAgent.is_installed", return_value=False), \
+         patch("cc_sentiment.tui.dashboard.flow.EngineFactory.resolve", return_value="mlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -49,8 +49,8 @@ async def test_cta_shows_schedule_when_daemon_not_installed(tmp_path: Path, auth
 async def test_cta_hides_when_daemon_installed_and_no_tweet(tmp_path: Path, auth_ok, no_stat_share):
     state = AppState(config=GITHUB_CONFIG)
     db_path = tmp_path / "records.db"
-    with patch("cc_sentiment.tui.dashboard.screen.LaunchAgent.is_installed", return_value=True), \
-         patch("cc_sentiment.tui.dashboard.screen.EngineFactory.resolve", return_value="mlx"), \
+    with patch("cc_sentiment.tui.dashboard.lifecycle.LaunchAgent.is_installed", return_value=True), \
+         patch("cc_sentiment.tui.dashboard.flow.EngineFactory.resolve", return_value="mlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -64,8 +64,8 @@ async def test_cta_hides_when_daemon_installed_and_no_tweet(tmp_path: Path, auth
 async def test_cta_rotates_between_tweet_and_schedule(tmp_path: Path, auth_ok, no_stat_share):
     state = AppState(config=GITHUB_CONFIG)
     db_path = tmp_path / "records.db"
-    with patch("cc_sentiment.tui.dashboard.screen.LaunchAgent.is_installed", return_value=False), \
-         patch("cc_sentiment.tui.dashboard.screen.EngineFactory.resolve", return_value="mlx"), \
+    with patch("cc_sentiment.tui.dashboard.lifecycle.LaunchAgent.is_installed", return_value=False), \
+         patch("cc_sentiment.tui.dashboard.flow.EngineFactory.resolve", return_value="mlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -91,9 +91,9 @@ async def test_cta_rotates_between_tweet_and_schedule(tmp_path: Path, auth_ok, n
 async def test_cta_pins_to_tweet_after_install_succeeds(tmp_path: Path, auth_ok, no_stat_share):
     state = AppState(config=GITHUB_CONFIG)
     db_path = tmp_path / "records.db"
-    with patch("cc_sentiment.tui.dashboard.screen.LaunchAgent.is_installed", return_value=False), \
-         patch("cc_sentiment.tui.dashboard.screen.LaunchAgent.install") as mock_install, \
-         patch("cc_sentiment.tui.dashboard.screen.EngineFactory.resolve", return_value="mlx"), \
+    with patch("cc_sentiment.tui.dashboard.lifecycle.LaunchAgent.is_installed", return_value=False), \
+         patch("cc_sentiment.tui.dashboard.actions.LaunchAgent.install") as mock_install, \
+         patch("cc_sentiment.tui.dashboard.flow.EngineFactory.resolve", return_value="mlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:

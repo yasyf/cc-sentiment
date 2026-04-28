@@ -58,7 +58,7 @@ def no_network_warmup(
     classifier.score = AsyncMock(return_value=[])
     classifier.close = AsyncMock()
     monkeypatch.setattr(
-        "cc_sentiment.tui.dashboard.screen.EngineFactory.build",
+        "cc_sentiment.tui.dashboard.flow.EngineFactory.build",
         AsyncMock(return_value=classifier),
     )
     monkeypatch.setattr(
