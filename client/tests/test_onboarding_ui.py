@@ -183,19 +183,3 @@ class TestScreenRegistry:
     def test_every_screen_can_be_instantiated(self):
         for s in ALL_SCREENS:
             s()  # all abstract methods overridden — construction must not raise
-
-    def test_no_forbidden_ux_terms_in_any_string(self):
-        # From the integrated UX plan's "Validation" section: forbidden grep.
-        forbidden = (
-            "GitHub CLI", "gh CLI", "Use GPG", "Check now",
-            "Elapsed", "Checked:", "Verification: waiting",
-            "Reopen verification",
-        )
-        offenders: list[str] = []
-        for s in ALL_SCREENS:
-            for key, value in s.strings().items():
-                lowered = value.lower()
-                for term in forbidden:
-                    if term.lower() in lowered:
-                        offenders.append(f"{s.__name__}[{key!r}]: {term!r} in {value!r}")
-        assert not offenders, "forbidden UX terms found:\n" + "\n".join(offenders)

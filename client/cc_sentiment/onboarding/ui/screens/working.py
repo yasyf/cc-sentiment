@@ -24,7 +24,7 @@ class WorkingScreen(Screen[State]):
     def strings(cls) -> dict[str, str]:
         return {
             "title": "Setting up…",
-            "status_creating_key": "Creating cc-sentiment key…",
+            "status_creating_key": "Creating your signature…",
             "status_creating_gist": "Creating GitHub gist…",
             "status_verifying": "Verifying…",
         }
@@ -38,12 +38,12 @@ class WorkingScreen(Screen[State]):
         Layout (centered card, ~50 columns):
           ╭─ Setting up… ──────────────────────╮       (WORKING_TITLE)
           │                                    │
-          │  ⠹ Creating cc-sentiment key…      │       (status line, cycles)
+          │  ⠹ Creating your signature…        │       (status line, cycles)
           │                                    │
           ╰────────────────────────────────────╯
 
         Status line cycles through (existing strings from working.py):
-          "Creating cc-sentiment key…"
+          "Creating your signature…"
           "Creating GitHub gist…"
           "Verifying…"
 

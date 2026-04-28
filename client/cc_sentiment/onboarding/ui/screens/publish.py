@@ -28,16 +28,16 @@ class PublishScreen(Screen[State]):
                 "Create a public GitHub gist with what we copied to your "
                 "clipboard. We'll find it automatically."
             ),
-            "key_preview_title": "Signing key",
+            "key_preview_title": "Your signature",
             "open_button": "Open GitHub",
             "copy_again_link": "Copy again",
             "no_github_link": "I don't use GitHub →",
             "watch_label": "Watching for your gist…",
             "fallback_intro": (
-                "Copy the public key below, then paste it into a new public gist."
+                "Copy your signature below, then paste it into a new public gist."
             ),
             "fallback_confirm_button": "I've created the gist",
-            "rate_limit_note": "GitHub busy — retrying.",
+            "rate_limit_note": "GitHub busy. Retrying.",
         }
 
     def render(self) -> t.Screen:
@@ -53,7 +53,7 @@ class PublishScreen(Screen[State]):
           │  copied to your clipboard. We'll find it   │
           │  automatically.                            │
           │                                            │
-          │  ╭ Signing key ───────────────────────────╮│      (was PUBLISH_KEY_PREVIEW_TITLE)
+          │  ╭ Your signature ────────────────────────╮│      (was PUBLISH_KEY_PREVIEW_TITLE)
           │  │ ssh-ed25519 AAAA…cc-sentiment          ││
           │  ╰────────────────────────────────────────╯│
           │                                            │

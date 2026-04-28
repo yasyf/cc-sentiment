@@ -33,7 +33,7 @@ class InboxScreen(Screen[State]):
             "taking_a_moment_label": "These sometimes take a moment…",
             "different_email_link": "Send to a different email →",
             "recheck_link": "Check again",
-            "rate_limit_note": "Service busy — retrying soon.",
+            "rate_limit_note": "Service busy. Retrying soon.",
         }
 
     def render(self) -> t.Screen:

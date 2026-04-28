@@ -23,9 +23,9 @@ class KeyPickScreen(Screen[State]):
     @classmethod
     def strings(cls) -> dict[str, str]:
         return {
-            "title": "Pick your signing key",
-            "managed_card_label": "Create a new key for cc-sentiment",
-            "managed_card_subline": "A dedicated key, stored under ~/.cc-sentiment/keys.",
+            "title": "Pick your signature",
+            "managed_card_label": "Create a new signature for cc-sentiment",
+            "managed_card_subline": "Dedicated to cc-sentiment, stored under ~/.cc-sentiment/keys.",
             "recommended_pill": "recommended",
         }
 
@@ -36,7 +36,7 @@ class KeyPickScreen(Screen[State]):
         readable, card-based, and not table-like").
 
         Layout (vertical stack of cards, ~70 columns):
-          ╭─ Pick your signing key ───────────────╮       [DRAFT title]
+          ╭─ Pick your signature ─────────────────╮       [DRAFT title]
           ╭───────────────────────────────────────╮
           │  ●  ~/.ssh/id_ed25519                 │
           │     ssh-ed25519 · "yasyf@host"        │
@@ -47,9 +47,10 @@ class KeyPickScreen(Screen[State]):
           │     yasyf@example.com                 │
           ╰───────────────────────────────────────╯
           ╭───────────────────────────────────────╮
-          │  ○  Create a new key for cc-sentiment │       [DRAFT managed label]
-          │     A dedicated key, stored under     │       [DRAFT managed sub-line]
-          │     ~/.cc-sentiment/keys              │
+          │  ○  Create a new signature for        │       [DRAFT managed label]
+          │     cc-sentiment                      │
+          │     Dedicated to cc-sentiment,        │       [DRAFT managed sub-line]
+          │     stored under ~/.cc-sentiment/keys │
           ╰───────────────────────────────────────╯
 
         Each card (per plan "label + path/fingerprint, faint focused preview"):

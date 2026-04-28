@@ -26,12 +26,12 @@ class VerifyTroubleScreen(Screen[State]):
     @classmethod
     def strings(cls) -> dict[str, str]:
         return {
-            "title": "We couldn't verify your key",
-            "subhint": "Try again with a fresh setup — it usually only takes a moment.",
+            "title": "We couldn't verify your signature",
+            "subhint": "Try again with a fresh setup. It usually only takes a moment.",
             "restart_button": "Restart setup",
-            "error_key_not_found": "sentiments.cc couldn't see your published key.",
-            "error_signature_failed": "Your key wasn't accepted.",
-            "error_rate_limited": "sentiments.cc is busy — wait a minute and retry.",
+            "error_key_not_found": "sentiments.cc couldn't see your published signature.",
+            "error_signature_failed": "Your signature wasn't accepted.",
+            "error_rate_limited": "sentiments.cc is busy. Wait a minute and retry.",
             "error_unknown": "sentiments.cc reported an issue we don't recognize.",
         }
 
@@ -44,18 +44,18 @@ class VerifyTroubleScreen(Screen[State]):
         display client-mapped server error code + restart setup").
 
         Layout (card, ~60 columns):
-          ╭─ We couldn't verify your key ──────╮       [DRAFT title]
-          │                                    │
-          │  {server-code-mapped message}      │       (one of the four below)
-          │                                    │
-          │       [ Restart setup ]            │       [DRAFT button label]
+          ╭─ We couldn't verify your signature ─╮      [DRAFT title]
+          │                                     │
+          │  {server-code-mapped message}       │      (one of the four below)
+          │                                     │
+          │       [ Restart setup ]             │      [DRAFT button label]
           ╰────────────────────────────────────╯
 
         Server-code mapping (client-side, static — minimal core codes
         per plan Q&A "Server error-code granularity: Minimal core codes"):
-          "key-not-found"    → "sentiments.cc couldn't see your published key."
-          "signature-failed" → "Your key wasn't accepted."
-          "rate-limited"     → "sentiments.cc is busy — wait a minute and retry."
+          "key-not-found"    → "sentiments.cc couldn't see your published signature."
+          "signature-failed" → "Your signature wasn't accepted."
+          "rate-limited"     → "sentiments.cc is busy. Wait a minute and retry."
           unknown / fallback → "sentiments.cc reported an issue we don't recognize."
 
         Buttons (exactly):

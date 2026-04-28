@@ -34,7 +34,7 @@ class GistTroubleScreen(Screen[State]):
             "username_label": "GitHub username",
             "submit_button": "Try this username",
             "email_link": "Use email instead →",
-            "rate_limit_note": "GitHub busy — still trying.",
+            "rate_limit_note": "GitHub busy. Still trying.",
         }
 
     def render(self) -> t.Screen:

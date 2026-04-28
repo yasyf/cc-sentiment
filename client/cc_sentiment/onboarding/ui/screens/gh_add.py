@@ -24,15 +24,15 @@ class GhAddScreen(Screen[State]):
     def strings(cls) -> dict[str, str]:
         return {
             "title_auto": "Adding to GitHub…",
-            "status_auto": "Adding your key…",
-            "title_manual": "Add this key to GitHub",
-            "body_manual": "We copied the key. Paste it on github.com/settings/keys.",
-            "key_preview_title": "Signing key",
+            "status_auto": "Adding your signature…",
+            "title_manual": "Add your signature to GitHub",
+            "body_manual": "We copied your signature. Paste it at github.com/settings/keys.",
+            "key_preview_title": "Your signature",
             "open_button": "Open GitHub",
             "copy_again_link": "Copy again",
-            "watch_label": "Watching for the new key…",
-            "fallback_confirm_button": "I've added the key",
-            "rate_limit_note": "GitHub busy — retrying.",
+            "watch_label": "Watching for it on GitHub…",
+            "fallback_confirm_button": "I've added it",
+            "rate_limit_note": "GitHub busy. Retrying.",
         }
 
     def render(self) -> t.Screen:
@@ -50,19 +50,19 @@ class GhAddScreen(Screen[State]):
           No buttons. Same shape as Working.
 
         Layout (no gh auth — manual, ~70 columns):
-          ╭─ Add this key to GitHub ───────────────────╮       [DRAFT title]
+          ╭─ Add your signature to GitHub ─────────────╮       [DRAFT title]
           │                                            │
-          │  We copied the key. Paste it on            │       [DRAFT body]
+          │  We copied your signature. Paste it at     │       [DRAFT body]
           │  github.com/settings/keys.                 │
           │                                            │
-          │  ╭ Signing key ───────────────────────────╮│       (was PUBLISH_KEY_PREVIEW_TITLE,
+          │  ╭ Your signature ────────────────────────╮│       (was PUBLISH_KEY_PREVIEW_TITLE,
           │  │ ssh-ed25519 AAAA…                      ││        reused)
           │  ╰────────────────────────────────────────╯│
           │                                            │
           │       [ Open GitHub ]                      │       (reuses PUBLISH_OPEN_LABEL,
           │       Copy again                           │        PUBLISH_COPY_AGAIN_LABEL)
           │                                            │
-          │  ⠹ Watching for the new key…               │       [DRAFT watcher line]
+          │  ⠹ Watching for it on GitHub…              │       [DRAFT watcher line]
           ╰────────────────────────────────────────────╯
 
         Buttons (exactly):

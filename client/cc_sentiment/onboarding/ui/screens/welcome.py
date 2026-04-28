@@ -25,7 +25,7 @@ class WelcomeScreen(Screen[State]):
         return {
             "title": "Set up cc-sentiment",
             "body": (
-                "We'll create a signing key so we can confirm uploads "
+                "We'll create your signature so we can confirm uploads "
                 "are yours. This usually takes about 30 seconds."
             ),
             "primary_button": "Get started",
@@ -42,7 +42,7 @@ class WelcomeScreen(Screen[State]):
         Layout (single centered card, ~60 columns):
           ╭─ Set up cc-sentiment ──────────────╮       (WELCOME_TITLE)
           │                                    │
-          │  We'll create a signing key so we │       (WELCOME_BODY)
+          │  We'll create your signature so   │       (WELCOME_BODY)
           │  so we can confirm uploads are     │
           │  yours. This usually takes about   │
           │  30 seconds.                       │

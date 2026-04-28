@@ -23,10 +23,10 @@ class SshMethodScreen(Screen[State]):
     @classmethod
     def strings(cls) -> dict[str, str]:
         return {
-            "title": "Where should we publish this key?",
+            "title": "Where should we publish your signature?",
             "body": (
-                "We need to post your key somewhere public — that's "
-                "how sentiments.cc proves an upload is really from you."
+                "We post your signature somewhere public so "
+                "sentiments.cc can confirm uploads are really from you."
             ),
             "username_label": "GitHub username",
             "username_placeholder": "yasyf",
@@ -47,12 +47,11 @@ class SshMethodScreen(Screen[State]):
 
         Layout (centered card, ~60 columns; username row appears only
         when missing):
-          ╭─ Where should we publish this key? ─╮      [DRAFT title]
-          │                                     │
-          │  We need to post your key somewhere │      (body — explains
-          │  public — that's how sentiments.cc  │       why we're asking)
-          │  proves an upload is really from    │
-          │  you.                               │
+          ╭─ Where should we publish your signature? ─╮  [DRAFT title]
+          │                                            │
+          │  We post your signature somewhere          │  (body, explains
+          │  public so sentiments.cc can confirm       │   why we're asking)
+          │  uploads are really from you.              │
           │                                     │
           │  GitHub username                    │      (only when missing)
           │  [ yasyf____________________ ]      │
