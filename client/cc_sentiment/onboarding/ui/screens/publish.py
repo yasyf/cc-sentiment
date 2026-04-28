@@ -4,16 +4,13 @@ from dataclasses import dataclass
 
 from textual import screen as t
 
-from cc_sentiment.onboarding import SelectedKey, Stage, State as GlobalState
+from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
 
 
 @dataclass(frozen=True)
 class State(BaseState):
-    selected: SelectedKey | None = None
-    username: str = ""
-    has_gpg_alternative: bool = False
-    resumed_from_pending: bool = False
+    pass
 
 
 class PublishScreen(Screen[State]):
@@ -43,7 +40,7 @@ class PublishScreen(Screen[State]):
             "rate_limit_note": "GitHub busy. Retrying.",
         }
 
-    def render(self) -> t.Screen:
+    def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
         """
         The manual-gist publish screen — `GistInstructionCard` per plan.
         Show the key, give the user one obvious primary action (we already
@@ -66,6 +63,17 @@ class PublishScreen(Screen[State]):
           │                                            │
           │  ⠹ Watching for your gist…                 │      (PUBLISH_WATCH_LABEL)
           ╰────────────────────────────────────────────╯
+
+        Path-dependent rendering — read inline:
+          - The selected key (`gs.selected`) drives the preview block.
+          - The username in the watcher / gist URL comes from
+            `gs.identity.github_username`.
+          - "I don't use GitHub →" is shown iff `caps.has_gpg` (so an
+            email fallback exists).
+          - When `gs.resumed_from_pending` is True, the screen mounts in
+            resume mode: auto re-copy + auto re-open the browser, then
+            silently watch (per plan Q&A: "Pending gist resume — Re-copy
+            and reopen"). The user shouldn't notice they were resumed.
 
         Buttons (exactly — per plan "Open GitHub, quiet Copy again,
         optional quiet I don't use GitHub"):
@@ -90,11 +98,6 @@ class PublishScreen(Screen[State]):
           The watcher does NOT start until the user clicks the confirm
           button (per plan Q&A: "Both clipboard+browser fail — Wait for
           confirmation before polling").
-
-        Resume behavior (came from saved pending):
-          Auto re-copy + auto re-open browser on mount, then watch
-          silently (per plan Q&A: "Pending gist resume — Re-copy and
-          reopen"). The user shouldn't notice they were resumed.
 
         Subtle hints:
           - No URL input, no Check Now, no elapsed/debug rows

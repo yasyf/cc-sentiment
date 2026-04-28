@@ -6,18 +6,21 @@ import pytest
 
 from cc_sentiment.onboarding import (
     Capabilities,
+    GistTimeout,
+    InvalidTransition,
+    SetupMachine,
+    Stage,
+    State,
+    VerifyTimeout,
+)
+from cc_sentiment.onboarding.events import (
     DiscoveryComplete,
     EmailSent,
-    ExistingKey,
-    ExistingKeys,
     GhAddFailed,
     GhAddVerified,
     GistTimedOut,
     GistVerified,
-    Identity,
-    InvalidTransition,
     KeyPicked,
-    KeySource,
     MethodPicked,
     NoGitHubChosen,
     NoSavedConfig,
@@ -25,20 +28,22 @@ from cc_sentiment.onboarding import (
     ResumePendingGist,
     SavedConfigChecked,
     SavedRetryRestart,
-    SelectedKey,
-    SetupMachine,
-    SshMethod,
-    Stage,
-    State,
     TroubleChoseEmail,
     TroubleEditUsername,
-    TroubleReason,
     TroubleRestart,
     UsernameSubmitted,
     VerificationOk,
     VerificationTimedOut,
     WorkingFailed,
     WorkingSucceeded,
+)
+from cc_sentiment.onboarding.state import (
+    ExistingKey,
+    ExistingKeys,
+    Identity,
+    KeySource,
+    SelectedKey,
+    SshMethod,
 )
 
 
@@ -82,10 +87,12 @@ class TestInitialTransitions:
     def test_resume_pending_gist_to_publish(self):
         result = step(state_at(Stage.INITIAL), ResumePendingGist())
         assert result.stage is Stage.PUBLISH
+        assert result.resumed_from_pending is True
 
     def test_resume_pending_email_to_inbox(self):
         result = step(state_at(Stage.INITIAL), ResumePendingEmail())
         assert result.stage is Stage.INBOX
+        assert result.resumed_from_pending is True
 
     def test_no_saved_config_to_welcome(self):
         result = step(state_at(Stage.INITIAL), NoSavedConfig())
@@ -352,7 +359,7 @@ class TestWorkflowTransitions:
     def test_working_failed_to_trouble_gist(self):
         result = step(state_at(Stage.WORKING), WorkingFailed())
         assert result.stage is Stage.TROUBLE
-        assert result.trouble_reason is TroubleReason.GIST_TIMEOUT
+        assert isinstance(result.trouble, GistTimeout)
 
     def test_publish_verified_to_done(self):
         assert step(state_at(Stage.PUBLISH), GistVerified()).stage is Stage.DONE
@@ -360,7 +367,7 @@ class TestWorkflowTransitions:
     def test_publish_timeout_to_trouble_gist(self):
         result = step(state_at(Stage.PUBLISH), GistTimedOut())
         assert result.stage is Stage.TROUBLE
-        assert result.trouble_reason is TroubleReason.GIST_TIMEOUT
+        assert isinstance(result.trouble, GistTimeout)
 
     def test_gh_add_verified_to_done(self):
         assert step(state_at(Stage.GH_ADD), GhAddVerified()).stage is Stage.DONE
@@ -368,7 +375,7 @@ class TestWorkflowTransitions:
     def test_gh_add_failed_to_trouble_gist(self):
         result = step(state_at(Stage.GH_ADD), GhAddFailed())
         assert result.stage is Stage.TROUBLE
-        assert result.trouble_reason is TroubleReason.GIST_TIMEOUT
+        assert isinstance(result.trouble, GistTimeout)
 
     def test_email_sent_to_inbox(self):
         assert step(state_at(Stage.EMAIL), EmailSent()).stage is Stage.INBOX
@@ -379,7 +386,13 @@ class TestWorkflowTransitions:
     def test_inbox_timeout_to_trouble_verify(self):
         result = step(state_at(Stage.INBOX), VerificationTimedOut())
         assert result.stage is Stage.TROUBLE
-        assert result.trouble_reason is TroubleReason.VERIFY_TIMEOUT
+        assert isinstance(result.trouble, VerifyTimeout)
+        assert result.trouble.error_code == "unknown"
+
+    def test_inbox_timeout_carries_server_error_code(self):
+        result = step(state_at(Stage.INBOX), VerificationTimedOut(error_code="rate-limited"))
+        assert isinstance(result.trouble, VerifyTimeout)
+        assert result.trouble.error_code == "rate-limited"
 
 
 # ===========================================================================
@@ -392,24 +405,24 @@ class TestTroubleTransitions:
         prev = state_at(
             Stage.TROUBLE,
             identity=Identity(github_username="old"),
-            trouble_reason=TroubleReason.GIST_TIMEOUT,
+            trouble=GistTimeout(),
         )
         result = step(prev, TroubleEditUsername(new_username="new"))
         assert result.stage is Stage.PUBLISH
         assert result.identity.github_username == "new"
-        assert result.trouble_reason is None
+        assert result.trouble is None
 
     def test_chose_email_to_email(self):
-        prev = state_at(Stage.TROUBLE, trouble_reason=TroubleReason.GIST_TIMEOUT)
+        prev = state_at(Stage.TROUBLE, trouble=GistTimeout())
         result = step(prev, TroubleChoseEmail())
         assert result.stage is Stage.EMAIL
-        assert result.trouble_reason is None
+        assert result.trouble is None
 
     def test_restart_to_welcome(self):
-        prev = state_at(Stage.TROUBLE, trouble_reason=TroubleReason.VERIFY_TIMEOUT)
+        prev = state_at(Stage.TROUBLE, trouble=VerifyTimeout(error_code="key-not-found"))
         result = step(prev, TroubleRestart())
         assert result.stage is Stage.WELCOME
-        assert result.trouble_reason is None
+        assert result.trouble is None
 
 
 # ===========================================================================
@@ -454,4 +467,5 @@ class TestInvariants:
         assert State().stage is Stage.INITIAL
         assert State().github_lookup_allowed is True
         assert State().selected is None
-        assert State().trouble_reason is None
+        assert State().trouble is None
+        assert State().resumed_from_pending is False

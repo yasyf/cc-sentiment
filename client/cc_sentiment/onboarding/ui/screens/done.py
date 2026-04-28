@@ -1,22 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 
 from textual import screen as t
 
-from cc_sentiment.onboarding import Stage, State as GlobalState
+from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
-
-
-VerificationKind = Literal["ssh-github", "gist", "gpg-github", "gpg-fpr"]
 
 
 @dataclass(frozen=True)
 class State(BaseState):
-    verification_kind: VerificationKind = "ssh-github"
-    contributor_id: str = ""
-    fpr_short: str = ""
+    pass
 
 
 class DoneScreen(Screen[State]):
@@ -40,12 +34,26 @@ class DoneScreen(Screen[State]):
             "verification_gpg_fpr": "Verification: GPG {fpr_short}",
         }
 
-    def render(self) -> t.Screen:
+    def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
         """
         Success screen — the user is verified and ready to ingest. Two
         short cards: who/how we know it's you, and exactly what we'll
         upload. One obvious primary action. Reuses the existing
         DoneBranch (per plan: "Done — Existing DoneBranch").
+
+        Path-dependent rendering — read inline:
+          - The contributor handle comes from `gs.identity.github_username`.
+          - The verification line is picked from `gs.selected.source`:
+              EXISTING_SSH  → VERIFICATION_SSH_GITHUB (via @cid on GitHub)
+              EXISTING_GPG  → VERIFICATION_GPG_FPR (with fpr_short)
+                              when the GPG branch went through email,
+                              else VERIFICATION_GPG_GITHUB.
+              MANAGED+ssh   → VERIFICATION_GIST (managed gist) or
+                              VERIFICATION_SSH_GITHUB (managed via gh-add)
+                              based on which path resolved.
+              MANAGED+gpg   → VERIFICATION_GPG_FPR.
+          - The fpr_short value is `gs.selected.key.fingerprint[-8:]`
+            when applicable.
 
         Layout (stacked cards, ~70 columns):
           ╭─ Verification ─────────────────────╮       (existing card title)
@@ -68,13 +76,6 @@ class DoneScreen(Screen[State]):
           ╰────────────────────────────────────╯
 
                [ Start processing ]                    (was SETTINGS_PRIMARY_LABEL)
-
-        Verification line varies by config (existing _derive_verification):
-          SSHConfig:      "Verification: @{cid} on GitHub"
-          GistConfig:     "Verification: @{cid} via public gist"
-          GistGPGConfig:  "Verification: @{cid} via public gist"
-          GPGConfig (github): "Verification: @{cid} on GitHub"
-          GPGConfig (gpg):    "Verification: GPG {fpr[-8:]}"
 
         Buttons (exactly — matches existing screen):
           - Primary "Start processing" — dismisses the setup dialog with

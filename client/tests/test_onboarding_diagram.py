@@ -6,36 +6,42 @@ import pytest
 
 from cc_sentiment.onboarding import (
     Capabilities,
+    GistTimeout,
+    SetupMachine,
+    Stage,
+    State,
+    VerifyTimeout,
+)
+from cc_sentiment.onboarding.events import (
     DiscoveryComplete,
     EmailSent,
-    ExistingKey,
-    ExistingKeys,
     GhAddFailed,
     GhAddVerified,
     GistTimedOut,
     GistVerified,
-    Identity,
     KeyPicked,
-    KeySource,
     MethodPicked,
     NoGitHubChosen,
     ResumePendingEmail,
     ResumePendingGist,
     SavedConfigChecked,
     SavedRetryRestart,
-    SetupMachine,
-    SshMethod,
-    Stage,
-    State,
     TroubleChoseEmail,
     TroubleEditUsername,
-    TroubleReason,
     TroubleRestart,
     UsernameSubmitted,
     VerificationOk,
     VerificationTimedOut,
     WorkingFailed,
     WorkingSucceeded,
+)
+from cc_sentiment.onboarding.state import (
+    ExistingKey,
+    ExistingKeys,
+    Identity,
+    KeySource,
+    SshMethod,
+    Trouble,
 )
 
 
@@ -102,10 +108,12 @@ class TestSavedEdges:
     def test_saved_to_publish_when_pending_gist(self):
         result = step(State(stage=Stage.INITIAL), ResumePendingGist())
         assert result.stage is Stage.PUBLISH
+        assert result.resumed_from_pending is True
 
     def test_saved_to_inbox_when_pending_email(self):
         result = step(State(stage=Stage.INITIAL), ResumePendingEmail())
         assert result.stage is Stage.INBOX
+        assert result.resumed_from_pending is True
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +285,7 @@ class TestGhAddEdges:
     def test_ghadd_to_trouble_when_failed(self):
         result = step(State(stage=Stage.GH_ADD), GhAddFailed())
         assert result.stage is Stage.TROUBLE
-        assert result.trouble_reason is TroubleReason.GIST_TIMEOUT
+        assert isinstance(result.trouble, GistTimeout)
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +300,7 @@ class TestWorkingEdges:
     def test_working_to_trouble_when_failed(self):
         result = step(State(stage=Stage.WORKING), WorkingFailed())
         assert result.stage is Stage.TROUBLE
-        assert result.trouble_reason is TroubleReason.GIST_TIMEOUT
+        assert isinstance(result.trouble, GistTimeout)
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +315,7 @@ class TestPublishEdges:
     def test_publish_to_trouble_when_timeout(self):
         result = step(State(stage=Stage.PUBLISH), GistTimedOut())
         assert result.stage is Stage.TROUBLE
-        assert result.trouble_reason is TroubleReason.GIST_TIMEOUT
+        assert isinstance(result.trouble, GistTimeout)
 
 
 # ---------------------------------------------------------------------------
@@ -330,9 +338,10 @@ class TestInboxEdges:
         assert step(State(stage=Stage.INBOX), VerificationOk()).stage is Stage.DONE
 
     def test_inbox_to_trouble_when_timeout(self):
-        result = step(State(stage=Stage.INBOX), VerificationTimedOut())
+        result = step(State(stage=Stage.INBOX), VerificationTimedOut(error_code="key-not-found"))
         assert result.stage is Stage.TROUBLE
-        assert result.trouble_reason is TroubleReason.VERIFY_TIMEOUT
+        assert isinstance(result.trouble, VerifyTimeout)
+        assert result.trouble.error_code == "key-not-found"
 
 
 # ---------------------------------------------------------------------------
@@ -354,34 +363,37 @@ class TestRetryEdges:
 # ---------------------------------------------------------------------------
 
 
+TROUBLE_VARIANTS: tuple[Trouble, ...] = (GistTimeout(), VerifyTimeout(error_code="signature-failed"))
+
+
 class TestTroubleEdges:
-    @pytest.mark.parametrize("reason", list(TroubleReason))
-    def test_trouble_to_publish_when_edit_username(self, reason: TroubleReason):
-        prev = State(stage=Stage.TROUBLE, trouble_reason=reason,
+    @pytest.mark.parametrize("trouble", TROUBLE_VARIANTS)
+    def test_trouble_to_publish_when_edit_username(self, trouble: Trouble):
+        prev = State(stage=Stage.TROUBLE, trouble=trouble,
                      identity=Identity(github_username="old"))
         result = step(prev, TroubleEditUsername(new_username="new"))
         assert result.stage is Stage.PUBLISH
         assert result.identity.github_username == "new"
-        assert result.trouble_reason is None
+        assert result.trouble is None
 
-    @pytest.mark.parametrize("reason", list(TroubleReason))
-    def test_trouble_to_email_when_email_option(self, reason: TroubleReason):
-        prev = State(stage=Stage.TROUBLE, trouble_reason=reason)
+    @pytest.mark.parametrize("trouble", TROUBLE_VARIANTS)
+    def test_trouble_to_email_when_email_option(self, trouble: Trouble):
+        prev = State(stage=Stage.TROUBLE, trouble=trouble)
         result = step(prev, TroubleChoseEmail())
         assert result.stage is Stage.EMAIL
-        assert result.trouble_reason is None
+        assert result.trouble is None
 
-    @pytest.mark.parametrize("reason", list(TroubleReason))
-    def test_trouble_to_welcome_when_restart(self, reason: TroubleReason):
-        prev = State(stage=Stage.TROUBLE, trouble_reason=reason)
+    @pytest.mark.parametrize("trouble", TROUBLE_VARIANTS)
+    def test_trouble_to_welcome_when_restart(self, trouble: Trouble):
+        prev = State(stage=Stage.TROUBLE, trouble=trouble)
         result = step(prev, TroubleRestart())
         assert result.stage is Stage.WELCOME
-        assert result.trouble_reason is None
+        assert result.trouble is None
 
 
 # ---------------------------------------------------------------------------
 # Diagram completeness — every documented edge above is enumerated below.
-# Catches drift when somebody adds a Stage / TroubleReason without a test.
+# Catches drift when somebody adds a Stage / Trouble variant without a test.
 # ---------------------------------------------------------------------------
 
 

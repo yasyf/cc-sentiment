@@ -4,13 +4,13 @@ from dataclasses import dataclass
 
 from textual import screen as t
 
-from cc_sentiment.onboarding import Stage, State as GlobalState
+from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
 
 
 @dataclass(frozen=True)
 class State(BaseState):
-    came_from_saved_invalid: bool = False
+    pass
 
 
 class WelcomeScreen(Screen[State]):
@@ -33,7 +33,7 @@ class WelcomeScreen(Screen[State]):
             "saved_invalid_line": "Your last verification needs refreshing.",
         }
 
-    def render(self) -> t.Screen:
+    def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
         """
         Friendly entry point for first-time setup. Calm prose, one obvious
         action, and a subtle hint that something is happening in the
@@ -59,12 +59,11 @@ class WelcomeScreen(Screen[State]):
           - No other actions. The "I don't use GitHub →" link does NOT
             appear here — it lives only on UserForm and Publish.
 
-        State variant — has_saved_config=True (came via "saved invalid"):
-          One extra muted line ABOVE the body:
-
-            "Your last verification needs refreshing."         [DRAFT line]
-
-          No accusations, no error tone, no debug.
+        Path-dependent rendering — read inline:
+          When `gs.has_saved_config` is True (we got bumped here from a
+          saved-invalid probe), one extra muted line appears ABOVE the
+          body: "Your last verification needs refreshing." No accusations,
+          no error tone, no debug.
 
         Subtle hints:
           - "Checking your setup…" is a faint spinner row below the

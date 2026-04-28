@@ -4,15 +4,13 @@ from dataclasses import dataclass
 
 from textual import screen as t
 
-from cc_sentiment.onboarding import ExistingKey, Stage, State as GlobalState
+from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
 
 
 @dataclass(frozen=True)
 class State(BaseState):
-    selected_key: ExistingKey | None = None
-    username: str = ""
-    gh_authenticated: bool = False
+    pass
 
 
 class SshMethodScreen(Screen[State]):
@@ -39,7 +37,7 @@ class SshMethodScreen(Screen[State]):
             "gh_add_subline_manual": "You'll paste it into github.com/settings/keys.",
         }
 
-    def render(self) -> t.Screen:
+    def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
         """
         Dedicated method picker after the user has picked an existing SSH
         key. Two methods, gist is the default. May also show an inline
@@ -64,12 +62,20 @@ class SshMethodScreen(Screen[State]):
           │                                     │
           │       Add it to GitHub →            │      [DRAFT secondary label]
           │       (gh authed)                   │      [DRAFT sub-line variants]
-          │       We'll add it via the GitHub   │
-          │       CLI.
-          │       (no gh)
+          │       We'll add it for you.         │
+          │       (no gh)                       │
           │       You'll paste it into          │
           │       github.com/settings/keys.     │
           ╰─────────────────────────────────────╯
+
+        Path-dependent rendering — read inline:
+          - The picked SSH key (`gs.selected.key`) drives the gist URL
+            preview and the "Add it to GitHub" target.
+          - The inline username input appears iff
+            `not gs.identity.has_username`. Pre-fills with whatever's
+            already there if non-empty.
+          - The "Add it to GitHub →" sub-line picks GH_ADD_SUBLINE_AUTHED
+            when `caps.gh_authenticated`, else GH_ADD_SUBLINE_MANUAL.
 
         Buttons (exactly):
           - Optional username input (only when missing).

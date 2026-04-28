@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from textual import screen as t
 
-from cc_sentiment.onboarding import Stage, State as GlobalState
+from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
 
 
@@ -29,7 +29,7 @@ class SavedRetryScreen(Screen[State]):
             "restart_link": "Set up again",
         }
 
-    def render(self) -> t.Screen:
+    def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
         """
         Small recovery card for when saved credentials exist but
         sentiments.cc is currently unreachable. Reassuring tone — implies

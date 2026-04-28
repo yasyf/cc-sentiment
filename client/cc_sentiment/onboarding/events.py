@@ -3,7 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from .state import ExistingKey, ExistingKeys, Identity, KeySource, SshMethod
+from .state import (
+    ExistingKey,
+    ExistingKeys,
+    Identity,
+    KeySource,
+    SshMethod,
+    VerifyErrorCode,
+)
 
 
 class Event:
@@ -100,7 +107,7 @@ class VerificationOk(Event):
 
 @dataclass(frozen=True, slots=True)
 class VerificationTimedOut(Event):
-    pass
+    error_code: VerifyErrorCode = "unknown"
 
 
 @dataclass(frozen=True, slots=True)

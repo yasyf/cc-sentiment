@@ -4,13 +4,13 @@ from dataclasses import dataclass
 
 from textual import screen as t
 
-from cc_sentiment.onboarding import Stage, State as GlobalState
+from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
 
 
 @dataclass(frozen=True)
 class State(BaseState):
-    email: str = ""
+    pass
 
 
 class InboxScreen(Screen[State]):
@@ -36,11 +36,14 @@ class InboxScreen(Screen[State]):
             "rate_limit_note": "Service busy. Retrying soon.",
         }
 
-    def render(self) -> t.Screen:
+    def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
         """
         Waiting card shown after the verification email has been sent.
         Replaces the email form so the user knows the request went out
         and now just needs to act on the email.
+
+        Path-dependent rendering — read inline:
+          - The displayed email address comes from `gs.identity.email`.
 
         Layout (centered card, ~60 columns):
           ╭─ Check your inbox ─────────────────╮       [DRAFT title]

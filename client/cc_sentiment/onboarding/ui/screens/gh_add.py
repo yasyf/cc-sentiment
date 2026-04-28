@@ -4,14 +4,13 @@ from dataclasses import dataclass
 
 from textual import screen as t
 
-from cc_sentiment.onboarding import SelectedKey, Stage, State as GlobalState
+from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
 
 
 @dataclass(frozen=True)
 class State(BaseState):
-    selected: SelectedKey | None = None
-    gh_authenticated: bool = False
+    pass
 
 
 class GhAddScreen(Screen[State]):
@@ -36,16 +35,25 @@ class GhAddScreen(Screen[State]):
             "rate_limit_note": "GitHub busy. Retrying.",
         }
 
-    def render(self) -> t.Screen:
+    def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
         """
         Add an existing SSH key to a GitHub account. Two flavors based on
         whether `gh` is authenticated (per plan Q&A: "Show automatic/
         manual; de-emphasize manual if not gh-authenticated").
 
+        Path-dependent rendering — read inline:
+          - The selected SSH key (`gs.selected.key`) drives the preview
+            block + the polling fingerprint.
+          - The username in the GitHub watcher comes from
+            `gs.identity.github_username`.
+          - Auto vs manual flavor is picked from `caps.gh_authenticated`:
+              authed → Layout (gh authed) below.
+              else   → Layout (no gh auth) below.
+
         Layout (gh authed — silent automatic, ~50 columns):
           ╭─ Adding to GitHub… ────────────────╮       [DRAFT title]
           │                                    │
-          │  ⠹ Adding key via gh CLI…          │       [DRAFT status]
+          │  ⠹ Adding your signature…          │       [DRAFT status]
           │                                    │
           ╰────────────────────────────────────╯
           No buttons. Same shape as Working.

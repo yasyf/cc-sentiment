@@ -4,14 +4,13 @@ from dataclasses import dataclass
 
 from textual import screen as t
 
-from cc_sentiment.onboarding import Stage, State as GlobalState
+from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
 
 
 @dataclass(frozen=True)
 class State(BaseState):
-    has_brew: bool = False
-    needs_ssh: bool = False
+    pass
 
 
 class BlockedScreen(Screen[State]):
@@ -35,10 +34,16 @@ class BlockedScreen(Screen[State]):
             "quit_button": "Quit",
         }
 
-    def render(self) -> t.Screen:
+    def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
         """
         Final-resort screen when neither ssh-keygen nor GPG is available
         and we can't proceed. Honest, helpful, suggests the fix.
+
+        Path-dependent rendering — read inline:
+          - The install hint snippet is INSTALL_HINT_BREW iff
+            `caps.has_brew`, else INSTALL_HINT_GENERIC.
+          - The "Open install guide" target picks SSH docs if
+            `not caps.has_ssh_keygen`, else GPG docs.
 
         Layout (card, ~60 columns):
           ╭─ We need an SSH client or GPG ─────╮       (BLOCKED_TITLE)
@@ -54,12 +59,6 @@ class BlockedScreen(Screen[State]):
           │       [ Open install guide ]       │       (existing button label)
           │       [ Quit ]                     │       (existing button label)
           ╰────────────────────────────────────╯
-
-        Install hint (selectable / copyable monospaced line):
-          - macOS or has_brew:    BLOCKED_INSTALL_HINT_BREW
-              "  brew install gnupg"
-          - else:                 BLOCKED_INSTALL_HINT_GENERIC
-              "Install OpenSSH or GPG, then return."
 
         Buttons (exactly — matches existing screen):
           - Primary "Open install guide" — app.open_url to the relevant

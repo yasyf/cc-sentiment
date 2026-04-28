@@ -30,12 +30,14 @@ from .events import (
     WorkingSucceeded,
 )
 from .state import (
+    GistTimeout,
     KeySource,
     SelectedKey,
     SshMethod,
     Stage,
     State,
-    TroubleReason,
+    Trouble,
+    VerifyTimeout,
 )
 
 
@@ -57,8 +59,8 @@ class Router:
         )
 
     @staticmethod
-    def to_trouble(state: State, reason: TroubleReason) -> State:
-        return replace(state, stage=Stage.TROUBLE, trouble_reason=reason)
+    def to_trouble(state: State, trouble: Trouble) -> State:
+        return replace(state, stage=Stage.TROUBLE, trouble=trouble)
 
 
 class StartMachine:
@@ -68,9 +70,9 @@ class StartMachine:
     def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
         match (state.stage, event):
             case (Stage.INITIAL, ResumePendingGist()):
-                return replace(state, stage=Stage.PUBLISH)
+                return replace(state, stage=Stage.PUBLISH, resumed_from_pending=True)
             case (Stage.INITIAL, ResumePendingEmail()):
-                return replace(state, stage=Stage.INBOX)
+                return replace(state, stage=Stage.INBOX, resumed_from_pending=True)
             case (Stage.INITIAL, NoSavedConfig()):
                 return replace(state, stage=Stage.WELCOME)
             case (Stage.INITIAL | Stage.SAVED_RETRY, SavedConfigChecked(result="ok")):
@@ -150,21 +152,21 @@ class WorkflowMachine:
             case (Stage.WORKING, WorkingSucceeded()):
                 return replace(state, stage=Stage.DONE)
             case (Stage.WORKING, WorkingFailed()):
-                return Router.to_trouble(state, TroubleReason.GIST_TIMEOUT)
+                return Router.to_trouble(state, GistTimeout())
             case (Stage.PUBLISH, GistVerified()):
                 return replace(state, stage=Stage.DONE)
             case (Stage.PUBLISH, GistTimedOut()):
-                return Router.to_trouble(state, TroubleReason.GIST_TIMEOUT)
+                return Router.to_trouble(state, GistTimeout())
             case (Stage.GH_ADD, GhAddVerified()):
                 return replace(state, stage=Stage.DONE)
             case (Stage.GH_ADD, GhAddFailed()):
-                return Router.to_trouble(state, TroubleReason.GIST_TIMEOUT)
+                return Router.to_trouble(state, GistTimeout())
             case (Stage.EMAIL, EmailSent()):
                 return replace(state, stage=Stage.INBOX)
             case (Stage.INBOX, VerificationOk()):
                 return replace(state, stage=Stage.DONE)
-            case (Stage.INBOX, VerificationTimedOut()):
-                return Router.to_trouble(state, TroubleReason.VERIFY_TIMEOUT)
+            case (Stage.INBOX, VerificationTimedOut(error_code=ec)):
+                return Router.to_trouble(state, VerifyTimeout(error_code=ec))
         raise InvalidTransition(state, event)
 
 
@@ -176,13 +178,13 @@ class TroubleMachine:
         match (state.stage, event):
             case (Stage.TROUBLE, TroubleEditUsername(new_username=u)):
                 return replace(
-                    state, stage=Stage.PUBLISH, trouble_reason=None,
+                    state, stage=Stage.PUBLISH, trouble=None,
                     identity=replace(state.identity, github_username=u),
                 )
             case (Stage.TROUBLE, TroubleChoseEmail()):
-                return replace(state, stage=Stage.EMAIL, trouble_reason=None)
+                return replace(state, stage=Stage.EMAIL, trouble=None)
             case (Stage.TROUBLE, TroubleRestart()):
-                return replace(state, stage=Stage.WELCOME, trouble_reason=None)
+                return replace(state, stage=Stage.WELCOME, trouble=None)
         raise InvalidTransition(state, event)
 
 

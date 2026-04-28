@@ -1,20 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 
 from textual import screen as t
 
-from cc_sentiment.onboarding import Stage, State as GlobalState, TroubleReason
+from cc_sentiment.onboarding import (
+    Capabilities,
+    Stage,
+    State as GlobalState,
+    VerifyTimeout,
+)
 from cc_sentiment.onboarding.ui import BaseState, Screen
-
-
-ErrorCode = Literal["key-not-found", "signature-failed", "rate-limited", "unknown"]
 
 
 @dataclass(frozen=True)
 class State(BaseState):
-    error_code: ErrorCode = "unknown"
+    pass
 
 
 class VerifyTroubleScreen(Screen[State]):
@@ -22,10 +23,7 @@ class VerifyTroubleScreen(Screen[State]):
 
     @classmethod
     def matcher(cls) -> GlobalState:
-        return GlobalState(
-            stage=Stage.TROUBLE,
-            trouble_reason=TroubleReason.VERIFY_TIMEOUT,
-        )
+        return GlobalState(stage=Stage.TROUBLE, trouble=VerifyTimeout())
 
     @classmethod
     def strings(cls) -> dict[str, str]:
@@ -39,13 +37,19 @@ class VerifyTroubleScreen(Screen[State]):
             "error_unknown": "sentiments.cc reported an issue we don't recognize.",
         }
 
-    def render(self) -> t.Screen:
+    def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
         """
         Trouble screen for when the key is published but sentiments.cc
         still can't verify it after the propagation window. Server-side
         problem we can't fix from here — give the user a clear restart
         and one mapped explanation (per plan: "Verification timeout:
         display client-mapped server error code + restart setup").
+
+        Path-dependent rendering — read inline:
+          - The error_code is `gs.trouble.error_code` (gs.trouble is
+            guaranteed to be a VerifyTimeout when this screen renders).
+          - That code maps client-side to one of the four error_* strings
+            above (see Server-code mapping below).
 
         Layout (card, ~60 columns):
           ╭─ We couldn't verify your signature ─╮      [DRAFT title]

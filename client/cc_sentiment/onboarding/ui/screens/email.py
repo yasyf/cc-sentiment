@@ -4,13 +4,13 @@ from dataclasses import dataclass
 
 from textual import screen as t
 
-from cc_sentiment.onboarding import Stage, State as GlobalState
+from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
 
 
 @dataclass(frozen=True)
 class State(BaseState):
-    prefilled_email: str = ""
+    pass
 
 
 class EmailScreen(Screen[State]):
@@ -31,11 +31,15 @@ class EmailScreen(Screen[State]):
             "error_unreachable": "Couldn't reach keys.openpgp.org. Try again in a moment.",
         }
 
-    def render(self) -> t.Screen:
+    def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
         """
         Email entry form for the OpenPGP path. Pre-fill if we already
         know a usable email (from gh, recent commits, or the picked GPG
         key); otherwise blank.
+
+        Path-dependent rendering — read inline:
+          - Pre-fill the input from `gs.identity.email` iff
+            `gs.identity.email_usable`. Otherwise leave it blank.
 
         Layout (centered card, ~60 columns):
           ╭─ What email should we use? ────────╮       (ALTERNATE_TITLE)

@@ -4,14 +4,18 @@ from dataclasses import dataclass
 
 from textual import screen as t
 
-from cc_sentiment.onboarding import Stage, State as GlobalState, TroubleReason
+from cc_sentiment.onboarding import (
+    Capabilities,
+    GistTimeout,
+    Stage,
+    State as GlobalState,
+)
 from cc_sentiment.onboarding.ui import BaseState, Screen
 
 
 @dataclass(frozen=True)
 class State(BaseState):
-    current_username: str = ""
-    has_gpg_alternative: bool = False
+    pass
 
 
 class GistTroubleScreen(Screen[State]):
@@ -19,10 +23,7 @@ class GistTroubleScreen(Screen[State]):
 
     @classmethod
     def matcher(cls) -> GlobalState:
-        return GlobalState(
-            stage=Stage.TROUBLE,
-            trouble_reason=TroubleReason.GIST_TIMEOUT,
-        )
+        return GlobalState(stage=Stage.TROUBLE, trouble=GistTimeout())
 
     @classmethod
     def strings(cls) -> dict[str, str]:
@@ -38,13 +39,18 @@ class GistTroubleScreen(Screen[State]):
             "rate_limit_note": "GitHub busy. Still trying.",
         }
 
-    def render(self) -> t.Screen:
+    def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
         """
         Trouble screen for when we've watched for the gist long enough
         and never found it. Most common cause is a typo in the username,
         so we put the username edit inline and offer email as the alternate
         path. No restart link here (per plan: "Keep actions branch-specific;
         no extraneous buttons" — restart belongs to VerifyTrouble only).
+
+        Path-dependent rendering — read inline:
+          - The username input is pre-filled with
+            `gs.identity.github_username` (the one we've been polling).
+          - "Use email instead →" appears iff `caps.has_gpg`.
 
         Layout (card, ~60 columns):
           ╭─ Still watching for your gist ─────╮       (TROUBLE_TITLE)

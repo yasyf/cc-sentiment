@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from textual import screen as t
 
-from cc_sentiment.onboarding import Stage, State as GlobalState
+from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
 
 
@@ -33,7 +33,7 @@ class UserFormScreen(Screen[State]):
             "validating": "Validating {user}…",
         }
 
-    def render(self) -> t.Screen:
+    def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
         """
         Username form, shown only as a last resort when ssh-keygen exists
         but we still don't know who the user is on GitHub. One clear

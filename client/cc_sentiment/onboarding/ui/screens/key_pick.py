@@ -4,15 +4,13 @@ from dataclasses import dataclass
 
 from textual import screen as t
 
-from cc_sentiment.onboarding import ExistingKey, Stage, State as GlobalState
+from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
 
 
 @dataclass(frozen=True)
 class State(BaseState):
-    existing_ssh: tuple[ExistingKey, ...] = ()
-    existing_gpg: tuple[ExistingKey, ...] = ()
-    managed_recommended: bool = False
+    pass
 
 
 class KeyPickScreen(Screen[State]):
@@ -31,7 +29,7 @@ class KeyPickScreen(Screen[State]):
             "recommended_pill": "recommended",
         }
 
-    def render(self) -> t.Screen:
+    def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
         """
         Card-based picker for which key to use. Big polished TUI cards/rows
         — never a table (per plan: "Existing-key UI must be large,
@@ -55,17 +53,21 @@ class KeyPickScreen(Screen[State]):
           │     stored under ~/.cc-sentiment/keys │
           ╰───────────────────────────────────────╯
 
+        Path-dependent rendering — read inline:
+          - SSH cards iterate `gs.existing_keys.ssh`.
+          - GPG cards iterate `gs.existing_keys.gpg`.
+          - The managed card is always present.
+          - Whether the managed card is "recommended" (and focused by
+            default) is computed inline:
+                managed_recommended = caps.gh_authenticated
+            Otherwise the first existing key is focused.
+
         Each card (per plan "label + path/fingerprint, faint focused preview"):
           - Radio glyph (●/○) marks current focus.
           - Bold label line: path (SSH) or fingerprint (GPG).
           - Subtitle: algorithm + comment (SSH) or email (GPG).
           - Faint single-line preview of the public key body when focused;
             other cards show no preview.
-
-        Default focus (per plan Q&A "Key choice default"):
-          - If the managed key is recommended (router suggests it), the
-            managed card is focused.
-          - Otherwise the first existing key is focused.
 
         Buttons (exactly):
           - No separate buttons. Each card IS the action.

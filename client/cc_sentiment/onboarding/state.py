@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Literal
 
 
 class Stage(StrEnum):
@@ -21,9 +22,22 @@ class Stage(StrEnum):
     DONE = "done"
 
 
-class TroubleReason(StrEnum):
-    GIST_TIMEOUT = "gist-timeout"
-    VERIFY_TIMEOUT = "verify-timeout"
+VerifyErrorCode = Literal[
+    "key-not-found", "signature-failed", "rate-limited", "unknown",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class GistTimeout:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class VerifyTimeout:
+    error_code: VerifyErrorCode = "unknown"
+
+
+Trouble = GistTimeout | VerifyTimeout
 
 
 class SshMethod(StrEnum):
@@ -79,4 +93,5 @@ class State:
     has_saved_config: bool = False
     selected: SelectedKey | None = None
     github_lookup_allowed: bool = True
-    trouble_reason: TroubleReason | None = None
+    trouble: Trouble | None = None
+    resumed_from_pending: bool = False

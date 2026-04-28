@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from textual import screen as t
 
-from cc_sentiment.onboarding import Stage, State as GlobalState
+from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
 
 
@@ -27,7 +27,7 @@ class InitialScreen(Screen[State]):
             "still_checking": "Still checking…",
         }
 
-    def render(self) -> t.Screen:
+    def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
         """
         Spare loading screen during the initial probe — usually too quick
         to register, but graceful when the network is slow.

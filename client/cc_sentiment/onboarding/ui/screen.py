@@ -5,7 +5,7 @@ from typing import ClassVar, Generic, TypeVar
 
 from textual import screen as t
 
-from cc_sentiment.onboarding import State as GlobalState
+from cc_sentiment.onboarding import Capabilities, State as GlobalState
 
 from .state import BaseState
 
@@ -27,4 +27,4 @@ class Screen(ABC, Generic[S]):
     def strings(cls) -> dict[str, str]: ...
 
     @abstractmethod
-    def render(self) -> t.Screen: ...
+    def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen: ...

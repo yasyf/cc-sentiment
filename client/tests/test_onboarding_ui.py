@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from unittest.mock import Mock
 
 import pytest
 from textual import screen as t
 
-from cc_sentiment.onboarding import Stage, State as GlobalState, TroubleReason
+from cc_sentiment.onboarding import (
+    Capabilities,
+    GistTimeout,
+    Stage,
+    State as GlobalState,
+    VerifyTimeout,
+)
 from cc_sentiment.onboarding.ui import BaseState, Screen
 from cc_sentiment.onboarding.ui.screens import (
     BlockedScreen,
@@ -34,6 +41,10 @@ ALL_SCREENS: tuple[type[Screen], ...] = (
 )
 
 
+def fake_caps() -> Capabilities:
+    return Mock(spec=Capabilities)
+
+
 @dataclass(frozen=True)
 class WelcomeState(BaseState):
     busy: bool = False
@@ -50,7 +61,7 @@ class _MinimalScreen(Screen[WelcomeState]):
     def strings(cls) -> dict[str, str]:
         return {"title": "x"}
 
-    def render(self) -> t.Screen:
+    def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
         return t.Screen()
 
 
@@ -105,7 +116,7 @@ def test_screen_uses_subclass_override_of_empty():
         def strings(cls) -> dict[str, str]:
             return {}
 
-        def render(self) -> t.Screen:
+        def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
             return t.Screen()
 
     assert SeededScreen().state.counter == 42
@@ -120,11 +131,12 @@ def test_matcher_returns_global_state_shape():
 def test_matcher_can_describe_a_substate():
     pattern = GistTroubleScreen.matcher()
     assert pattern.stage is Stage.TROUBLE
-    assert pattern.trouble_reason is TroubleReason.GIST_TIMEOUT
+    assert isinstance(pattern.trouble, GistTimeout)
 
 
 def test_render_returns_textual_screen():
-    assert isinstance(_MinimalScreen().render(), t.Screen)
+    rendered = _MinimalScreen().render(GlobalState(stage=Stage.WELCOME), fake_caps())
+    assert isinstance(rendered, t.Screen)
 
 
 def test_strings_is_required_on_subclasses():
@@ -139,7 +151,7 @@ def test_strings_is_required_on_subclasses():
         def matcher(cls) -> GlobalState:
             return GlobalState(stage=Stage.WELCOME)
 
-        def render(self) -> t.Screen:
+        def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
             return t.Screen()
 
     with pytest.raises(TypeError):
@@ -151,22 +163,24 @@ def test_strings_is_required_on_subclasses():
 # ===========================================================================
 
 
+def reachable_key(matcher: GlobalState) -> tuple[Stage, type | None]:
+    return (matcher.stage, type(matcher.trouble) if matcher.trouble else None)
+
+
 class TestScreenRegistry:
     def test_every_reachable_point_has_a_screen(self):
-        reachable: set[tuple[Stage, TroubleReason | None]] = (
-            {(stage, None) for stage in Stage if stage is not Stage.TROUBLE}
-            | {
-                (Stage.TROUBLE, TroubleReason.GIST_TIMEOUT),
-                (Stage.TROUBLE, TroubleReason.VERIFY_TIMEOUT),
-            }
-        )
-        owned = {(s.matcher().stage, s.matcher().trouble_reason) for s in ALL_SCREENS}
+        reachable: set[tuple[Stage, type | None]] = {
+            *((stage, None) for stage in Stage if stage is not Stage.TROUBLE),
+            (Stage.TROUBLE, GistTimeout),
+            (Stage.TROUBLE, VerifyTimeout),
+        }
+        owned = {reachable_key(s.matcher()) for s in ALL_SCREENS}
         assert owned == reachable
 
     def test_every_matcher_is_unique(self):
-        seen: dict[tuple[Stage, TroubleReason | None], type[Screen]] = {}
+        seen: dict[tuple[Stage, type | None], type[Screen]] = {}
         for s in ALL_SCREENS:
-            key = (s.matcher().stage, s.matcher().trouble_reason)
+            key = reachable_key(s.matcher())
             assert key not in seen, f"{s} duplicates {seen[key]}"
             seen[key] = s
 
