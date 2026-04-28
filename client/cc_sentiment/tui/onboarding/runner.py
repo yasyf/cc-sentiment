@@ -131,14 +131,14 @@ class OnboardingScreen(Screen[bool]):
         while True:
             view = self._build_view(state)
             event = await self._show(view, state)
-            state = self._apply_event(state, event)
-            if state.stage is Stage.DONE:
+            if state.stage is Stage.DONE and isinstance(event, StartProcessing):
                 await self._persist_done(state)
                 self.dismiss(True)
                 return
             if state.stage is Stage.BLOCKED and isinstance(event, QuitOnboarding):
                 self.dismiss(False)
                 return
+            state = self._apply_event(state, event)
 
     async def _show(self, view: t.Screen, state: State) -> Event:
         """Push view, await mount, launch side-effect, await dismiss result."""

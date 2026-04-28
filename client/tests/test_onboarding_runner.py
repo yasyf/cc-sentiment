@@ -65,6 +65,10 @@ async def test_saved_config_ok_finishes_with_true(fast_caps):
         harness = Harness(state)
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.5)
+            from cc_sentiment.onboarding.ui.screens.done import DoneView
+            assert isinstance(pilot.app.screen, DoneView)
+            await pilot.click("#start-btn")
+            await pilot.pause(delay=0.2)
     assert harness.result is True
 
 
@@ -131,6 +135,10 @@ async def test_discovery_auto_verifies_existing_key_and_dones(fast_caps):
     ):
         harness = Harness(state)
         async with harness.run_test() as pilot:
+            await pilot.pause(delay=1.0)
+            from cc_sentiment.onboarding.ui.screens.done import DoneView
+            assert isinstance(pilot.app.screen, DoneView)
+            await pilot.click("#start-btn")
             await pilot.pause(delay=0.5)
     assert harness.result is True
     assert state.config == SSH_CFG

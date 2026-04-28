@@ -105,14 +105,18 @@ class DoneScreen(Screen[State]):
             "verification_gist": "Verification: @{cid} via public gist",
             "verification_gpg_github": "Verification: @{cid} on GitHub",
             "verification_gpg_fpr": "Verification: GPG {fpr_short}",
+            "verification_saved": "Verification: your saved key still works",
         }
 
     @classmethod
     def verification_line(cls, gs: GlobalState) -> str:
         s = cls.strings()
         selected = gs.selected
-        assert isinstance(selected, SelectedKey)
         username = gs.identity.github_username
+        if not isinstance(selected, SelectedKey):
+            if username:
+                return s["verification_ssh_github"].format(cid=username)
+            return s["verification_saved"]
         fpr = selected.key.fingerprint if selected.key else ""
         fpr_short = fpr[-8:]
 
