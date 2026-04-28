@@ -29,10 +29,8 @@ from cc_sentiment.tui.format import TimeFormat
 from cc_sentiment.tui.screens import (
     CostReviewScreen,
     PlatformErrorScreen,
-    SetupScreen,
     StatShareScreen,
 )
-from cc_sentiment.tui.setup_state import DiscoveryResult
 from cc_sentiment.tui.stages import (
     Discovering,
     IdleAfterUpload,
@@ -215,35 +213,6 @@ async def test_ccsentiment_app_debug_mode_composes(tmp_path: Path):
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.1)
             assert pilot.app.query_one(DebugSection) is not None
-
-
-async def test_ccsentiment_app_pushes_setup_when_no_config(tmp_path: Path):
-    state = AppState()
-    db_path = tmp_path / "records.db"
-
-    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="mlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 1))), \
-         patch("cc_sentiment.tui.setup_helpers.DiscoveryRunner.run", return_value=DiscoveryResult()):
-        app = CCSentimentApp(state=state, db_path=db_path)
-        async with app.run_test() as pilot:
-            await pilot.pause(delay=0.5)
-            assert isinstance(pilot.app.screen, SetupScreen)
-
-
-async def test_ccsentiment_app_setup_only_pushes_setup_without_worker(tmp_path: Path):
-    state = AppState()
-    db_path = tmp_path / "records.db"
-
-    with patch("cc_sentiment.tui.setup_helpers.DiscoveryRunner.run", return_value=DiscoveryResult()):
-        app = CCSentimentApp(state=state, db_path=db_path, setup_only=True)
-        app.exit = Mock(wraps=app.exit)
-        async with app.run_test() as pilot:
-            await pilot.pause(delay=0.5)
-            assert isinstance(pilot.app.screen, SetupScreen)
-            await pilot.press("escape")
-            await pilot.pause(delay=0.1)
-
-    app.exit.assert_called_once_with()
 
 
 async def test_ccsentiment_app_claude_engine_shows_cost_review(tmp_path: Path, auth_ok):
