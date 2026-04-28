@@ -68,7 +68,21 @@ class TestSshMethodScreen:
     async def test_gist_subline_includes_username(self):
         async with mounted(SshMethodScreen, gs_ssh_method(username="alice")) as pilot:
             sub = pilot.app.screen.query_one("#gist-subline")
-            assert "alice" in str(sub.renderable)
+            text = str(sub.renderable)
+            assert "alice" in text
+            assert "github.com/" in text
+            assert "Delete it any time" in text
+
+    async def test_gist_subline_does_not_leak_unfilled_placeholder(self):
+        # When username is missing, the subline must not render `{username}`.
+        async with mounted(SshMethodScreen, gs_ssh_method(username="")) as pilot:
+            sub = pilot.app.screen.query_one("#gist-subline")
+            assert "{username}" not in str(sub.renderable)
+
+    async def test_username_input_placeholder_is_yasyf(self):
+        async with mounted(SshMethodScreen, gs_ssh_method(username="")) as pilot:
+            inp = pilot.app.screen.query_one("#username-input", Input)
+            assert inp.placeholder == "yasyf"
 
     async def test_gh_add_link_present(self):
         async with mounted(SshMethodScreen, gs_ssh_method()) as pilot:

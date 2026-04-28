@@ -31,7 +31,35 @@ class TestBlockedScreen:
     async def test_install_hint_brew_when_brew_available(self):
         async with mounted(BlockedScreen, gs_blocked(), fake_caps(has_brew=True)) as pilot:
             hint = pilot.app.screen.query_one("#install-hint")
-            assert "brew install" in str(hint.renderable)
+            text = str(hint.renderable)
+            assert "brew install" in text
+            assert "gnupg" in text
+
+    async def test_install_guide_target_is_ssh_docs_when_no_ssh_keygen(self):
+        # Plan: "SSH if neither is present, GPG if SSH is present and only the
+        # GPG path was unavailable."
+        async with mounted(
+            BlockedScreen, gs_blocked(), fake_caps(has_ssh_keygen=False, has_gpg=False)
+        ) as pilot:
+            btn = pilot.app.screen.query_one("#install-guide-btn")
+            target = (
+                getattr(btn, "url", None)
+                or btn.classes
+                or set()
+            )
+            assert "ssh" in str(target).lower()
+
+    async def test_install_guide_target_is_gpg_docs_when_ssh_present(self):
+        async with mounted(
+            BlockedScreen, gs_blocked(), fake_caps(has_ssh_keygen=True, has_gpg=False)
+        ) as pilot:
+            btn = pilot.app.screen.query_one("#install-guide-btn")
+            target = (
+                getattr(btn, "url", None)
+                or btn.classes
+                or set()
+            )
+            assert "gpg" in str(target).lower()
 
     async def test_install_hint_generic_when_no_brew(self):
         async with mounted(BlockedScreen, gs_blocked(), fake_caps(has_brew=False)) as pilot:

@@ -95,6 +95,19 @@ class TestPublishScreen:
         async with mounted(PublishScreen, gs_publish()) as pilot:
             assert not pilot.app.screen.query(DataTable)
 
+    async def test_open_github_button_targets_gist_new_url(self):
+        # Plan: "Primary 'Open GitHub' — calls app.open_url for
+        # https://gist.github.com/new."
+        async with mounted(PublishScreen, gs_publish()) as pilot:
+            btn = pilot.app.screen.query_one("#open-btn", Button)
+            url = getattr(btn, "url", "") or ""
+            assert "gist.github.com/new" in url
+
+    async def test_rate_limit_note_hidden_on_initial_render(self):
+        async with mounted(PublishScreen, gs_publish()) as pilot:
+            note = pilot.app.screen.query("#rate-limit-note")
+            assert not note or not note[0].display
+
     # ─── Fallback panel (clipboard or browser failed) ────────────────────
 
     async def test_fallback_panel_absent_by_default(self):

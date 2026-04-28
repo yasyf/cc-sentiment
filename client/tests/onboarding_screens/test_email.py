@@ -45,6 +45,16 @@ class TestEmailScreen:
             inp = pilot.app.screen.query_one("#email-input", Input)
             assert inp.value == ""
 
+    async def test_email_input_blank_when_email_set_but_not_usable(self):
+        # Plan: only pre-fill when `email_usable`. A noreply / outdated address
+        # should NOT auto-fill into the input.
+        async with mounted(
+            EmailScreen,
+            gs_email(email="alice@users.noreply.github.com", email_usable=False),
+        ) as pilot:
+            inp = pilot.app.screen.query_one("#email-input", Input)
+            assert inp.value == ""
+
     async def test_email_input_prefilled_when_usable(self):
         async with mounted(
             EmailScreen,
@@ -80,3 +90,9 @@ class TestEmailScreen:
         async with mounted(EmailScreen, gs_email()) as pilot:
             assert not has_text(pilot, "PGP")
             assert not has_text(pilot, "encrypt")
+
+    async def test_no_keys_openpgp_org_in_initial_render(self):
+        # The "Couldn't reach keys.openpgp.org" string is an error-state hint;
+        # it must NOT appear on the calm initial render.
+        async with mounted(EmailScreen, gs_email()) as pilot:
+            assert not has_text(pilot, "keys.openpgp.org")

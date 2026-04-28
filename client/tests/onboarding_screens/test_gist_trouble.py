@@ -30,8 +30,9 @@ class TestGistTroubleScreen:
     async def test_body_explains_typo_likely(self):
         async with mounted(GistTroubleScreen, gs_gist_trouble()) as pilot:
             body = str(pilot.app.screen.query_one("#body").renderable)
+            assert "GitHub usually takes a moment" in body
             assert "username" in body
-            assert "off" in body or "wrong" in body
+            assert "never find it" in body
 
     async def test_username_input_prefilled(self):
         async with mounted(GistTroubleScreen, gs_gist_trouble("alice")) as pilot:
@@ -72,5 +73,12 @@ class TestGistTroubleScreen:
 
     async def test_no_retry_counter(self):
         async with mounted(GistTroubleScreen, gs_gist_trouble()) as pilot:
-            assert not has_text(pilot, "Retry")
+            # Plan: "no retry counter, no scary error text".
             assert not has_text(pilot, "Attempt ")
+            assert not has_text(pilot, "of 3")
+            assert not has_text(pilot, "Retry #")
+
+    async def test_rate_limit_note_hidden_on_initial_render(self):
+        async with mounted(GistTroubleScreen, gs_gist_trouble()) as pilot:
+            note = pilot.app.screen.query("#rate-limit-note")
+            assert not note or not note[0].display

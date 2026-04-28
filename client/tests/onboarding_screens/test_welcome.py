@@ -52,6 +52,14 @@ class TestWelcomeScreen:
             line = pilot.app.screen.query_one("#saved-invalid-line")
             assert "needs refreshing" in str(line.renderable)
 
+    async def test_saved_invalid_line_appears_above_body(self):
+        # Docstring: "One extra muted line ABOVE the body".
+        async with mounted(WelcomeScreen, gs_welcome(has_saved_config=True)) as pilot:
+            screen = pilot.app.screen
+            widgets = list(screen.walk_children())
+            ids = [w.id for w in widgets if w.id in {"saved-invalid-line", "body"}]
+            assert ids.index("saved-invalid-line") < ids.index("body")
+
     async def test_no_no_github_link(self):
         # "I don't use GitHub →" lives only on UserForm and Publish, not Welcome.
         async with mounted(WelcomeScreen, gs_welcome()) as pilot:

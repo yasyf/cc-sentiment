@@ -51,10 +51,12 @@ class TestKeyPickScreen:
 
     async def test_managed_card_label(self):
         async with mounted(KeyPickScreen, gs_key_pick()) as pilot:
-            card = pilot.app.screen.query_one("#managed-card")
-            assert "Create a new signature" in str(getattr(card, "renderable", "")) or has_text(
-                pilot, "Create a new signature"
-            )
+            assert has_text(pilot, "Create a new signature")
+
+    async def test_managed_card_subline(self):
+        async with mounted(KeyPickScreen, gs_key_pick()) as pilot:
+            assert has_text(pilot, "Dedicated to cc-sentiment")
+            assert has_text(pilot, "~/.cc-sentiment/keys")
 
     async def test_one_ssh_card_per_existing_ssh_key(self):
         keys = (ssh("id_ed25519"), ssh("id_rsa"))
@@ -135,3 +137,40 @@ class TestKeyPickScreen:
         ) as pilot:
             assert not has_text(pilot, "We recommend")
             assert not has_text(pilot, "Why is this recommended")
+
+    async def test_gpg_keys_without_usable_email_are_hidden(self):
+        # Plan Q&A: "Existing GPG keys without usable email are not shown".
+        # An ExistingKey models a GPG key as `label=email`. A blank or
+        # non-usable label means the key must not appear as a card.
+        usable = ExistingKey(fingerprint="AAAA0001", label="alice@example.com")
+        no_email = ExistingKey(fingerprint="BBBB0002", label="")
+        async with mounted(
+            KeyPickScreen,
+            gs_key_pick(gpg_keys=(usable, no_email)),
+            fake_caps(has_gpg=True),
+        ) as pilot:
+            cards = pilot.app.screen.query(".key-card")
+            gpg_cards = [c for c in cards if c.id and c.id.startswith("gpg-card-")]
+            assert len(gpg_cards) == 1
+
+    async def test_focused_card_has_preview(self):
+        # Plan: "Faint single-line preview ... when focused; other cards
+        # show no preview." Encoded as a `.key-preview` child on the focused
+        # card only.
+        async with mounted(
+            KeyPickScreen,
+            gs_key_pick(ssh_keys=(ssh(),)),
+            fake_caps(has_ssh_keygen=True),
+        ) as pilot:
+            focused = pilot.app.screen.query_one("#ssh-card-0")
+            previews = focused.query(".key-preview")
+            assert len(previews) >= 1
+
+    async def test_unfocused_cards_have_no_preview(self):
+        async with mounted(
+            KeyPickScreen,
+            gs_key_pick(ssh_keys=(ssh(),)),
+            fake_caps(has_ssh_keygen=True),
+        ) as pilot:
+            managed = pilot.app.screen.query_one("#managed-card")
+            assert not managed.query(".key-preview")

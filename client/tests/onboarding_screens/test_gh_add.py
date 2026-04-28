@@ -111,3 +111,22 @@ class TestGhAddScreenForbidden:
         ) as pilot:
             assert not has_text(pilot, "Advanced")
             assert not has_text(pilot, "Switch mode")
+
+
+class TestGhAddRateLimit:
+    async def test_rate_limit_note_hidden_on_initial_render(self):
+        async with mounted(
+            GhAddScreen, gs_gh_add(), fake_caps(gh_authenticated=False)
+        ) as pilot:
+            note = pilot.app.screen.query("#rate-limit-note")
+            assert not note or not note[0].display
+
+
+class TestGhAddFallbackPanel:
+    async def test_fallback_panel_absent_by_default(self):
+        # Plan: only appears when both clipboard and browser fail.
+        async with mounted(
+            GhAddScreen, gs_gh_add(), fake_caps(gh_authenticated=False)
+        ) as pilot:
+            assert not pilot.app.screen.query("#fallback-panel")
+            assert not pilot.app.screen.query("#fallback-confirm-btn")

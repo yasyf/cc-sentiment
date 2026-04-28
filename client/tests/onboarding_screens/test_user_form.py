@@ -46,6 +46,12 @@ class TestUserFormScreen:
             link = pilot.app.screen.query_one("#no-github-link")
             assert "I don't use GitHub" in str(getattr(link, "renderable", link.label.plain))
 
+    async def test_no_github_link_is_muted(self):
+        # Plan: "I don't use GitHub → is muted; only colored on hover".
+        async with mounted(UserFormScreen, gs_user_form()) as pilot:
+            link = pilot.app.screen.query_one("#no-github-link")
+            assert "muted" in (link.classes or set())
+
     async def test_only_one_primary_button(self):
         async with mounted(UserFormScreen, gs_user_form()) as pilot:
             buttons = pilot.app.screen.query(Button)
@@ -72,3 +78,10 @@ class TestUserFormScreen:
         async with mounted(UserFormScreen, gs_user_form()) as pilot:
             assert not has_text(pilot, "DEBUG")
             assert not has_text(pilot, "Elapsed")
+
+    async def test_no_error_messages_on_initial_render(self):
+        # Error / validating states must not leak into the calm initial render.
+        async with mounted(UserFormScreen, gs_user_form()) as pilot:
+            assert not has_text(pilot, "wasn't found")
+            assert not has_text(pilot, "Couldn't reach GitHub")
+            assert not has_text(pilot, "Validating")

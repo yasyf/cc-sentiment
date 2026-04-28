@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from textual.widgets import Button, Input
 
 from cc_sentiment.onboarding import Stage, State as GlobalState, VerifyTimeout
@@ -70,11 +71,20 @@ class TestVerifyTroubleScreen:
             assert not has_text(pilot, "Traceback")
             assert not has_text(pilot, "stack trace")
 
-    async def test_no_internal_codes_shown(self):
-        # Plan: "no internal codes shown to the user".
-        async with mounted(VerifyTroubleScreen, gs_verify_trouble("key-not-found")) as pilot:
-            assert not has_text(pilot, "key-not-found")
+    @pytest.mark.parametrize(
+        "error_code",
+        ["key-not-found", "signature-failed", "rate-limited", "unknown"],
+    )
+    async def test_no_internal_codes_shown(self, error_code: VerifyErrorCode):
+        # Plan: "no internal codes shown to the user". The raw kebab-case
+        # identifier never appears in the rendered card.
+        async with mounted(VerifyTroubleScreen, gs_verify_trouble(error_code)) as pilot:
+            assert not has_text(pilot, error_code)
             assert not has_text(pilot, "code:")
+
+    async def test_subhint_appears(self):
+        async with mounted(VerifyTroubleScreen, gs_verify_trouble()) as pilot:
+            assert has_text(pilot, "Try again with a fresh setup")
 
     async def test_no_docs_or_support_link(self):
         # Plan: "No links to docs / support inside this card".

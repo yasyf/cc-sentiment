@@ -37,10 +37,10 @@ class TestInboxScreen:
             assert "Waiting for verification" in str(status.renderable)
 
     async def test_no_primary_button(self):
-        # Plan: "NONE primary. The screen passively polls".
+        # Plan: "NONE primary. The screen passively polls". Stricter: no buttons
+        # at all on initial render — secondary links appear only after delay.
         async with mounted(InboxScreen, gs_inbox()) as pilot:
-            buttons = [b for b in pilot.app.screen.query(Button) if "primary" in (b.classes or set())]
-            assert not buttons
+            assert not pilot.app.screen.query(Button)
 
     async def test_no_resend_or_reopen_buttons(self):
         # Plan: "no Reopen verification or resend-primary behavior".

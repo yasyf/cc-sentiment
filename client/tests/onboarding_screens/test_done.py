@@ -75,7 +75,8 @@ class TestDoneScreen:
 
     async def test_payload_card_shows_json_sample(self):
         async with mounted(DoneScreen, gs_done_ssh_managed_gist()) as pilot:
-            assert has_text(pilot, "sentiment_score")
+            for key in ("time", "sentiment_score", "claude_model", "turn_count", "tool_calls_per_turn", "read_edit_ratio"):
+                assert has_text(pilot, key), f"payload card missing {key!r}"
 
     async def test_start_processing_button(self):
         async with mounted(DoneScreen, gs_done_ssh_managed_gist()) as pilot:
@@ -120,4 +121,18 @@ class TestDoneScreen:
         async with mounted(DoneScreen, gs_done_gpg_email()) as pilot:
             line = str(pilot.app.screen.query_one("#verification-line").renderable)
             # fpr[-8:] for DEADBEEFCAFE0001 is "CAFE0001"
+            assert "CAFE0001" in line
+
+    async def test_verification_managed_gpg_uses_fpr_short(self):
+        # Plan: managed GPG email branch shows fpr_short, not @username.
+        gs_managed_gpg = GlobalState(
+            stage=Stage.DONE,
+            identity=Identity(email="alice@example.com", email_usable=True),
+            selected=SelectedKey(
+                source=KeySource.MANAGED,
+                key=ExistingKey(fingerprint="DEADBEEFCAFE0001", label="cc-sentiment"),
+            ),
+        )
+        async with mounted(DoneScreen, gs_managed_gpg) as pilot:
+            line = str(pilot.app.screen.query_one("#verification-line").renderable)
             assert "CAFE0001" in line
