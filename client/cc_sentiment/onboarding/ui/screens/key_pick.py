@@ -23,7 +23,7 @@ class KeyPickScreen(Screen[State]):
     @classmethod
     def strings(cls) -> dict[str, str]:
         return {
-            "title": "Pick your verification key",
+            "title": "Pick your signing key",
             "managed_card_label": "Create a new key for cc-sentiment",
             "managed_card_subline": "A dedicated key, stored under ~/.cc-sentiment/keys.",
             "recommended_pill": "recommended",
@@ -36,7 +36,7 @@ class KeyPickScreen(Screen[State]):
         readable, card-based, and not table-like").
 
         Layout (vertical stack of cards, ~70 columns):
-          ╭─ Pick your verification key ──────────╮       [DRAFT title]
+          ╭─ Pick your signing key ───────────────╮       [DRAFT title]
           ╭───────────────────────────────────────╮
           │  ●  ~/.ssh/id_ed25519                 │
           │     ssh-ed25519 · "yasyf@host"        │

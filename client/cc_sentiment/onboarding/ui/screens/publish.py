@@ -28,7 +28,7 @@ class PublishScreen(Screen[State]):
                 "Create a public GitHub gist with what we copied to your "
                 "clipboard. We'll find it automatically."
             ),
-            "key_preview_title": "Verification key",
+            "key_preview_title": "Signing key",
             "open_button": "Open GitHub",
             "copy_again_link": "Copy again",
             "no_github_link": "I don't use GitHub →",
@@ -53,7 +53,7 @@ class PublishScreen(Screen[State]):
           │  copied to your clipboard. We'll find it   │
           │  automatically.                            │
           │                                            │
-          │  ╭ Verification key ──────────────────────╮│      (PUBLISH_KEY_PREVIEW_TITLE)
+          │  ╭ Signing key ───────────────────────────╮│      (was PUBLISH_KEY_PREVIEW_TITLE)
           │  │ ssh-ed25519 AAAA…cc-sentiment          ││
           │  ╰────────────────────────────────────────╯│
           │                                            │

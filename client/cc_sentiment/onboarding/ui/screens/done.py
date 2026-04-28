@@ -27,7 +27,7 @@ class DoneScreen(Screen[State]):
             "verification_card_title": "Verification",
             "payload_card_title": "What gets sent",
             "payload_exclusion": "No transcript text, prompts, tool inputs, tool outputs, or code.",
-            "primary_button": "Start ingesting",
+            "primary_button": "Start processing",
             "verification_ssh_github": "Verification: @{cid} on GitHub",
             "verification_gist": "Verification: @{cid} via public gist",
             "verification_gpg_github": "Verification: @{cid} on GitHub",
@@ -61,7 +61,7 @@ class DoneScreen(Screen[State]):
           │  code.                             │
           ╰────────────────────────────────────╯
 
-               [ Start ingesting ]                     (SETTINGS_PRIMARY_LABEL)
+               [ Start processing ]                    (was SETTINGS_PRIMARY_LABEL)
 
         Verification line varies by config (existing _derive_verification):
           SSHConfig:      "Verification: @{cid} on GitHub"
@@ -71,7 +71,7 @@ class DoneScreen(Screen[State]):
           GPGConfig (gpg):    "Verification: GPG {fpr[-8:]}"
 
         Buttons (exactly — matches existing screen):
-          - Primary "Start ingesting" — dismisses the setup dialog with
+          - Primary "Start processing" — dismisses the setup dialog with
             a success result so the host app can begin scan/upload.
           - No other actions.
 

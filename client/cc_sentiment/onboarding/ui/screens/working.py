@@ -26,7 +26,7 @@ class WorkingScreen(Screen[State]):
             "title": "Setting up…",
             "status_creating_key": "Creating cc-sentiment key…",
             "status_creating_gist": "Creating GitHub gist…",
-            "status_verifying": "Verifying upload…",
+            "status_verifying": "Verifying…",
         }
 
     def render(self) -> t.Screen:
@@ -45,7 +45,7 @@ class WorkingScreen(Screen[State]):
         Status line cycles through (existing strings from working.py):
           "Creating cc-sentiment key…"
           "Creating GitHub gist…"
-          "Verifying upload…"
+          "Verifying…"
 
         Buttons (exactly):
           NONE. The screen has no buttons, no checklist of substeps, no

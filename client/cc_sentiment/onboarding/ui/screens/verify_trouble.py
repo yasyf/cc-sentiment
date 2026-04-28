@@ -30,7 +30,7 @@ class VerifyTroubleScreen(Screen[State]):
             "subhint": "Try again with a fresh setup — it usually only takes a moment.",
             "restart_button": "Restart setup",
             "error_key_not_found": "sentiments.cc couldn't see your published key.",
-            "error_signature_failed": "Your key didn't match the signature we sent.",
+            "error_signature_failed": "Your key wasn't accepted.",
             "error_rate_limited": "sentiments.cc is busy — wait a minute and retry.",
             "error_unknown": "sentiments.cc reported an issue we don't recognize.",
         }
@@ -54,7 +54,7 @@ class VerifyTroubleScreen(Screen[State]):
         Server-code mapping (client-side, static — minimal core codes
         per plan Q&A "Server error-code granularity: Minimal core codes"):
           "key-not-found"    → "sentiments.cc couldn't see your published key."
-          "signature-failed" → "Your key didn't match the signature we sent."
+          "signature-failed" → "Your key wasn't accepted."
           "rate-limited"     → "sentiments.cc is busy — wait a minute and retry."
           unknown / fallback → "sentiments.cc reported an issue we don't recognize."
 

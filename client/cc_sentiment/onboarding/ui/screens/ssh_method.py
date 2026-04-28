@@ -24,6 +24,10 @@ class SshMethodScreen(Screen[State]):
     def strings(cls) -> dict[str, str]:
         return {
             "title": "Where should we publish this key?",
+            "body": (
+                "We need to post your key somewhere public — that's "
+                "how sentiments.cc proves an upload is really from you."
+            ),
             "username_label": "GitHub username",
             "username_placeholder": "yasyf",
             "gist_button": "Publish as a gist",
@@ -44,6 +48,11 @@ class SshMethodScreen(Screen[State]):
         Layout (centered card, ~60 columns; username row appears only
         when missing):
           ╭─ Where should we publish this key? ─╮      [DRAFT title]
+          │                                     │
+          │  We need to post your key somewhere │      (body — explains
+          │  public — that's how sentiments.cc  │       why we're asking)
+          │  proves an upload is really from    │
+          │  you.                               │
           │                                     │
           │  GitHub username                    │      (only when missing)
           │  [ yasyf____________________ ]      │

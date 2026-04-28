@@ -27,7 +27,7 @@ class EmailScreen(Screen[State]):
             "body": "We'll send a one-time verification link.",
             "send_button": "Send link",
             "sending_label": "Sending…",
-            "error_empty": "Use an email address you can open now.",
+            "error_empty": "Enter an email you can open right now.",
             "error_unreachable": "Couldn't reach keys.openpgp.org. Try again in a moment.",
         }
 
@@ -60,8 +60,7 @@ class EmailScreen(Screen[State]):
         State variants (inline messages below the input):
           - Sending: button disabled, label becomes "Sending…", tiny
             spinner alongside.
-          - Empty:        OPENPGP_EMAIL_ERROR_EMPTY
-              "Use an email address you can open now."
+          - Empty:        "Enter an email you can open right now."
           - Network err:  inline message — "Couldn't reach
               keys.openpgp.org. Try again in a moment." Button
               re-enables (per plan: "Upload/email request failures

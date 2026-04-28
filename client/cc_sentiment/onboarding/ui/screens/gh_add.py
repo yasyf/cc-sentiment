@@ -27,7 +27,7 @@ class GhAddScreen(Screen[State]):
             "status_auto": "Adding your key…",
             "title_manual": "Add this key to GitHub",
             "body_manual": "We copied the key. Paste it on github.com/settings/keys.",
-            "key_preview_title": "Verification key",
+            "key_preview_title": "Signing key",
             "open_button": "Open GitHub",
             "copy_again_link": "Copy again",
             "watch_label": "Watching for the new key…",
@@ -55,7 +55,7 @@ class GhAddScreen(Screen[State]):
           │  We copied the key. Paste it on            │       [DRAFT body]
           │  github.com/settings/keys.                 │
           │                                            │
-          │  ╭ Verification key ──────────────────────╮│       (PUBLISH_KEY_PREVIEW_TITLE,
+          │  ╭ Signing key ───────────────────────────╮│       (was PUBLISH_KEY_PREVIEW_TITLE,
           │  │ ssh-ed25519 AAAA…                      ││        reused)
           │  ╰────────────────────────────────────────╯│
           │                                            │
