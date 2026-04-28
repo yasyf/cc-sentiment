@@ -34,7 +34,9 @@ class CardScreen(ModalScreen[T]):
     title: ClassVar[str] = ""
 
     def compose(self) -> ComposeResult:
-        yield Card(Title(self.title), *self.compose_card(), title="")
+        with Card(title=""):
+            yield Title(self.title)
+            yield from self.compose_card()
 
     @abstractmethod
     def compose_card(self) -> ComposeResult: ...
