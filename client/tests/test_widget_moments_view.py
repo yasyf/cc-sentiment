@@ -6,7 +6,7 @@ from textual.app import App
 from textual.containers import Vertical
 from textual.widgets import Static
 
-from cc_sentiment.tui.moments_view import MomentsView
+from cc_sentiment.tui.dashboard.moments_view import MomentsView
 
 
 class MomentsHarness(App[None]):
@@ -16,7 +16,7 @@ class MomentsHarness(App[None]):
 
 
 async def test_moments_view_snippet_survives_bracket_heavy_content():
-    with patch("cc_sentiment.tui.moments_view.random.random", return_value=0.0):
+    with patch("cc_sentiment.tui.dashboard.moments_view.random.random", return_value=0.0):
         async with MomentsHarness().run_test() as pilot:
             moments = MomentsView(
                 app=pilot.app,

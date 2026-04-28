@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from textual.app import App
 
-from cc_sentiment.tui.screens import CostReviewScreen
+from cc_sentiment.tui.popovers import CostReviewScreen
 
 
 class CostHarness(App[None]):

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from textual.app import App
 
-from cc_sentiment.tui.widgets import SentimentPanel
+from cc_sentiment.tui.dashboard.widgets import SentimentPanel
 from tests.helpers import make_record
 
 

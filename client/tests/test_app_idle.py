@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from cc_sentiment.models import AppState, ContributorId, GPGConfig, SSHConfig
 from cc_sentiment.repo import Repository
 from cc_sentiment.tui import CCSentimentApp
-from cc_sentiment.tui.stages import (
+from cc_sentiment.tui.dashboard.stages import (
     Discovering,
     IdleAfterUpload,
     IdleCaughtUp,
@@ -25,30 +25,31 @@ async def test_auto_open_dashboard_opens_url_after_delay(tmp_path: Path, auth_ok
     db_path = tmp_path / "records.db"
 
     monkeypatch.setattr(CCSentimentApp, "AUTO_OPEN_DASHBOARD_DELAY_SECONDS", 0.0)
+    monkeypatch.setattr(CCSentimentApp, "open_url", MagicMock())
 
     with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="mlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
-         patch("cc_sentiment.tui.app.webbrowser.open") as mock_open:
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await app._auto_open_dashboard()
-            mock_open.assert_called_once_with(DASHBOARD_URL)
+            app.open_url.assert_called_once_with(DASHBOARD_URL)
 
 
-async def test_action_open_dashboard_opens_browser(tmp_path: Path, auth_ok):
+async def test_action_open_dashboard_opens_browser(tmp_path: Path, auth_ok, monkeypatch):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
+    monkeypatch.setattr(CCSentimentApp, "open_url", MagicMock())
+
     with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="mlx"), \
-         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
-         patch("cc_sentiment.tui.app.webbrowser.open") as mock_open:
+         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await pilot.press("o")
             await pilot.pause()
-            mock_open.assert_called_once_with(DASHBOARD_URL)
+            app.open_url.assert_called_once_with(DASHBOARD_URL)
             assert DASHBOARD_URL in app.status_text
 
 

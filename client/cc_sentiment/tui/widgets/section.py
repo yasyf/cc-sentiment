@@ -5,6 +5,6 @@ from textual.containers import Vertical
 
 class Section(Vertical):
     DEFAULT_CSS = """
-    Section { height: auto; margin: 1 0 0 0; }
+    Section { height: auto; }
     Section.inactive { display: none; }
     """

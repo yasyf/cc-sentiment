@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from textual.app import App
 
-from cc_sentiment.tui.widgets import HourlyChart
+from cc_sentiment.tui.dashboard.widgets import HourlyChart
 from tests.helpers import make_record
 
 

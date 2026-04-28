@@ -13,14 +13,22 @@ class LinkRow(Static):
         width: 100%;
         height: 1;
         color: $text-muted;
-        margin: 0;
+        text-align: center;
         padding: 0;
-    }
-    LinkRow:hover {
-        color: $text;
-        text-style: underline;
+        margin: 0;
+
+        &:hover {
+            color: $text;
+            text-style: underline;
+        }
+        &:focus {
+            color: $accent;
+            text-style: underline;
+        }
     }
     """
+
+    can_focus = True
 
     class Pressed(Message):
         def __init__(self, link: LinkRow) -> None:
@@ -31,9 +39,14 @@ class LinkRow(Static):
         def control(self) -> LinkRow:
             return self.link
 
-    def __init__(self, label: str, *, id: str | None = None) -> None:
-        super().__init__(label, id=id)
+    def __init__(self, label: str, *, id: str | None = None, classes: str | None = None) -> None:
+        super().__init__(label, id=id, classes=classes)
 
     def on_click(self, event: events.Click) -> None:
         event.stop()
         self.post_message(self.Pressed(self))
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key in ("enter", "space"):
+            event.stop()
+            self.post_message(self.Pressed(self))

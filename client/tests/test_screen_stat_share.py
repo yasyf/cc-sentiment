@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from textual.app import App
 from textual.widgets import Button
@@ -13,7 +13,7 @@ from cc_sentiment.models import (
     MyStat,
     SSHConfig,
 )
-from cc_sentiment.tui.screens import StatShareScreen
+from cc_sentiment.tui.dashboard.popovers import StatShareScreen
 
 
 STAT = MyStat(
@@ -55,7 +55,7 @@ def stub_mint_share(share_id: str = "sh-abc123") -> AsyncMock:
 
 async def test_stat_share_renders_stat_text():
     harness = StatShareHarness(GITHUB_CONFIG, STAT)
-    with patch("cc_sentiment.tui.screens.stat_share.Uploader.mint_share", new=stub_mint_share()):
+    with patch("cc_sentiment.tui.dashboard.popovers.stat_share.Uploader.mint_share", new=stub_mint_share()):
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
             text = " ".join(
@@ -64,24 +64,25 @@ async def test_stat_share_renders_stat_text():
             assert "nicer to Claude than 72% of developers" in text
 
 
-async def test_stat_share_tweet_button_opens_share_url():
+async def test_stat_share_tweet_button_opens_share_url(monkeypatch):
     harness = StatShareHarness(GITHUB_CONFIG, STAT)
-    with patch("cc_sentiment.tui.screens.stat_share.Uploader.mint_share", new=stub_mint_share("sh-xyz789")), \
-         patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
+    monkeypatch.setattr(StatShareHarness, "open_url", MagicMock())
+    with patch("cc_sentiment.tui.dashboard.popovers.stat_share.Uploader.mint_share", new=stub_mint_share("sh-xyz789")):
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await pilot.click("#stat-tweet")
             await pilot.pause()
 
-    mock_open.assert_called_once()
-    url = mock_open.call_args[0][0]
+    harness.open_url.assert_called_once()
+    url = harness.open_url.call_args[0][0]
     assert "twitter.com/intent/tweet" in url
     assert "share%2Fsh-xyz789" in url or "share/sh-xyz789" in url
     assert "nicer+to+Claude" in url or "nicer%20to%20Claude" in url
 
 
-async def test_stat_share_tweet_button_disabled_until_mint_resolves():
+async def test_stat_share_tweet_button_disabled_until_mint_resolves(monkeypatch):
     harness = StatShareHarness(GITHUB_CONFIG, STAT)
+    monkeypatch.setattr(StatShareHarness, "open_url", MagicMock())
     mint_event = __import__("anyio").Event()
 
     async def slow_mint(self, config):
@@ -89,15 +90,14 @@ async def test_stat_share_tweet_button_disabled_until_mint_resolves():
         from cc_sentiment.models import ShareMintResponse
         return ShareMintResponse(id="sh-late", url="https://sentiments.cc/share/sh-late")
 
-    with patch("cc_sentiment.tui.screens.stat_share.Uploader.mint_share", new=slow_mint), \
-         patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
+    with patch("cc_sentiment.tui.dashboard.popovers.stat_share.Uploader.mint_share", new=slow_mint):
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.1)
             tweet = pilot.app.screen.query_one("#stat-tweet", Button)
             assert tweet.disabled is True
             await pilot.click("#stat-tweet")
             await pilot.pause()
-            assert not mock_open.called
+            assert not harness.open_url.called
 
             mint_event.set()
             await pilot.pause(delay=0.3)
@@ -111,7 +111,7 @@ async def test_stat_share_surfaces_signing_failure_on_label():
     failing_mint = AsyncMock(
         side_effect=subprocess.CalledProcessError(1, ["ssh-keygen"])
     )
-    with patch("cc_sentiment.tui.screens.stat_share.Uploader.mint_share", new=failing_mint):
+    with patch("cc_sentiment.tui.dashboard.popovers.stat_share.Uploader.mint_share", new=failing_mint):
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
             tweet = pilot.app.screen.query_one("#stat-tweet", Button)
@@ -122,7 +122,7 @@ async def test_stat_share_surfaces_signing_failure_on_label():
 async def test_stat_share_surfaces_signing_timeout_on_label():
     harness = StatShareHarness(GITHUB_CONFIG, STAT)
     failing_mint = AsyncMock(side_effect=TimeoutError())
-    with patch("cc_sentiment.tui.screens.stat_share.Uploader.mint_share", new=failing_mint):
+    with patch("cc_sentiment.tui.dashboard.popovers.stat_share.Uploader.mint_share", new=failing_mint):
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
             tweet = pilot.app.screen.query_one("#stat-tweet", Button)
@@ -130,25 +130,25 @@ async def test_stat_share_surfaces_signing_timeout_on_label():
             assert tweet.disabled is True
 
 
-async def test_stat_share_skip_dismisses_without_opening_browser():
+async def test_stat_share_skip_dismisses_without_opening_browser(monkeypatch):
     harness = StatShareHarness(GITHUB_CONFIG, STAT)
-    with patch("cc_sentiment.tui.screens.stat_share.Uploader.mint_share", new=stub_mint_share()), \
-         patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
+    monkeypatch.setattr(StatShareHarness, "open_url", MagicMock())
+    with patch("cc_sentiment.tui.dashboard.popovers.stat_share.Uploader.mint_share", new=stub_mint_share()):
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await pilot.click("#stat-skip")
             await pilot.pause()
 
-    mock_open.assert_not_called()
+    harness.open_url.assert_not_called()
 
 
-async def test_stat_share_escape_dismisses():
+async def test_stat_share_escape_dismisses(monkeypatch):
     harness = StatShareHarness(GITHUB_CONFIG, STAT)
-    with patch("cc_sentiment.tui.screens.stat_share.Uploader.mint_share", new=stub_mint_share()), \
-         patch("cc_sentiment.tui.screens.stat_share.webbrowser.open") as mock_open:
+    monkeypatch.setattr(StatShareHarness, "open_url", MagicMock())
+    with patch("cc_sentiment.tui.dashboard.popovers.stat_share.Uploader.mint_share", new=stub_mint_share()):
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.3)
             await pilot.press("escape")
             await pilot.pause()
 
-    mock_open.assert_not_called()
+    harness.open_url.assert_not_called()

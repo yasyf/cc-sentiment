@@ -23,7 +23,7 @@ GITHUB_CONFIG = SSHConfig(
 
 
 async def test_card_fetcher_invokes_on_ready_when_stat_arrives():
-    from cc_sentiment.tui.screens.stat_share import CardFetcher
+    from cc_sentiment.tui.dashboard.popovers.stat_share import CardFetcher
 
     calls: list[MyStat] = []
     states: list[tuple[str, float, str | None]] = []
@@ -44,7 +44,7 @@ async def test_card_fetcher_invokes_on_ready_when_stat_arrives():
 
 
 async def test_card_fetcher_reports_no_card_on_404():
-    from cc_sentiment.tui.screens.stat_share import CardFetcher
+    from cc_sentiment.tui.dashboard.popovers.stat_share import CardFetcher
 
     calls: list[MyStat] = []
     states: list[tuple[str, float, str | None]] = []
@@ -65,7 +65,7 @@ async def test_card_fetcher_reports_no_card_on_404():
 
 
 async def test_card_fetcher_reports_error_on_network_failure():
-    from cc_sentiment.tui.screens.stat_share import CardFetcher
+    from cc_sentiment.tui.dashboard.popovers.stat_share import CardFetcher
 
     calls: list[MyStat] = []
     states: list[tuple[str, float, str | None]] = []

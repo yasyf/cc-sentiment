@@ -61,19 +61,14 @@ from cc_sentiment.upload import (
     Uploader,
 )
 
-from cc_sentiment.tui.moments_view import MomentsView
-from cc_sentiment.tui.format import TimeFormat
-from cc_sentiment.tui.progress import DebugState, ScoringProgress
-from cc_sentiment.tui.system import Browser
-from cc_sentiment.tui.screens import (
-    BootingScreen,
-    CostReviewScreen,
-    PlatformErrorScreen,
-    SetupScreen,
-    StatShareScreen,
-)
-from cc_sentiment.tui.screens.stat_share import CardFetcher
-from cc_sentiment.tui.stages import (
+from cc_sentiment.tui.dashboard.moments_view import MomentsView
+from cc_sentiment.tui.dashboard.format import TimeFormat
+from cc_sentiment.tui.dashboard.progress import DebugState, ScoringProgress
+from cc_sentiment.tui.dashboard.popovers import BootingScreen, StatShareScreen
+from cc_sentiment.tui.dashboard.popovers.stat_share import CardFetcher
+from cc_sentiment.tui.legacy import SetupScreen
+from cc_sentiment.tui.popovers import CostReviewScreen, PlatformErrorScreen
+from cc_sentiment.tui.dashboard.stages import (
     Authenticating,
     Booting,
     Discovering,
@@ -86,14 +81,14 @@ from cc_sentiment.tui.stages import (
     Stage,
     Uploading,
 )
-from cc_sentiment.tui.view import ProcessingView
-from cc_sentiment.tui.widgets import (
-    Card,
+from cc_sentiment.tui.dashboard.view import ProcessingView
+from cc_sentiment.tui.dashboard.widgets import (
     DebugSection,
     HourlyChart,
     ProgressRow,
     SentimentPanel,
 )
+from cc_sentiment.tui.widgets import Card
 
 
 class CCSentimentApp(App[None]):
@@ -693,13 +688,13 @@ class CCSentimentApp(App[None]):
             )
 
     async def action_open_dashboard(self) -> None:
-        await anyio.to_thread.run_sync(Browser.open, DASHBOARD_URL)
+        self.open_url(DASHBOARD_URL)
         self._update_status(f"[dim]Opened aggregate stats: {DASHBOARD_URL}.[/]")
         self.set_timer(3.0, lambda: self.watch_stage(self.stage))
 
     async def _auto_open_dashboard(self) -> None:
         await anyio.sleep(self.AUTO_OPEN_DASHBOARD_DELAY_SECONDS)
-        await anyio.to_thread.run_sync(Browser.open, DASHBOARD_URL)
+        self.open_url(DASHBOARD_URL)
 
     async def action_rescan(self) -> None:
         match self.stage:

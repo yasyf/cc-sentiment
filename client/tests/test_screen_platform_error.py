@@ -7,7 +7,7 @@ from cc_sentiment.engines import (
     ClaudeNotInstalled,
     ClaudeStatus,
 )
-from cc_sentiment.tui.screens import PlatformErrorScreen
+from cc_sentiment.tui.popovers import PlatformErrorScreen
 from cc_sentiment.tui.widgets import CommandBox
 
 

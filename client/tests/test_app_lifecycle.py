@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, patch
 from cc_sentiment.engines import ClaudeNotInstalled, ClaudeUnavailable
 from cc_sentiment.models import AppState, ContributorId, GPGConfig, SSHConfig
 from cc_sentiment.tui import CCSentimentApp
-from cc_sentiment.tui.screens import CostReviewScreen, PlatformErrorScreen
-from cc_sentiment.tui.stages import IdleCaughtUp, IdleEmpty
+from cc_sentiment.tui.popovers import CostReviewScreen, PlatformErrorScreen
+from cc_sentiment.tui.dashboard.stages import IdleCaughtUp, IdleEmpty
 from tests.helpers import make_record, make_scan
 
 
@@ -25,7 +25,7 @@ async def test_ccsentiment_app_engine_failure_shows_error_and_exits(tmp_path: Pa
 
 
 async def test_ccsentiment_app_debug_mode_composes(tmp_path: Path):
-    from cc_sentiment.tui.widgets.debug_section import DebugSection
+    from cc_sentiment.tui.dashboard.widgets.debug_section import DebugSection
 
     state = AppState()
     db_path = tmp_path / "records.db"

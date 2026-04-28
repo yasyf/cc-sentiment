@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from cc_sentiment.tui.format import ScoreEmoji, TimeFormat
+from cc_sentiment.tui.dashboard.format import ScoreEmoji, TimeFormat
 
 
 def test_format_duration_under_30_seconds():

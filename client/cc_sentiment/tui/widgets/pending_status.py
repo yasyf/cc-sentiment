@@ -16,14 +16,17 @@ class PendingSpinner(LoadingIndicator):
         min-width: 1;
         height: 1;
         min-height: 1;
+        color: $accent;
     }
     """
 
     FRAMES: ClassVar[tuple[str, ...]] = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
-    def on_mount(self) -> None:
+    auto_refresh = 1 / 12
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
         self.started_at = monotonic()
-        self.auto_refresh = 1 / 12
 
     def render(self) -> Text:
         return Text(self.FRAMES[int((monotonic() - self.started_at) * 12) % len(self.FRAMES)])
@@ -36,16 +39,19 @@ class PendingStatus(Horizontal):
         height: auto;
         min-height: 1;
         align-vertical: middle;
+        align-horizontal: center;
     }
+    PendingStatus > PendingSpinner { margin: 0 1 0 0; }
     PendingStatus > .pending-status-label {
-        width: 1fr;
+        width: auto;
+        color: $text-muted;
     }
     """
 
     label: reactive[str] = reactive("")
 
     def __init__(self, label: str, **kwargs) -> None:
-        self.label_widget = Static(label, classes="pending-status-label muted")
+        self.label_widget = Static(label, classes="pending-status-label")
         super().__init__(
             PendingSpinner(),
             self.label_widget,
