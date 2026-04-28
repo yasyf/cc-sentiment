@@ -23,28 +23,28 @@ class SavedRetryScreen(Screen[State]):
     def render(self) -> t.Screen:
         """
         Small recovery card for when saved credentials exist but
-        sentiments.cc is currently unreachable. Reassuring — implies the
-        setup itself is fine, the network just hiccuped.
+        sentiments.cc is currently unreachable. Reassuring tone — implies
+        the setup itself is fine, the network just hiccuped.
 
         Layout (small centered card, ~50 columns):
-          ╭─ Couldn't reach sentiments.cc ──╮
-          │  Your network might be slow or  │
-          │  offline. Try again in a moment.│
-          │                                 │
-          │       [ Retry ]                 │
-          │       Set up again →            │
-          ╰─────────────────────────────────╯
+          ╭─ Couldn't reach sentiments.cc ──╮     [DRAFT title]
+          │  We'll try again in a moment.    │     [DRAFT body]
+          │                                  │
+          │       [ Retry ]                  │
+          │       Set up again →             │
+          ╰──────────────────────────────────╯
 
-        Actions:
-          - Primary "Retry" (focused) — re-probes saved config. Stays here
-            if still unreachable, transitions to Done on success, or to
-            Welcome if the server now reports the saved config invalid.
-          - Quiet "Set up again →" — drops the saved config and routes to
+        Buttons (exactly):
+          - Primary "Retry" (focused) — re-probes the saved config.
+            Stays here if still unreachable; transitions to Done on
+            success, or to Welcome if the server now reports the saved
+            config invalid.
+          - Quiet "Set up again" → drops the saved config and routes to
             Welcome.
 
         Subtle hints:
-          - No technical auth dump, no error codes.
+          - No technical auth dump, no error codes (per plan).
           - During an in-flight retry, "Retry" disables and a tiny spinner
-            sits beside it. No alarming language.
+            sits beside it.
         """
         ...

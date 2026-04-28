@@ -22,34 +22,34 @@ class BlockedScreen(Screen[State]):
 
     def render(self) -> t.Screen:
         """
-        Final-resort screen when neither ssh-keygen nor GPG is available.
-        Be honest, be helpful, suggest the fix, don't trap the user.
+        Final-resort screen when neither ssh-keygen nor GPG is available
+        and we can't proceed. Honest, helpful, suggests the fix.
 
         Layout (card, ~60 columns):
-          ╭─ We need an SSH client or GPG ─────╮
+          ╭─ We need an SSH client or GPG ─────╮       (BLOCKED_TITLE)
           │                                    │
-          │  cc-sentiment signs your uploads   │
-          │  so we know they're yours. We      │
-          │  couldn't find OpenSSH or GPG on   │
-          │  this system.                      │
+          │  Your system doesn't have either   │       (BLOCKED_BODY)
+          │  installed. Open the install       │
+          │  guide, then re-run                │
+          │  "cc-sentiment setup".             │
           │                                    │
-          │  brew install openssh              │  ← copyable hint, varies by host
-          │                                    │
-          │       [ Open install guide ]       │
-          │       [ Quit ]                     │
+          │    brew install gnupg              │       (BLOCKED_INSTALL_HINT_BREW
+          │                                    │        or BLOCKED_INSTALL_HINT_GENERIC,
+          │                                    │        based on platform)
+          │       [ Open install guide ]       │       (existing button label)
+          │       [ Quit ]                     │       (existing button label)
           ╰────────────────────────────────────╯
 
-        Install hint (single line, monospaced, selectable):
-          - macOS / has_brew: "brew install openssh" (or gnupg, depending
-            on what's missing).
-          - Linux: "sudo apt install openssh-client" or generic
-            "install OpenSSH or GPG, then re-run cc-sentiment setup".
-          - Windows / other: link-only.
+        Install hint (selectable / copyable monospaced line):
+          - macOS or has_brew:    BLOCKED_INSTALL_HINT_BREW
+              "  brew install gnupg"
+          - else:                 BLOCKED_INSTALL_HINT_GENERIC
+              "Install OpenSSH or GPG, then return."
 
-        Actions:
+        Buttons (exactly — matches existing screen):
           - Primary "Open install guide" — app.open_url to the relevant
             docs page (SSH if neither is present, GPG if SSH is present
-            but the GPG path was the only one available).
+            and only the GPG path was unavailable).
           - Secondary "Quit" — dismisses the dialog.
 
         Subtle hints:

@@ -22,38 +22,44 @@ class WelcomeScreen(Screen[State]):
 
     def render(self) -> t.Screen:
         """
-        The friendly entry point — what a first-time user sees. Calm prose,
-        one obvious action, a subtle hint that something is happening in
-        the background.
+        Friendly entry point for first-time setup. Calm prose, one obvious
+        action, and a subtle hint that something is happening in the
+        background.
 
         Layout (single centered card, ~60 columns):
-          ╭─ Set up cc-sentiment ──────────────╮
+          ╭─ Set up cc-sentiment ──────────────╮       (WELCOME_TITLE)
           │                                    │
-          │  We'll create a verification key   │
+          │  We'll create a verification key   │       (WELCOME_BODY)
           │  so we can confirm uploads are     │
-          │  yours. Takes about 30 seconds.    │
+          │  yours. This usually takes about   │
+          │  30 seconds.                       │
           │                                    │
-          │       [ Get started ]              │
+          │       [ Get started ]              │       (WELCOME_CTA)
           │                                    │
-          │  ⠹ Checking your setup…            │
+          │  ⠹ Checking your setup…            │       (WELCOME_CHECKING)
           ╰────────────────────────────────────╯
 
-        Actions:
-          - Primary "Get started" (focused) — kicks off discovery and lets
-            the dispatcher route us forward.
-          - No secondary actions on this screen. No "skip", no settings.
+        Buttons (exactly):
+          - Primary "Get started" — always visible (per plan: "Welcome
+            always shows Get started; checking status is separate and
+            subtle"). Kicks off discovery.
+          - No other actions. The "I don't use GitHub →" link does NOT
+            appear here — it lives only on UserForm and Publish.
 
-        State variants:
-          - Default copy as above.
-          - GlobalState.has_saved_config=True (came from "saved invalid"):
-            one extra gentle line above the body — "Your last setup needs
-            refreshing." No accusations, no "your key was rejected" tone.
+        State variant — has_saved_config=True (came via "saved invalid"):
+          One extra muted line ABOVE the body:
+
+            "Your last verification needs refreshing."         [DRAFT line]
+
+          No accusations, no error tone, no debug.
 
         Subtle hints:
-          - The "Checking your setup…" row is faint, sits below the button,
-            and quietly disappears when discovery resolves.
-          - If discovery finishes before the user clicks Get started, the
-            button label can shift to "Continue" so the action stays obvious.
+          - "Checking your setup…" is a faint spinner row below the
+            button; it disappears quietly when discovery resolves.
+          - Discovery is idempotent — clicking Get started multiple
+            times never restarts it (per plan).
+          - If discovery finishes before the user clicks, the button
+            label can shift to "Continue" so the action stays obvious.
           - No tables of detected tools, no debug rows.
         """
         ...

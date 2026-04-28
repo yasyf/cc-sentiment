@@ -22,42 +22,47 @@ class UserFormScreen(Screen[State]):
 
     def render(self) -> t.Screen:
         """
-        The username form, shown when ssh-keygen exists but we don't know
-        who the user is on GitHub. One question, one input, an obvious
-        primary action, and a quiet escape hatch.
+        Username form, shown only as a last resort when ssh-keygen exists
+        but we still don't know who the user is on GitHub. One clear
+        question, one input, one obvious primary, one quiet escape hatch.
 
         Layout (centered card, ~60 columns):
-          ╭─ What's your GitHub username? ─────╮
+          ╭─ What's your GitHub username? ─────╮       (from plan, exact)
           │                                    │
-          │  We'll use it to find the gist     │
-          │  with your verification key.       │
+          │  [ yasyf______________________ ]   │       (USERNAME_PLACEHOLDER)
           │                                    │
-          │  [ yasyf______________________ ]   │
+          │       [ Continue ]                 │       (existing button label)
           │                                    │
-          │       [ Continue ]                 │
-          │                                    │
-          │  I don't use GitHub →              │
+          │  I don't use GitHub →              │       (USERNAME_NO_GITHUB_LINK)
           ╰────────────────────────────────────╯
 
-        Actions:
-          - Input — focused on mount; placeholder shows an example username
-            in muted text.
-          - Primary "Continue" — validates against the GitHub API; routes
-            to Working / Publish based on capabilities. While in flight,
-            the button shows a tiny spinner and disables.
-          - Quiet "I don't use GitHub →" — opts out and routes to Email
-            (if GPG available) or Blocked otherwise.
+        Buttons (exactly):
+          - Input — focused on mount; placeholder shows the example
+            username "yasyf" in muted text.
+          - Primary "Continue" — validates against the GitHub API and
+            routes per capabilities (Working when gh authed, Publish
+            otherwise). While in flight, the button shows a tiny spinner
+            and disables.
+          - Quiet "I don't use GitHub →" — opts out (sets
+            github_lookup_allowed=False) and routes to Email if GPG is
+            available, otherwise Blocked.
 
-        State variants:
-          - Validating: button disabled, faint "Validating yasyf…" beside it.
-          - Not found (404): inline error below the input —
-            "GitHub user "yasyf" wasn't found." Input refocuses.
-          - Unreachable (network): inline retry —
-            "Couldn't reach GitHub. Try again in a moment." Button stays
-            active so the user can simply press Continue again.
+        State variants (inline messages below the input):
+          - Empty submit:    USERNAME_ERROR_EMPTY
+              "Enter your GitHub username, or pick "I don't use GitHub" below."
+          - 404:             USERNAME_ERROR_NOT_FOUND ("GitHub user "{user}"
+              wasn't found.") — input refocuses.
+          - Network down:    USERNAME_ERROR_UNREACHABLE
+              "Couldn't reach GitHub. Try again in a moment."
+              Button stays active so the user just presses Continue
+              again (per plan: "Username validation network — Retry
+              in place").
+          - Validating:      faint "Validating yasyf…" beside the
+                             disabled button.
 
         Subtle hints:
+          - No body paragraph above the input — the title IS the question.
           - No tables, no progress bars, no debug.
-          - "I don't use GitHub →" link is muted; only colored on hover.
+          - "I don't use GitHub →" is muted; only colored on hover.
         """
         ...

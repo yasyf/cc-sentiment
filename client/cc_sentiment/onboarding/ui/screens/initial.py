@@ -22,20 +22,21 @@ class InitialScreen(Screen[State]):
 
     def render(self) -> t.Screen:
         """
-        A spare loading screen shown only during the initial probe — usually
-        too quick to register, but graceful when the network is slow.
+        Spare loading screen during the initial probe — usually too quick
+        to register, but graceful when the network is slow.
 
         Layout:
-          Centered card, no border, single line:
-            ⠹ Checking your setup…
+          Centered, no border:
+            ⠹ Checking your setup…           (reuses WELCOME_CHECKING)
 
         Behavior:
-          No buttons, no actions. Spinner glyph cycles. Transitions out as
-          soon as the probe resolves (Done, SavedRetry, Welcome, Publish,
-          or Inbox depending on saved/pending state).
+          No buttons, no actions. Spinner glyph cycles. Transitions out
+          as soon as the probe resolves to one of: Done, SavedRetry,
+          Welcome, Publish, or Inbox.
 
         Subtle hints:
-          The spinner is the only motion. If the probe takes >2s, the line
-          can update to "Still checking…" — once, calm, never alarming.
+          The spinner is the only motion. If the probe takes >2s, the
+          line can update once to "Still checking…" — calm, never
+          alarming.
         """
         ...

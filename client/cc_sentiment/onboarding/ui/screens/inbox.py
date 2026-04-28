@@ -27,34 +27,36 @@ class InboxScreen(Screen[State]):
         and now just needs to act on the email.
 
         Layout (centered card, ~60 columns):
-          ╭─ Check your inbox ─────────────────╮
+          ╭─ Check your inbox ─────────────────╮       [DRAFT title]
           │                                    │
-          │  We sent a link to                 │
-          │    yasyf@example.com               │
-          │  Open it and click "Confirm".      │
+          │  Verification email sent to        │       (OPENPGP_AFTER_SEND,
+          │    yasyf@example.com               │        adapted: same wording,
+          │  Open it, click the link, then     │        rendered across lines)
+          │  return here.                      │
           │                                    │
-          │  ⠹ Waiting for verification…       │
+          │  ⠹ Waiting for verification…       │       [DRAFT polling status]
           ╰────────────────────────────────────╯
 
-        Actions:
-          None primary. The screen passively polls keys.openpgp.org and
-          sentiments.cc until verification succeeds (→ Done) or the
-          propagation window expires (→ Trouble).
+        Buttons (exactly — per plan "no Reopen verification or
+        resend-primary behavior"):
+          - NONE primary. The screen passively polls keys.openpgp.org
+            and sentiments.cc until verification succeeds (→ Done) or
+            the propagation window expires (→ Trouble).
 
-        Optional secondary actions, shown only after a polite delay (~60s):
-          - Faint "Send to a different email" link → routes back to Email.
-          - Faint "Already verified? Re-check now" → forces a poll.
-          Neither is primary; the Inbox screen does NOT encourage "resend"
-          by default.
+          - After a polite delay (~60s), two quiet secondary links
+            appear, neither primary, both muted:
+              · "Send to a different email →"  → routes back to Email.
+              · "Re-check now"                  → forces a poll.
 
         Subtle hints:
-          - Spinner is the only animation.
-          - Status line can rotate phrasing every ~10s to feel alive
-            without spamming: "Waiting for verification…" → "Still
-            waiting…" → "These sometimes take a moment…"
+          - The spinner is the only animation up to the delay.
+          - The polling status line can rotate phrasing every ~10s to
+            feel alive without spamming:
+              "Waiting for verification…"
+              → "Still waiting…"
+              → "These sometimes take a moment…"
           - No explicit progress bar; no "X seconds elapsed".
-          - On a transient gist-network rate-limit during background
-            polling, a tiny muted note appears: "Service busy — retrying
-            soon." Polling continues.
+          - On a transient rate-limit during polling, a tiny muted note
+            appears: "Service busy — retrying soon." Polling continues.
         """
         ...

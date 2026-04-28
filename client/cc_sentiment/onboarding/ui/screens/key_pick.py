@@ -22,11 +22,12 @@ class KeyPickScreen(Screen[State]):
 
     def render(self) -> t.Screen:
         """
-        Card-based picker for which key to use. Replaces the old table —
-        each option is a roomy, scannable card with the essentials (label,
-        path or fingerprint) and a faint preview when focused.
+        Card-based picker for which key to use. Big polished TUI cards/rows
+        — never a table (per plan: "Existing-key UI must be large,
+        readable, card-based, and not table-like").
 
         Layout (vertical stack of cards, ~70 columns):
+          ╭─ Pick your verification key ──────────╮       [DRAFT title]
           ╭───────────────────────────────────────╮
           │  ●  ~/.ssh/id_ed25519                 │
           │     ssh-ed25519 · "yasyf@host"        │
@@ -37,35 +38,35 @@ class KeyPickScreen(Screen[State]):
           │     yasyf@example.com                 │
           ╰───────────────────────────────────────╯
           ╭───────────────────────────────────────╮
-          │  ○  Create a new key for cc-sentiment │
-          │     Stored under ~/.cc-sentiment/keys │
+          │  ○  Create a new key for cc-sentiment │       [DRAFT managed label]
+          │     A dedicated key, stored under     │       [DRAFT managed sub-line]
+          │     ~/.cc-sentiment/keys              │
           ╰───────────────────────────────────────╯
 
-        Each card:
-          - Radio glyph (●/○) for current focus.
+        Each card (per plan "label + path/fingerprint, faint focused preview"):
+          - Radio glyph (●/○) marks current focus.
           - Bold label line: path (SSH) or fingerprint (GPG).
           - Subtitle: algorithm + comment (SSH) or email (GPG).
-          - Faint single-line preview of the public key when focused;
+          - Faint single-line preview of the public key body when focused;
             other cards show no preview.
 
-        Default focus:
-          - If the managed-key option is recommended (based on the
-            running router's main path), the managed card is focused.
+        Default focus (per plan Q&A "Key choice default"):
+          - If the managed key is recommended (router suggests it), the
+            managed card is focused.
           - Otherwise the first existing key is focused.
 
-        Actions:
+        Buttons (exactly):
+          - No separate buttons. Each card IS the action.
           - ↑/↓ moves focus between cards.
-          - Enter / click commits the choice and advances:
+          - Enter / click on a card commits and advances:
               existing SSH → SshMethod
               existing GPG → Email
               managed      → Working / Publish / Email per capabilities
 
-        Bottom row (one muted line):
-          "We'll only use this to verify your uploads."
-
         Subtle hints:
           - Recommended card has a small muted "recommended" pill — no
-            long explanation.
-          - GPG keys with no usable email never appear here at all.
+            paragraph of explanation.
+          - GPG keys with no usable email never appear here at all
+            (per plan Q&A: "omit GPG keys without usable email").
         """
         ...

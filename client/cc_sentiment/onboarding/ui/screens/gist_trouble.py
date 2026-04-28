@@ -25,33 +25,35 @@ class GistTroubleScreen(Screen[State]):
 
     def render(self) -> t.Screen:
         """
-        Trouble screen for when we've been watching for a gist that never
-        appears. Most common cause is a typo in the username, so we put
-        the username edit inline and offer email as the next-best path.
+        Trouble screen for when we've watched for the gist long enough
+        and never found it. Most common cause is a typo in the username,
+        so we put the username edit inline and offer email as the alternate
+        path. No restart link here (per plan: "Keep actions branch-specific;
+        no extraneous buttons" — restart belongs to VerifyTrouble only).
 
         Layout (card, ~60 columns):
-          ╭─ Still watching for your gist ─────╮
+          ╭─ Still watching for your gist ─────╮       (TROUBLE_TITLE)
           │                                    │
-          │  GitHub usually takes a moment,    │
-          │  but if you typed the username     │
-          │  wrong we'll never find it.        │
+          │  GitHub usually takes a moment,    │       [DRAFT body]
+          │  but if the username is off we'll  │
+          │  never find it.                    │
           │                                    │
           │  GitHub username                   │
           │  [ yasyf____________________ ]     │
-          │  [ Try this username ]             │
+          │  [ Try this username ]             │       [DRAFT submit label]
           │                                    │
-          │  Use email instead →               │
-          │  Restart setup →                   │
+          │  Use email instead →               │       [DRAFT email link label]
           ╰────────────────────────────────────╯
 
-        Actions:
-          - Inline username input pre-filled with the username we've been
-            polling against; user edits, presses "Try this username" to
-            validate and route back to Publish with the new value.
-          - Quiet "Use email instead →" — routes to Email (only shown
-            when GPG is available).
-          - Quiet "Restart setup →" — clears pending state and routes
-            to Welcome.
+        Buttons (exactly):
+          - Inline username input pre-filled with the username we've
+            been polling against.
+          - Small "Try this username" button — validates and routes back
+            to Publish with the new username.
+          - Quiet "Use email instead →" link — routes to Email (only
+            shown when GPG is available).
+          - NO restart link, NO "keep watching", NO "try a different
+            way" (existing buttons are removed per plan).
 
         Subtle hints:
           - The original watcher is still running in the background — if
@@ -59,7 +61,7 @@ class GistTroubleScreen(Screen[State]):
             advance to Done without further interaction.
           - No retry counter, no scary error text. The "still watching"
             framing keeps it calm.
-          - Server-side error, when present, appears as a single muted
-            line below the input — never red, never large.
+          - On gist API rate-limit during the still-running watcher, a
+            tiny muted note appears: "GitHub busy — still trying."
         """
         ...

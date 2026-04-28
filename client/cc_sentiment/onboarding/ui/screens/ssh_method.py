@@ -22,39 +22,47 @@ class SshMethodScreen(Screen[State]):
 
     def render(self) -> t.Screen:
         """
-        Dedicated method picker for an existing SSH key. Two options;
-        publishing as a public gist is the default because it doesn't
-        require GitHub auth and leaves no permanent change on the user's
-        account.
+        Dedicated method picker after the user has picked an existing SSH
+        key. Two methods, gist is the default. May also show an inline
+        username input when the user picked an existing SSH key but we
+        still don't know their GitHub username (per plan: "If username
+        is missing, ask inline on this method screen").
 
-        Layout (centered card, ~60 columns):
-          ╭─ Where should we publish this key? ─╮
+        Layout (centered card, ~60 columns; username row appears only
+        when missing):
+          ╭─ Where should we publish this key? ─╮      [DRAFT title]
           │                                     │
-          │  We need somewhere public so        │
-          │  sentiments.cc can verify it's      │
-          │  yours.                             │
+          │  GitHub username                    │      (only when missing)
+          │  [ yasyf____________________ ]      │
           │                                     │
-          │       [ Publish as a gist ]         │
+          │       [ Publish as a gist ]         │      [DRAFT primary label]
+          │       Public gist on github.com/    │      [DRAFT sub-line]
+          │       <username>. Delete it any time│
           │                                     │
-          │       Add it to GitHub →            │
+          │       Add it to GitHub →            │      [DRAFT secondary label]
+          │       (gh authed)                   │      [DRAFT sub-line variants]
+          │       We'll add it via the GitHub   │
+          │       CLI.
+          │       (no gh)
+          │       You'll paste it into          │
+          │       github.com/settings/keys.     │
           ╰─────────────────────────────────────╯
 
-        Actions:
+        Buttons (exactly):
+          - Optional username input (only when missing).
           - Primary "Publish as a gist" — focused. Routes to Publish.
-            Below it, one quiet line:
-              "Public gist on github.com/<username>. Delete it any time."
           - Secondary "Add it to GitHub →" — routes to GhAdd.
-            Below it, one quiet capability-aware line:
-              gh authed:    "We'll add it via the GitHub CLI."
-              not authed:   "You'll paste it into github.com/settings/keys."
+          - No third option, no comparison table, no help link.
 
-        De-emphasis when not gh-authed:
+        De-emphasis when not gh-authed (per plan Q&A "GitHub add for
+        existing SSH"):
           The "Add it to GitHub →" link uses a more muted color and the
-          "manual" sub-line stays — never red, never alarming, just clearly
-          the second-best path.
+          sub-line clearly states it will be manual. Never red, never
+          alarming, just clearly the second-best path.
 
         Subtle hints:
           - Tab/Shift-Tab moves between the two options; Enter activates.
-          - No third "advanced" option, no comparison table.
+          - Plan: "default gist; explain tradeoffs" — sub-lines under
+            each option carry the tradeoff in one line each.
         """
         ...

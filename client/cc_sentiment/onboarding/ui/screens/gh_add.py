@@ -22,49 +22,54 @@ class GhAddScreen(Screen[State]):
 
     def render(self) -> t.Screen:
         """
-        Add an existing SSH key to GitHub. Two flavors based on whether
-        `gh` is authenticated — the silent automatic path and the polished
-        manual path.
+        Add an existing SSH key to a GitHub account. Two flavors based on
+        whether `gh` is authenticated (per plan Q&A: "Show automatic/
+        manual; de-emphasize manual if not gh-authenticated").
 
-        Layout (gh authed — automatic, ~60 columns):
-          ╭─ Adding to GitHub… ────────────────╮
+        Layout (gh authed — silent automatic, ~50 columns):
+          ╭─ Adding to GitHub… ────────────────╮       [DRAFT title]
           │                                    │
-          │  ⠹ Uploading via gh CLI…           │
+          │  ⠹ Adding key via gh CLI…          │       [DRAFT status]
           │                                    │
           ╰────────────────────────────────────╯
-          Pure spinner, no buttons. Same shape as Working.
+          No buttons. Same shape as Working.
 
         Layout (no gh auth — manual, ~70 columns):
-          ╭─ Add this key to GitHub ───────────────────╮
+          ╭─ Add this key to GitHub ───────────────────╮       [DRAFT title]
           │                                            │
-          │  We copied the key. Paste it on:           │
-          │    github.com/settings/ssh/new             │
+          │  We copied the key. Paste it on            │       [DRAFT body]
+          │  github.com/settings/keys.                 │
           │                                            │
-          │  ╭ Verification key ──────────────────────╮│
-          │  │ ssh-ed25519 AAAA…                      ││
+          │  ╭ Verification key ──────────────────────╮│       (PUBLISH_KEY_PREVIEW_TITLE,
+          │  │ ssh-ed25519 AAAA…                      ││        reused)
           │  ╰────────────────────────────────────────╯│
           │                                            │
-          │       [ Open GitHub settings ]             │
-          │       Copy again                           │
+          │       [ Open GitHub ]                      │       (reuses PUBLISH_OPEN_LABEL,
+          │       Copy again                           │        PUBLISH_COPY_AGAIN_LABEL)
           │                                            │
-          │  ⠹ Watching for the new key…               │
+          │  ⠹ Watching for the new key…               │       [DRAFT watcher line]
           ╰────────────────────────────────────────────╯
 
-        Actions (manual flavor):
-          - Primary "Open GitHub settings" — app.open_url for
-            github.com/settings/ssh/new (with title prefilled if possible).
-          - Quiet "Copy again".
-          - Same fallback panel + confirmation gate as Publish if both
-            clipboard and browser fail.
+        Buttons (exactly):
+          - Auto flavor: NONE (matches Working — no buttons).
+          - Manual flavor:
+              · Primary "Open GitHub" — app.open_url for
+                github.com/settings/keys/new (with title prefilled if
+                possible).
+              · Quiet "Copy again" — re-copies via app.copy_to_clipboard.
+              · Same fallback panel + confirmation gate as Publish if
+                both clipboard and browser fail.
 
-        Watcher:
-          Polls GitHub for the key fingerprint until it appears, or times
-          out (then → Trouble).
+        Watcher (manual flavor):
+          Polls GitHub for the key fingerprint until it appears, or
+          times out (then → Trouble).
 
         Subtle hints:
           - The two flavors share Done as the destination but feel
             different — gh-authed is silent, manual gives instructions
             and one obvious primary button.
           - No "advanced" toggle to switch between flavors.
+          - Gist API rate-limit while polling shows a subtle warning
+            under the watcher row, polling continues.
         """
         ...

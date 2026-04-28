@@ -24,14 +24,15 @@ class DoneScreen(Screen[State]):
         """
         Success screen — the user is verified and ready to ingest. Two
         short cards: who/how we know it's you, and exactly what we'll
-        upload. One obvious primary action.
+        upload. One obvious primary action. Reuses the existing
+        DoneBranch (per plan: "Done — Existing DoneBranch").
 
         Layout (stacked cards, ~70 columns):
-          ╭─ Verification ─────────────────────╮
-          │  ✓ Verification: @yasyf on GitHub  │
+          ╭─ Verification ─────────────────────╮       (existing card title)
+          │  Verification: @yasyf on GitHub    │       (derived from config)
           ╰────────────────────────────────────╯
-          ╭─ What gets sent ───────────────────╮
-          │  {                                 │
+          ╭─ What gets sent ───────────────────╮       (existing card title)
+          │  {                                 │       (PAYLOAD_SAMPLE, syntax-highlighted)
           │    "time": "2026-04-15T14:23:05Z", │
           │    "sentiment_score": 4,           │
           │    "claude_model":                 │
@@ -41,28 +42,30 @@ class DoneScreen(Screen[State]):
           │    "read_edit_ratio": 0.71         │
           │  }                                 │
           │                                    │
-          │  No transcript text, prompts,      │
+          │  No transcript text, prompts,      │       (PAYLOAD_EXCLUSION_TEXT)
           │  tool inputs, tool outputs, or     │
           │  code.                             │
           ╰────────────────────────────────────╯
 
-               [ Start ingesting ]
+               [ Start ingesting ]                     (SETTINGS_PRIMARY_LABEL)
 
-        Verification line varies by config:
-          SSH on GitHub:    "Verification: @yasyf on GitHub"
-          Public gist:      "Verification: @yasyf via public gist"
-          GPG on GitHub:    "Verification: @yasyf on GitHub"
-          GPG by fingerprint: "Verification: GPG …D9EF"
+        Verification line varies by config (existing _derive_verification):
+          SSHConfig:      "Verification: @{cid} on GitHub"
+          GistConfig:     "Verification: @{cid} via public gist"
+          GistGPGConfig:  "Verification: @{cid} via public gist"
+          GPGConfig (github): "Verification: @{cid} on GitHub"
+          GPGConfig (gpg):    "Verification: GPG {fpr[-8:]}"
 
-        Actions:
-          - Primary "Start ingesting" — dismisses the setup dialog with a
-            success result so the host app can begin the scan/upload flow.
+        Buttons (exactly — matches existing screen):
+          - Primary "Start ingesting" — dismisses the setup dialog with
+            a success result so the host app can begin scan/upload.
+          - No other actions.
 
         Subtle hints:
-          - The JSON sample is rendered with light syntax highlighting on
-            a transparent background.
-          - The "what gets sent" exclusion line is quiet but unmissable —
-            users have asked specifically for this assurance.
+          - JSON sample renders with light syntax highlighting on a
+            transparent background.
+          - The exclusion line is quiet but unmissable — users have asked
+            specifically for this assurance.
           - No "advanced settings" link, no "edit" affordances.
         """
         ...

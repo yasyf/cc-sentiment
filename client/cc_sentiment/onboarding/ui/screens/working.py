@@ -23,32 +23,32 @@ class WorkingScreen(Screen[State]):
     def render(self) -> t.Screen:
         """
         Spare working screen for the managed-SSH happy path. One spinner,
-        one status line that updates as the work progresses. Nothing else.
+        one status line that updates as work progresses. Nothing else
+        (per plan: "Spinner-only auto path. ... No buttons, no checklist").
 
         Layout (centered card, ~50 columns):
-          ╭─ Setting up… ──────────────────────╮
+          ╭─ Setting up… ──────────────────────╮       (WORKING_TITLE)
           │                                    │
-          │  ⠹ Creating verification key…      │
+          │  ⠹ Creating cc-sentiment key…      │       (status line, cycles)
           │                                    │
           ╰────────────────────────────────────╯
 
-        Status line cycles through:
-          "Creating verification key…"
+        Status line cycles through (existing strings from working.py):
+          "Creating cc-sentiment key…"
           "Creating GitHub gist…"
-          "Verifying with sentiments.cc…"
+          "Verifying upload…"
 
-        Actions:
-          None. The screen has no buttons, no checklist of substeps, no
-          progress bar, no elapsed timer. It transitions to Done on
-          success or Trouble on failure.
+        Buttons (exactly):
+          NONE. The screen has no buttons, no checklist of substeps, no
+          progress bar, no elapsed timer, no cancel. Transitions to Done
+          on success or Trouble after retries are exhausted.
 
         Subtle hints:
           - The card title doesn't change.
           - The spinner is the only animated element.
-          - If a step takes >5s, the line can append
-            "(this usually takes a few seconds)" — once, calm, then drops.
-          - On a transient retry (per "Managed key creation fails? Retry
-            silently"), the line stays the same and the spinner keeps
-            spinning. The user never sees the retry.
+          - On a transient managed-keygen failure (per plan Q&A: "3
+            quick silent retries, then Trouble"), the line stays the
+            same and the spinner keeps spinning. The user never sees
+            the retry.
         """
         ...
