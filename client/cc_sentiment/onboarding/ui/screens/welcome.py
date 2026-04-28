@@ -26,6 +26,7 @@ class State(BaseState):
 class WelcomeView(CardScreen[Event]):
     DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
     WelcomeView > Card { min-width: 60; max-width: 70; }
+    WelcomeView Body { text-align: center; }
     WelcomeView Center > Button#get-started-btn { width: auto; margin: 0 0 1 0; }
     WelcomeView Horizontal#checking-row {
         width: auto;

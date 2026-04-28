@@ -62,9 +62,7 @@ class TestDoneScreen:
     async def test_verification_card_present(self):
         async with mounted(DoneScreen, gs_done_via_gist()) as pilot:
             card = pilot.app.screen.query_one("#verification-card")
-            assert "Verification" in str(getattr(card, "renderable", "")) or has_text(
-                pilot, "Verification"
-            )
+            assert card.border_title == "Verification"
 
     async def test_payload_card_present(self):
         async with mounted(DoneScreen, gs_done_via_gist()) as pilot:

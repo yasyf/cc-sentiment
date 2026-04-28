@@ -81,7 +81,7 @@ class DoneView(CardScreen[Event]):
         )
         yield Card(
             Static(
-                Syntax(PAYLOAD_SAMPLE, "json", theme="tokyo-night", background_color=None),
+                Syntax(PAYLOAD_SAMPLE, "json", theme="github-dark", background_color=None),
                 id="payload-sample",
             ),
             MutedLine(self.payload_exclusion, id="payload-exclusion"),
@@ -117,17 +117,17 @@ class DoneScreen(Screen[State]):
     def verification_line(cls, config: ClientConfig | None) -> str:
         match config:
             case SSHConfig(contributor_id=cid):
-                return f"Verification: @{cid} on GitHub"
+                return f"@{cid} on GitHub"
             case GistConfig(contributor_id=cid):
-                return f"Verification: @{cid} via public gist"
+                return f"@{cid} via public gist"
             case GistGPGConfig(contributor_id=cid):
-                return f"Verification: @{cid} via public gist"
+                return f"@{cid} via public gist"
             case GPGConfig(contributor_type="github", contributor_id=cid):
-                return f"Verification: @{cid} on GitHub"
+                return f"@{cid} on GitHub"
             case GPGConfig(contributor_type="gpg", fpr=fpr):
-                return f"Verification: GPG {fpr[-8:]}"
+                return f"GPG {fpr[-8:]}"
             case _:
-                return "Verification: ready"
+                return "Ready"
 
     def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
         return DoneView(
