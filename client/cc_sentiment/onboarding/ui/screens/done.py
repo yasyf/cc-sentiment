@@ -20,6 +20,20 @@ class DoneScreen(Screen[State]):
     def matcher(cls) -> GlobalState:
         return GlobalState(stage=Stage.DONE)
 
+    @classmethod
+    def strings(cls) -> dict[str, str]:
+        return {
+            "title": "All set",
+            "verification_card_title": "Verification",
+            "payload_card_title": "What gets sent",
+            "payload_exclusion": "No transcript text, prompts, tool inputs, tool outputs, or code.",
+            "primary_button": "Start ingesting",
+            "verification_ssh_github": "Verification: @{cid} on GitHub",
+            "verification_gist": "Verification: @{cid} via public gist",
+            "verification_gpg_github": "Verification: @{cid} on GitHub",
+            "verification_gpg_fpr": "Verification: GPG {fpr_short}",
+        }
+
     def render(self) -> t.Screen:
         """
         Success screen — the user is verified and ready to ingest. Two

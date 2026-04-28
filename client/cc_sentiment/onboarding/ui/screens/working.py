@@ -20,6 +20,15 @@ class WorkingScreen(Screen[State]):
     def matcher(cls) -> GlobalState:
         return GlobalState(stage=Stage.WORKING)
 
+    @classmethod
+    def strings(cls) -> dict[str, str]:
+        return {
+            "title": "Setting up…",
+            "status_creating_key": "Creating cc-sentiment key…",
+            "status_creating_gist": "Creating GitHub gist…",
+            "status_verifying": "Verifying upload…",
+        }
+
     def render(self) -> t.Screen:
         """
         Spare working screen for the managed-SSH happy path. One spinner,

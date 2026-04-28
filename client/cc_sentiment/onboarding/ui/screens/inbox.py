@@ -20,6 +20,22 @@ class InboxScreen(Screen[State]):
     def matcher(cls) -> GlobalState:
         return GlobalState(stage=Stage.INBOX)
 
+    @classmethod
+    def strings(cls) -> dict[str, str]:
+        return {
+            "title": "Check your inbox",
+            "body": (
+                "Verification email sent to {email}. "
+                "Open it, click the link, then return here."
+            ),
+            "waiting_label": "Waiting for verification…",
+            "still_waiting_label": "Still waiting…",
+            "taking_a_moment_label": "These sometimes take a moment…",
+            "different_email_link": "Send to a different email →",
+            "recheck_link": "Re-check now",
+            "rate_limit_note": "Service busy — retrying soon.",
+        }
+
     def render(self) -> t.Screen:
         """
         Waiting card shown after the verification email has been sent.

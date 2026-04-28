@@ -22,5 +22,9 @@ class Screen(ABC, Generic[S]):
     @abstractmethod
     def matcher(cls) -> GlobalState: ...
 
+    @classmethod
+    @abstractmethod
+    def strings(cls) -> dict[str, str]: ...
+
     @abstractmethod
     def render(self) -> t.Screen: ...

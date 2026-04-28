@@ -20,6 +20,19 @@ class SshMethodScreen(Screen[State]):
     def matcher(cls) -> GlobalState:
         return GlobalState(stage=Stage.SSH_METHOD)
 
+    @classmethod
+    def strings(cls) -> dict[str, str]:
+        return {
+            "title": "Where should we publish this key?",
+            "username_label": "GitHub username",
+            "username_placeholder": "yasyf",
+            "gist_button": "Publish as a gist",
+            "gist_subline": "Public gist on github.com/{username}. Delete it any time.",
+            "gh_add_link": "Add it to GitHub →",
+            "gh_add_subline_authed": "We'll add it via the GitHub CLI.",
+            "gh_add_subline_manual": "You'll paste it into github.com/settings/keys.",
+        }
+
     def render(self) -> t.Screen:
         """
         Dedicated method picker after the user has picked an existing SSH

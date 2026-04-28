@@ -20,6 +20,20 @@ class BlockedScreen(Screen[State]):
     def matcher(cls) -> GlobalState:
         return GlobalState(stage=Stage.BLOCKED)
 
+    @classmethod
+    def strings(cls) -> dict[str, str]:
+        return {
+            "title": "We need an SSH client or GPG",
+            "body": (
+                "Your system doesn't have either installed. "
+                "Open the install guide, then re-run “cc-sentiment setup”."
+            ),
+            "install_hint_brew": "  brew install gnupg",
+            "install_hint_generic": "Install OpenSSH or GPG, then return.",
+            "install_button": "Open install guide",
+            "quit_button": "Quit",
+        }
+
     def render(self) -> t.Screen:
         """
         Final-resort screen when neither ssh-keygen nor GPG is available

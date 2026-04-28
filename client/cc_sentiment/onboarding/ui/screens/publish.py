@@ -20,6 +20,26 @@ class PublishScreen(Screen[State]):
     def matcher(cls) -> GlobalState:
         return GlobalState(stage=Stage.PUBLISH)
 
+    @classmethod
+    def strings(cls) -> dict[str, str]:
+        return {
+            "title": "One more step",
+            "body": (
+                "Create a public GitHub gist with what we copied to your "
+                "clipboard. We'll find it automatically."
+            ),
+            "key_preview_title": "Verification key",
+            "open_button": "Open GitHub",
+            "copy_again_link": "Copy again",
+            "no_github_link": "I don't use GitHub →",
+            "watch_label": "Watching for your gist…",
+            "fallback_intro": (
+                "Copy the public key below, then paste it into a new public gist."
+            ),
+            "fallback_confirm_button": "I've created the gist",
+            "rate_limit_note": "GitHub busy — retrying.",
+        }
+
     def render(self) -> t.Screen:
         """
         The manual-gist publish screen — `GistInstructionCard` per plan.

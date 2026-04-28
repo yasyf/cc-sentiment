@@ -23,6 +23,20 @@ class GistTroubleScreen(Screen[State]):
             trouble_reason=TroubleReason.GIST_TIMEOUT,
         )
 
+    @classmethod
+    def strings(cls) -> dict[str, str]:
+        return {
+            "title": "Still watching for your gist",
+            "body": (
+                "GitHub usually takes a moment, but if the username is off "
+                "we'll never find it."
+            ),
+            "username_label": "GitHub username",
+            "submit_button": "Try this username",
+            "email_link": "Use email instead →",
+            "rate_limit_note": "GitHub busy — still trying.",
+        }
+
     def render(self) -> t.Screen:
         """
         Trouble screen for when we've watched for the gist long enough

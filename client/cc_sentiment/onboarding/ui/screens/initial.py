@@ -20,6 +20,13 @@ class InitialScreen(Screen[State]):
     def matcher(cls) -> GlobalState:
         return GlobalState(stage=Stage.INITIAL)
 
+    @classmethod
+    def strings(cls) -> dict[str, str]:
+        return {
+            "checking": "Checking your setup…",
+            "still_checking": "Still checking…",
+        }
+
     def render(self) -> t.Screen:
         """
         Spare loading screen during the initial probe — usually too quick

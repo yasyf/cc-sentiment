@@ -23,6 +23,18 @@ class VerifyTroubleScreen(Screen[State]):
             trouble_reason=TroubleReason.VERIFY_TIMEOUT,
         )
 
+    @classmethod
+    def strings(cls) -> dict[str, str]:
+        return {
+            "title": "We couldn't verify your key",
+            "subhint": "Try again with a fresh setup — it usually only takes a moment.",
+            "restart_button": "Restart setup",
+            "error_key_not_found": "sentiments.cc couldn't see your published key.",
+            "error_signature_failed": "Your key didn't match the signature we sent.",
+            "error_rate_limited": "sentiments.cc is busy — wait a minute and retry.",
+            "error_unknown": "sentiments.cc reported an issue we don't recognize.",
+        }
+
     def render(self) -> t.Screen:
         """
         Trouble screen for when the key is published but sentiments.cc

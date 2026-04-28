@@ -20,6 +20,19 @@ class WelcomeScreen(Screen[State]):
     def matcher(cls) -> GlobalState:
         return GlobalState(stage=Stage.WELCOME)
 
+    @classmethod
+    def strings(cls) -> dict[str, str]:
+        return {
+            "title": "Set up cc-sentiment",
+            "body": (
+                "We'll create a verification key so we can confirm uploads "
+                "are yours. This usually takes about 30 seconds."
+            ),
+            "primary_button": "Get started",
+            "checking": "Checking your setup…",
+            "saved_invalid_line": "Your last verification needs refreshing.",
+        }
+
     def render(self) -> t.Screen:
         """
         Friendly entry point for first-time setup. Calm prose, one obvious

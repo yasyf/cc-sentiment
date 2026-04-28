@@ -20,6 +20,19 @@ class UserFormScreen(Screen[State]):
     def matcher(cls) -> GlobalState:
         return GlobalState(stage=Stage.USER_FORM)
 
+    @classmethod
+    def strings(cls) -> dict[str, str]:
+        return {
+            "title": "What's your GitHub username?",
+            "placeholder": "yasyf",
+            "primary_button": "Continue",
+            "no_github_link": "I don't use GitHub →",
+            "error_empty": "Enter your GitHub username, or pick “I don't use GitHub” below.",
+            "error_not_found": "GitHub user “{user}” wasn't found.",
+            "error_unreachable": "Couldn't reach GitHub. Try again in a moment.",
+            "validating": "Validating {user}…",
+        }
+
     def render(self) -> t.Screen:
         """
         Username form, shown only as a last resort when ssh-keygen exists

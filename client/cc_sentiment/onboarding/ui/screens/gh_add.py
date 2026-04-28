@@ -20,6 +20,21 @@ class GhAddScreen(Screen[State]):
     def matcher(cls) -> GlobalState:
         return GlobalState(stage=Stage.GH_ADD)
 
+    @classmethod
+    def strings(cls) -> dict[str, str]:
+        return {
+            "title_auto": "Adding to GitHub…",
+            "status_auto": "Adding key via gh CLI…",
+            "title_manual": "Add this key to GitHub",
+            "body_manual": "We copied the key. Paste it on github.com/settings/keys.",
+            "key_preview_title": "Verification key",
+            "open_button": "Open GitHub",
+            "copy_again_link": "Copy again",
+            "watch_label": "Watching for the new key…",
+            "fallback_confirm_button": "I've added the key",
+            "rate_limit_note": "GitHub busy — retrying.",
+        }
+
     def render(self) -> t.Screen:
         """
         Add an existing SSH key to a GitHub account. Two flavors based on

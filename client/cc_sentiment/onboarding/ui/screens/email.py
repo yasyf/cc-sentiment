@@ -20,6 +20,17 @@ class EmailScreen(Screen[State]):
     def matcher(cls) -> GlobalState:
         return GlobalState(stage=Stage.EMAIL)
 
+    @classmethod
+    def strings(cls) -> dict[str, str]:
+        return {
+            "title": "What email should we use?",
+            "body": "We'll send a one-time verification link.",
+            "send_button": "Send link",
+            "sending_label": "Sending…",
+            "error_empty": "Use an email address you can open now.",
+            "error_unreachable": "Couldn't reach keys.openpgp.org. Try again in a moment.",
+        }
+
     def render(self) -> t.Screen:
         """
         Email entry form for the OpenPGP path. Pre-fill if we already

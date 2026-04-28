@@ -20,6 +20,15 @@ class KeyPickScreen(Screen[State]):
     def matcher(cls) -> GlobalState:
         return GlobalState(stage=Stage.KEY_PICK)
 
+    @classmethod
+    def strings(cls) -> dict[str, str]:
+        return {
+            "title": "Pick your verification key",
+            "managed_card_label": "Create a new key for cc-sentiment",
+            "managed_card_subline": "A dedicated key, stored under ~/.cc-sentiment/keys.",
+            "recommended_pill": "recommended",
+        }
+
     def render(self) -> t.Screen:
         """
         Card-based picker for which key to use. Big polished TUI cards/rows

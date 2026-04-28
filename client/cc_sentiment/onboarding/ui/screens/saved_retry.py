@@ -20,6 +20,15 @@ class SavedRetryScreen(Screen[State]):
     def matcher(cls) -> GlobalState:
         return GlobalState(stage=Stage.SAVED_RETRY)
 
+    @classmethod
+    def strings(cls) -> dict[str, str]:
+        return {
+            "title": "Couldn't reach sentiments.cc",
+            "body": "We'll try again in a moment.",
+            "retry_button": "Retry",
+            "restart_link": "Set up again",
+        }
+
     def render(self) -> t.Screen:
         """
         Small recovery card for when saved credentials exist but
