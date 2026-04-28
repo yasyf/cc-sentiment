@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import subprocess
 import time
-import webbrowser
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import ClassVar
@@ -20,6 +19,7 @@ from cc_sentiment.models import GistGPGConfig, GistConfig, GPGConfig, MyStat, SS
 from cc_sentiment.upload import Uploader
 
 from cc_sentiment.tui.screens.dialog import Dialog
+from cc_sentiment.tui.system import Browser
 from cc_sentiment.tui.view import CtaState
 from cc_sentiment.tui.widgets import ButtonRow
 
@@ -127,7 +127,7 @@ class StatShareScreen(Dialog[None]):
         if self.share_id is None:
             return
         await anyio.to_thread.run_sync(
-            webbrowser.open, Uploader.tweet_url(self.share_id, self.stat.tweet_text)
+            Browser.open, Uploader.tweet_url(self.share_id, self.stat.tweet_text)
         )
         self.dismiss(None)
 

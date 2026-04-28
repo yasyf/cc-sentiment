@@ -14,19 +14,11 @@ RouteIdLiteral = Literal[
     "managed-ssh-gist",
     "managed-gpg-openpgp",
     "managed-ssh-manual-gist",
-    "existing-ssh-gist",
-    "existing-ssh-github",
-    "existing-ssh-manual-gist",
-    "existing-gpg-gist",
-    "existing-gpg-openpgp",
-    "existing-gpg-github",
 ]
 
 PublishMethodLiteral = Literal[
     "gist-auto",
     "gist-manual",
-    "github-ssh",
-    "github-gpg",
     "openpgp",
 ]
 
@@ -37,13 +29,10 @@ class PendingSetupStatus(StrEnum):
     CREATED = "created"
     AWAITING_USER = "awaiting-user"
     GIST_NOT_FOUND = "gist-not-found"
-    GIST_DESCRIPTION_MISMATCH = "gist-description-mismatch"
     OPENPGP_EMAIL_SENT = "openpgp-email-sent"
-    MANUAL_OPENPGP_UPLOAD = "manual-openpgp-upload"
     VERIFY_PENDING = "verify-pending"
     VERIFY_UNAUTHORIZED = "verify-unauthorized"
     NETWORK_PENDING = "network-pending"
-    WORKING_FAILED = "working-failed"
 
 
 class SSHConfig(BaseModel, frozen=True):

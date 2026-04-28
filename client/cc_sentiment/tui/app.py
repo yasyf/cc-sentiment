@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import subprocess
-import webbrowser
 from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar
@@ -65,6 +64,7 @@ from cc_sentiment.upload import (
 from cc_sentiment.tui.moments_view import MomentsView
 from cc_sentiment.tui.format import TimeFormat
 from cc_sentiment.tui.progress import DebugState, ScoringProgress
+from cc_sentiment.tui.system import Browser
 from cc_sentiment.tui.screens import (
     BootingScreen,
     CostReviewScreen,
@@ -693,13 +693,13 @@ class CCSentimentApp(App[None]):
             )
 
     async def action_open_dashboard(self) -> None:
-        await anyio.to_thread.run_sync(webbrowser.open, DASHBOARD_URL)
+        await anyio.to_thread.run_sync(Browser.open, DASHBOARD_URL)
         self._update_status(f"[dim]Opened aggregate stats: {DASHBOARD_URL}.[/]")
         self.set_timer(3.0, lambda: self.watch_stage(self.stage))
 
     async def _auto_open_dashboard(self) -> None:
         await anyio.sleep(self.AUTO_OPEN_DASHBOARD_DELAY_SECONDS)
-        await anyio.to_thread.run_sync(webbrowser.open, DASHBOARD_URL)
+        await anyio.to_thread.run_sync(Browser.open, DASHBOARD_URL)
 
     async def action_rescan(self) -> None:
         match self.stage:
