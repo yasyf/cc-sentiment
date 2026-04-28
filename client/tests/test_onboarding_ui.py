@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
-from textual.screen import Screen as TextualScreen
+from textual import screen as t
 
 from cc_sentiment.onboarding import Stage
 from cc_sentiment.onboarding.ui import Screen
@@ -19,43 +19,47 @@ def test_concrete_subclass_satisfies_contract():
     class WelcomeState:
         busy: bool = False
 
-    class WelcomeScreen(Screen):
-        STAGE = Stage.WELCOME
+    class WelcomeScreen(Screen[WelcomeState]):
         State = WelcomeState
 
-        def screen(self) -> TextualScreen:
-            return TextualScreen()
+        @classmethod
+        def matcher(cls) -> Stage:
+            return Stage.WELCOME
 
-    instance = WelcomeScreen()
-    assert instance.STAGE is Stage.WELCOME
-    assert instance.State is WelcomeState
-    assert isinstance(instance.screen(), TextualScreen)
+        def render(self) -> t.Screen:
+            return t.Screen()
+
+    assert WelcomeScreen.matcher() is Stage.WELCOME
+    assert WelcomeScreen.State is WelcomeState
+    assert isinstance(WelcomeScreen().render(), t.Screen)
 
 
-def test_stage_class_attr_works_as_match_pattern():
-    class WelcomeScreen(Screen):
-        STAGE = Stage.WELCOME
-        State = type("State", (), {})
+def test_matcher_classmethod_dispatches_a_stage():
+    class WelcomeScreen(Screen[object]):
+        State = object
 
-        def screen(self) -> TextualScreen:
-            return TextualScreen()
+        @classmethod
+        def matcher(cls) -> Stage:
+            return Stage.WELCOME
 
-    class TroubleScreen(Screen):
-        STAGE = Stage.TROUBLE
-        State = type("State", (), {})
+        def render(self) -> t.Screen:
+            return t.Screen()
 
-        def screen(self) -> TextualScreen:
-            return TextualScreen()
+    class TroubleScreen(Screen[object]):
+        State = object
 
-    def dispatch(stage: Stage) -> str:
-        match stage:
-            case WelcomeScreen.STAGE:
-                return "welcome"
-            case TroubleScreen.STAGE:
-                return "trouble"
-            case _:
-                return "other"
+        @classmethod
+        def matcher(cls) -> Stage:
+            return Stage.TROUBLE
 
-    assert dispatch(Stage.WELCOME) == "welcome"
-    assert dispatch(Stage.TROUBLE) == "trouble"
-    assert dispatch(Stage.DONE) == "other"
+        def render(self) -> t.Screen:
+            return t.Screen()
+
+    registry: tuple[type[Screen], ...] = (WelcomeScreen, TroubleScreen)
+
+    def dispatch(stage: Stage) -> type[Screen] | None:
+        return next((s for s in registry if s.matcher() == stage), None)
+
+    assert dispatch(Stage.WELCOME) is WelcomeScreen
+    assert dispatch(Stage.TROUBLE) is TroubleScreen
+    assert dispatch(Stage.DONE) is None
