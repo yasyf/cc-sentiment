@@ -5,7 +5,7 @@ from typing import ClassVar, Generic, TypeVar
 
 from textual import screen as t
 
-from cc_sentiment.onboarding import State as FsmState
+from cc_sentiment.onboarding import State as GlobalState
 
 from .state import BaseState
 
@@ -20,7 +20,7 @@ class Screen(ABC, Generic[S]):
 
     @classmethod
     @abstractmethod
-    def matcher(cls) -> FsmState: ...
+    def matcher(cls) -> GlobalState: ...
 
     @abstractmethod
     def render(self) -> t.Screen: ...

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import pytest
 from textual import screen as t
 
-from cc_sentiment.onboarding import Stage, State as FsmState
+from cc_sentiment.onboarding import Stage, State as GlobalState
 from cc_sentiment.onboarding.ui import BaseState, Screen
 
 
@@ -13,17 +13,13 @@ from cc_sentiment.onboarding.ui import BaseState, Screen
 class WelcomeState(BaseState):
     busy: bool = False
 
-    @classmethod
-    def empty(cls) -> WelcomeState:
-        return cls()
-
 
 class WelcomeScreen(Screen[WelcomeState]):
     State = WelcomeState
 
     @classmethod
-    def matcher(cls) -> FsmState:
-        return FsmState(stage=Stage.WELCOME)
+    def matcher(cls) -> GlobalState:
+        return GlobalState(stage=Stage.WELCOME)
 
     def render(self) -> t.Screen:
         return t.Screen()
@@ -34,18 +30,33 @@ def test_screen_is_abstract():
         Screen()  # type: ignore[abstract]
 
 
-def test_base_state_is_abstract():
-    with pytest.raises(TypeError):
-        BaseState()  # type: ignore[abstract]
+def test_default_empty_uses_constructor():
+    @dataclass(frozen=True)
+    class DefaultState(BaseState):
+        flag: bool = True
+
+    assert DefaultState.empty() == DefaultState(flag=True)
 
 
-def test_concrete_subclass_initializes_state_via_empty():
+def test_subclass_can_override_empty():
+    @dataclass(frozen=True)
+    class SeededState(BaseState):
+        counter: int = 0
+
+        @classmethod
+        def empty(cls) -> SeededState:
+            return cls(counter=42)
+
+    assert SeededState.empty().counter == 42
+
+
+def test_screen_seeds_state_via_empty():
     instance = WelcomeScreen()
     assert isinstance(instance.state, WelcomeState)
     assert instance.state.busy is False
 
 
-def test_init_uses_subclass_empty_not_default_constructor():
+def test_screen_uses_subclass_override_of_empty():
     @dataclass(frozen=True)
     class SeededState(BaseState):
         counter: int = 0
@@ -58,8 +69,8 @@ def test_init_uses_subclass_empty_not_default_constructor():
         State = SeededState
 
         @classmethod
-        def matcher(cls) -> FsmState:
-            return FsmState(stage=Stage.WELCOME)
+        def matcher(cls) -> GlobalState:
+            return GlobalState(stage=Stage.WELCOME)
 
         def render(self) -> t.Screen:
             return t.Screen()
@@ -67,27 +78,21 @@ def test_init_uses_subclass_empty_not_default_constructor():
     assert SeededScreen().state.counter == 42
 
 
-def test_matcher_returns_fsm_state_shape():
+def test_matcher_returns_global_state_shape():
     pattern = WelcomeScreen.matcher()
-    assert isinstance(pattern, FsmState)
+    assert isinstance(pattern, GlobalState)
     assert pattern.stage is Stage.WELCOME
 
 
 def test_matcher_can_describe_a_substate():
     from cc_sentiment.onboarding import TroubleReason
 
-    @dataclass(frozen=True)
-    class GistTroubleState(BaseState):
-        @classmethod
-        def empty(cls) -> GistTroubleState:
-            return cls()
-
-    class GistTroubleScreen(Screen[GistTroubleState]):
-        State = GistTroubleState
+    class GistTroubleScreen(Screen[WelcomeState]):
+        State = WelcomeState
 
         @classmethod
-        def matcher(cls) -> FsmState:
-            return FsmState(
+        def matcher(cls) -> GlobalState:
+            return GlobalState(
                 stage=Stage.TROUBLE,
                 trouble_reason=TroubleReason.GIST_TIMEOUT,
             )

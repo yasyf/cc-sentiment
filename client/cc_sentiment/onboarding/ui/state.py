@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Self
 
 
 class BaseState(ABC):
     @classmethod
-    @abstractmethod
-    def empty(cls) -> Self: ...
+    def empty(cls) -> Self:
+        return cls()
