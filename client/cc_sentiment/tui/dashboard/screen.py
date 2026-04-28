@@ -608,8 +608,10 @@ class DashboardScreen(Screen[None]):
                 await classifier.close()
 
     def _on_upload_progress_change(self, progress: UploadProgress) -> None:
-        assert self.view is not None
-        self.view.update_upload(progress)
+        if self.view is None:
+            return
+        with contextlib.suppress(NoMatches):
+            self.view.update_upload(progress)
 
     async def _fetch_card(self, config: SSHConfig | GPGConfig | GistConfig | GistGPGConfig, push_share: bool) -> None:
         self._set_debug(share_state="waiting on stat")
@@ -705,6 +707,7 @@ class DashboardScreen(Screen[None]):
         self.app.open_url(DASHBOARD_URL)
 
     async def action_quit(self) -> None:
+        self.workers.cancel_all()
         self.app.exit()
 
     async def action_rescan(self) -> None:
