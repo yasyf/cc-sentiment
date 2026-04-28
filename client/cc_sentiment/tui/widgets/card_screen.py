@@ -29,6 +29,17 @@ class CardScreen(ModalScreen[T]):
         background: $panel;
         padding: 2 3;
     }
+    CardScreen Button.-primary:focus,
+    CardScreen Button.-default:focus { text-style: bold; }
+    CardScreen .muted { color: $text-muted; }
+    CardScreen .success { color: $success; }
+    CardScreen .warning { color: $warning; }
+    CardScreen .error { color: $error; }
+    CardScreen .code {
+        background: $boost;
+        border: round $panel-lighten-2;
+        padding: 0 1;
+    }
     """
 
     title: ClassVar[str] = ""

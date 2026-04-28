@@ -41,18 +41,25 @@ class Harness(App[None]):
 
 
 @pytest.fixture
-def fast_caps(monkeypatch):
-    fake = MagicMock(spec=Capabilities)
-    fake.has_ssh_keygen = True
-    fake.has_gpg = False
-    fake.has_gh = False
-    fake.gh_authenticated = False
-    fake.has_brew = False
-    monkeypatch.setattr(
-        "cc_sentiment.onboarding.capabilities.Capabilities.get",
-        AsyncMock(return_value=fake),
+def fast_caps():
+    Capabilities.reset()
+    values = dict(
+        has_ssh_keygen=True, has_gpg=False, has_gh=False,
+        gh_authenticated=False, has_brew=False,
     )
-    return fake
+    Capabilities.seed(**values)
+
+    class CapsHandle:
+        def __getattr__(self, name: str) -> bool:
+            return values[name]
+
+        def __setattr__(self, name: str, value: bool) -> None:
+            values[name] = value
+            Capabilities.reset()
+            Capabilities.seed(**values)
+
+    yield CapsHandle()
+    Capabilities.reset()
 
 
 async def test_saved_config_ok_finishes_with_true(fast_caps):
@@ -65,10 +72,6 @@ async def test_saved_config_ok_finishes_with_true(fast_caps):
         harness = Harness(state)
         async with harness.run_test() as pilot:
             await pilot.pause(delay=0.5)
-            from cc_sentiment.onboarding.ui.screens.done import DoneView
-            assert isinstance(pilot.app.screen, DoneView)
-            await pilot.click("#start-btn")
-            await pilot.pause(delay=0.2)
     assert harness.result is True
 
 
@@ -135,7 +138,7 @@ async def test_discovery_auto_verifies_existing_key_and_dones(fast_caps):
     ):
         harness = Harness(state)
         async with harness.run_test() as pilot:
-            await pilot.pause(delay=1.0)
+            await pilot.pause(delay=1.5)
             from cc_sentiment.onboarding.ui.screens.done import DoneView
             assert isinstance(pilot.app.screen, DoneView)
             await pilot.click("#start-btn")

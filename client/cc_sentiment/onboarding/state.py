@@ -5,6 +5,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
+from cc_sentiment.models import ClientConfig
+
 
 class Stage(StrEnum):
     INITIAL = "initial"
@@ -98,3 +100,4 @@ class State:
     github_lookup_allowed: bool = True
     trouble: Trouble | None = None
     resumed_from_pending: bool = False
+    verified_config: ClientConfig | None = None

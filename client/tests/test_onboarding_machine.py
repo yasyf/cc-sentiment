@@ -57,9 +57,9 @@ CAPABILITY_DEFAULTS: dict[str, bool] = {
 
 
 def fake_caps(**overrides: bool) -> Capabilities:
-    mock = Mock(spec=Capabilities)
-    mock.configure_mock(**(CAPABILITY_DEFAULTS | overrides))
-    return mock
+    Capabilities.reset()
+    Capabilities.seed(**(CAPABILITY_DEFAULTS | overrides))
+    return Capabilities()
 
 
 def state_at(stage: Stage, **overrides) -> State:
@@ -75,7 +75,8 @@ def existing_gpg(label: str = "alice@example.com") -> ExistingKey:
 
 
 def step(state: State, event, caps: Capabilities | None = None) -> State:
-    return SetupMachine.transition(state, event, caps or fake_caps())
+    import anyio
+    return anyio.run(SetupMachine.transition, state, event, caps or fake_caps())
 
 
 # ===========================================================================

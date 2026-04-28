@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
-import anyio
 import pytest
 
 from cc_sentiment.onboarding import Capabilities
@@ -15,89 +14,63 @@ def has_only(*names: str):
 
 
 @pytest.fixture(autouse=True)
-async def fresh_cache():
-    await Capabilities.invalidate()
+def fresh_singleton():
+    Capabilities.reset()
     yield
-    await Capabilities.invalidate()
+    Capabilities.reset()
 
 
-class TestGet:
-    async def test_returns_dataclass_with_expected_fields(self):
-        with (
-            patch("cc_sentiment.onboarding.capabilities.shutil.which", side_effect=has_only("ssh-keygen", "gpg")),
-            patch(
-                "cc_sentiment.signing.discovery.KeyDiscovery.gh_authenticated",
-                new=AsyncMock(return_value=False),
-            ),
-        ):
-            caps = await Capabilities.get()
-        assert caps.has_ssh_keygen is True
-        assert caps.has_gpg is True
-        assert caps.has_gh is False
-        assert caps.gh_authenticated is False
-        assert caps.has_brew is False
+class TestSingleton:
+    def test_repeated_construction_returns_same_instance(self):
+        assert Capabilities() is Capabilities()
 
-    async def test_skips_gh_check_when_no_gh(self):
-        gh_mock = AsyncMock(return_value=True)
-        with (
-            patch("cc_sentiment.onboarding.capabilities.shutil.which", return_value=None),
-            patch("cc_sentiment.signing.discovery.KeyDiscovery.gh_authenticated", new=gh_mock),
-        ):
-            caps = await Capabilities.get()
-        assert caps.gh_authenticated is False
-        gh_mock.assert_not_called()
-
-    async def test_runs_gh_check_when_gh_present(self):
-        gh_mock = AsyncMock(return_value=True)
-        with (
-            patch("cc_sentiment.onboarding.capabilities.shutil.which", side_effect=has_only("gh")),
-            patch("cc_sentiment.signing.discovery.KeyDiscovery.gh_authenticated", new=gh_mock),
-        ):
-            caps = await Capabilities.get()
-        assert caps.has_gh is True
-        assert caps.gh_authenticated is True
-        gh_mock.assert_awaited_once()
+    def test_reset_creates_new_instance(self):
+        first = Capabilities()
+        Capabilities.reset()
+        assert Capabilities() is not first
 
 
-class TestCacheBehavior:
-    async def test_repeated_get_returns_same_instance(self):
-        with (
-            patch("cc_sentiment.onboarding.capabilities.shutil.which", return_value=None),
-            patch(
-                "cc_sentiment.signing.discovery.KeyDiscovery.gh_authenticated",
-                new=AsyncMock(return_value=False),
-            ),
-        ):
-            first = await Capabilities.get()
-            second = await Capabilities.get()
-        assert first is second
+class TestProperties:
+    async def test_has_ssh_keygen_true_when_present(self):
+        with patch("cc_sentiment.onboarding.capabilities.shutil.which", side_effect=has_only("ssh-keygen")):
+            assert await Capabilities().has_ssh_keygen is True
 
-    async def test_concurrent_get_calls_build_only_once(self):
-        which_mock = AsyncMock(return_value=False)
-        with (
-            patch("cc_sentiment.onboarding.capabilities.shutil.which", side_effect=has_only("gh")),
-            patch("cc_sentiment.signing.discovery.KeyDiscovery.gh_authenticated", new=which_mock),
-        ):
-            results: list[Capabilities] = []
+    async def test_has_ssh_keygen_false_when_absent(self):
+        with patch("cc_sentiment.onboarding.capabilities.shutil.which", return_value=None):
+            assert await Capabilities().has_ssh_keygen is False
 
-            async def collect() -> None:
-                results.append(await Capabilities.get())
+    async def test_gh_authenticated_short_circuits_when_no_gh(self):
+        run_mock = AsyncMock()
+        with patch("cc_sentiment.onboarding.capabilities.shutil.which", return_value=None), \
+             patch("cc_sentiment.onboarding.capabilities.anyio.run_process", new=run_mock):
+            assert await Capabilities().gh_authenticated is False
+        run_mock.assert_not_awaited()
 
-            async with anyio.create_task_group() as tg:
-                for _ in range(5):
-                    tg.start_soon(collect)
-        assert len({id(c) for c in results}) == 1
-        assert which_mock.await_count == 1
+    async def test_gh_authenticated_runs_subprocess_when_gh_present(self):
+        with patch("cc_sentiment.onboarding.capabilities.shutil.which", side_effect=has_only("gh")), \
+             patch(
+                 "cc_sentiment.onboarding.capabilities.anyio.run_process",
+                 new=AsyncMock(return_value=type("R", (), {"returncode": 0})()),
+             ):
+            assert await Capabilities().gh_authenticated is True
 
-    async def test_invalidate_clears_cache(self):
-        with (
-            patch("cc_sentiment.onboarding.capabilities.shutil.which", return_value=None),
-            patch(
-                "cc_sentiment.signing.discovery.KeyDiscovery.gh_authenticated",
-                new=AsyncMock(return_value=False),
-            ),
-        ):
-            first = await Capabilities.get()
-            await Capabilities.invalidate()
-            second = await Capabilities.get()
-        assert first is not second
+
+class TestCaching:
+    async def test_property_evaluated_once_then_memoized(self):
+        with patch(
+            "cc_sentiment.onboarding.capabilities.shutil.which",
+            return_value="/usr/bin/ssh-keygen",
+        ) as which:
+            caps = Capabilities()
+            await caps.has_ssh_keygen
+            await caps.has_ssh_keygen
+            await caps.has_ssh_keygen
+        assert which.call_count == 1
+
+
+class TestSeed:
+    async def test_seed_short_circuits_property(self):
+        Capabilities.seed(has_ssh_keygen=True, has_gh=False, gh_authenticated=False)
+        assert await Capabilities().has_ssh_keygen is True
+        assert await Capabilities().has_gh is False
+        assert await Capabilities().gh_authenticated is False

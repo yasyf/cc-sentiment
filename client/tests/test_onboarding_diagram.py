@@ -69,13 +69,14 @@ def caps(**overrides: bool) -> Capabilities:
         "has_ssh_keygen": False, "has_gpg": False, "has_gh": False,
         "gh_authenticated": False, "has_brew": False,
     }
-    mock = Mock(spec=Capabilities)
-    mock.configure_mock(**(defaults | overrides))
-    return mock
+    Capabilities.reset()
+    Capabilities.seed(**(defaults | overrides))
+    return Capabilities()
 
 
 def step(state: State, event, c: Capabilities | None = None) -> State:
-    return SetupMachine.transition(state, event, c or caps())
+    import anyio
+    return anyio.run(SetupMachine.transition, state, event, c or caps())
 
 
 def existing_ssh() -> ExistingKey:

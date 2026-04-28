@@ -34,6 +34,7 @@ dependencies = [
     "afinn>=0.1",
     "zstandard>=0.25.0",
     "mlx-lm>=0.31.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "asyncstdlib>=3.14.0",
 ]
 
 [project.scripts]

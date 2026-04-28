@@ -14,7 +14,7 @@ class CommandBox(Static):
         color: $text;
         background: $boost;
 
-        &:hover { border: round $accent; background: $panel-lighten-1; }
+        &:hover { border: round $accent; background: $panel; }
     }
     """
 

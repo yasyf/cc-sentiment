@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from time import monotonic
 from typing import ClassVar
 
@@ -114,23 +115,32 @@ class OnboardingScreen(Screen[bool]):
     def __init__(self, app_state: AppState) -> None:
         super().__init__()
         self.app_state = app_state
-        self.caps: Capabilities | None = None
+        self.caps: Capabilities = Capabilities()
         self._verified_config: ClientConfig | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("", id="onboarding-bg")
 
-    async def on_mount(self) -> None:
-        self.caps = await Capabilities.get()
+    def on_mount(self) -> None:
+        self.run_worker(self._prefetch_caps(), name="caps-prefetch", exit_on_error=False)
         self._run()
+
+    async def _prefetch_caps(self) -> None:
+        await self.caps.has_ssh_keygen
+        await self.caps.has_gpg
+        await self.caps.has_gh
+        await self.caps.has_brew
+        await self.caps.gh_authenticated
 
     @work(group="orchestrator", exit_on_error=True)
     async def _run(self) -> None:
-        assert self.caps is not None, "on_mount must complete before _run starts"
         state = self._initial_state()
         while True:
             view = self._build_view(state)
             event = await self._show(view, state)
+            if isinstance(event, SavedConfigChecked) and event.result == "ok":
+                self.dismiss(True)
+                return
             if state.stage is Stage.DONE and isinstance(event, StartProcessing):
                 await self._persist_done(state)
                 self.dismiss(True)
@@ -138,7 +148,7 @@ class OnboardingScreen(Screen[bool]):
             if state.stage is Stage.BLOCKED and isinstance(event, QuitOnboarding):
                 self.dismiss(False)
                 return
-            state = self._apply_event(state, event)
+            state = await self._apply_event(state, event)
 
     async def _show(self, view: t.Screen, state: State) -> Event:
         """Push view, await mount, launch side-effect, await dismiss result."""
@@ -162,7 +172,6 @@ class OnboardingScreen(Screen[bool]):
         )
 
     def _build_view(self, state: State) -> t.Screen:
-        assert self.caps is not None
         if state.stage is Stage.TROUBLE:
             screen_cls = self._trouble_screen_for(state.trouble)
         else:
@@ -181,16 +190,18 @@ class OnboardingScreen(Screen[bool]):
             case _:
                 return GistTroubleScreen
 
-    def _apply_event(self, state: State, event: Event) -> State:
-        assert self.caps is not None
+    async def _apply_event(self, state: State, event: Event) -> State:
         if isinstance(event, DiscoveryComplete) and event.auto_verified_config is not None:
             self._verified_config = event.auto_verified_config
         if isinstance(event, StartProcessing):
             return state
         try:
-            return SetupMachine.transition(state, event, self.caps)
+            new_state = await SetupMachine.transition(state, event, self.caps)
         except InvalidTransition:
             return state
+        if new_state.stage is Stage.DONE and self._verified_config is not None and new_state.verified_config is None:
+            new_state = replace(new_state, verified_config=self._verified_config)
+        return new_state
 
     async def _persist_done(self, state: State) -> None:
         if self._verified_config is not None:

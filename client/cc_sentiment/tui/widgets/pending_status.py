@@ -22,11 +22,15 @@ class PendingSpinner(LoadingIndicator):
 
     FRAMES: ClassVar[tuple[str, ...]] = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
-    auto_refresh = 1 / 12
-
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.started_at = monotonic()
+
+    def on_mount(self) -> None:
+        self.call_after_refresh(self._set_refresh_rate)
+
+    def _set_refresh_rate(self) -> None:
+        self.auto_refresh = 1 / 12
 
     def render(self) -> Text:
         return Text(self.FRAMES[int((monotonic() - self.started_at) * 12) % len(self.FRAMES)])

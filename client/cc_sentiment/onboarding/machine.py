@@ -51,15 +51,17 @@ class InvalidTransition(Exception):
 
 class Router:
     @staticmethod
-    def main_path(state: State, caps: Capabilities) -> Stage:
-        ssh_path = caps.has_ssh_keygen and state.github_lookup_allowed
-        return (
-            Stage.WORKING if ssh_path and caps.gh_authenticated
-            else Stage.PUBLISH if ssh_path and state.identity.has_username
-            else Stage.EMAIL if caps.has_gpg
-            else Stage.USER_FORM if ssh_path
-            else Stage.BLOCKED
-        )
+    async def main_path(state: State, caps: Capabilities) -> Stage:
+        ssh_path = await caps.has_ssh_keygen and state.github_lookup_allowed
+        if ssh_path and await caps.gh_authenticated:
+            return Stage.WORKING
+        if ssh_path and state.identity.has_username:
+            return Stage.PUBLISH
+        if await caps.has_gpg:
+            return Stage.EMAIL
+        if ssh_path:
+            return Stage.USER_FORM
+        return Stage.BLOCKED
 
     @staticmethod
     def to_trouble(state: State, trouble: Trouble) -> State:
@@ -70,7 +72,7 @@ class StartMachine:
     OWNS: ClassVar[frozenset[Stage]] = frozenset({Stage.INITIAL, Stage.SAVED_RETRY})
 
     @classmethod
-    def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
+    async def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
         match (state.stage, event):
             case (Stage.INITIAL, ResumePendingGist()):
                 return replace(state, stage=Stage.PUBLISH, resumed_from_pending=True)
@@ -95,12 +97,13 @@ class DiscoveryMachine:
     OWNS: ClassVar[frozenset[Stage]] = frozenset({Stage.WELCOME, Stage.USER_FORM})
 
     @classmethod
-    def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
+    async def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
         match (state.stage, event):
             case (Stage.WELCOME, DiscoveryComplete(auto_verified=True) as e):
                 return replace(
                     state, stage=Stage.DONE,
                     identity=e.identity, existing_keys=e.existing_keys,
+                    verified_config=e.auto_verified_config,
                 )
             case (Stage.WELCOME, DiscoveryComplete() as e):
                 hydrated = replace(
@@ -108,13 +111,13 @@ class DiscoveryMachine:
                 )
                 if hydrated.existing_keys.any_usable:
                     return replace(hydrated, stage=Stage.KEY_PICK)
-                return replace(hydrated, stage=Router.main_path(hydrated, caps))
+                return replace(hydrated, stage=await Router.main_path(hydrated, caps))
             case (Stage.USER_FORM, UsernameSubmitted(username=u)):
                 hydrated = replace(state, identity=replace(state.identity, github_username=u))
-                return replace(hydrated, stage=Router.main_path(hydrated, caps))
+                return replace(hydrated, stage=await Router.main_path(hydrated, caps))
             case (Stage.USER_FORM, NoGitHubChosen()):
                 hydrated = replace(state, github_lookup_allowed=False)
-                return replace(hydrated, stage=Router.main_path(hydrated, caps))
+                return replace(hydrated, stage=await Router.main_path(hydrated, caps))
         raise InvalidTransition(state, event)
 
 
@@ -122,7 +125,7 @@ class KeyMachine:
     OWNS: ClassVar[frozenset[Stage]] = frozenset({Stage.KEY_PICK, Stage.SSH_METHOD})
 
     @classmethod
-    def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
+    async def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
         match (state.stage, event):
             case (Stage.KEY_PICK, KeyPicked(source=KeySource.EXISTING_SSH, key=k)):
                 return replace(
@@ -136,7 +139,7 @@ class KeyMachine:
                 )
             case (Stage.KEY_PICK, KeyPicked(source=KeySource.MANAGED)):
                 hydrated = replace(state, selected=SelectedKey(source=KeySource.MANAGED))
-                return replace(hydrated, stage=Router.main_path(hydrated, caps))
+                return replace(hydrated, stage=await Router.main_path(hydrated, caps))
             case (Stage.SSH_METHOD, MethodPicked(method=SshMethod.GIST)):
                 return replace(state, stage=Stage.PUBLISH)
             case (Stage.SSH_METHOD, MethodPicked(method=SshMethod.GH_ADD)):
@@ -150,7 +153,7 @@ class WorkflowMachine:
     })
 
     @classmethod
-    def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
+    async def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
         match (state.stage, event):
             case (Stage.WORKING, WorkingSucceeded()):
                 return replace(state, stage=Stage.DONE)
@@ -183,7 +186,7 @@ class TroubleMachine:
     OWNS: ClassVar[frozenset[Stage]] = frozenset({Stage.TROUBLE})
 
     @classmethod
-    def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
+    async def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
         match (state.stage, event):
             case (Stage.TROUBLE, TroubleEditUsername(new_username=u)):
                 return replace(
@@ -201,7 +204,7 @@ class TerminalMachine:
     OWNS: ClassVar[frozenset[Stage]] = frozenset({Stage.DONE, Stage.BLOCKED})
 
     @classmethod
-    def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
+    async def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
         match (state.stage, event):
             case (Stage.DONE, StartProcessing()):
                 return state
@@ -224,9 +227,9 @@ class SetupMachine:
     }
 
     @classmethod
-    def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
+    async def transition(cls, state: State, event: Event, caps: Capabilities) -> State:
         try:
             sub = cls.DISPATCH[state.stage]
         except KeyError as exc:
             raise InvalidTransition(state, event) from exc
-        return sub.transition(state, event, caps)
+        return await sub.transition(state, event, caps)

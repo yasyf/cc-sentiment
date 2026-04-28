@@ -1,48 +1,55 @@
 from __future__ import annotations
 
 import shutil
-from dataclasses import dataclass
 from typing import ClassVar
 
 import anyio
+import anyio.to_thread
+from asyncstdlib.functools import AwaitableValue, cached_property
 
 
-@dataclass(frozen=True, slots=True)
 class Capabilities:
-    has_ssh_keygen: bool
-    has_gpg: bool
-    has_gh: bool
-    gh_authenticated: bool
-    has_brew: bool
-
     _instance: ClassVar[Capabilities | None] = None
-    _lock: ClassVar[anyio.Lock] = anyio.Lock()
+
+    def __new__(cls) -> Capabilities:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
     @classmethod
-    async def get(cls) -> Capabilities:
-        if cls._instance is not None:
-            return cls._instance
-        async with cls._lock:
-            if cls._instance is not None:
-                return cls._instance
-            cls._instance = await cls._build()
-            return cls._instance
+    def reset(cls) -> None:
+        cls._instance = None
 
     @classmethod
-    async def invalidate(cls) -> None:
-        async with cls._lock:
-            cls._instance = None
+    def seed(cls, **values: bool) -> None:
+        instance = cls()
+        for name, value in values.items():
+            instance.__dict__[name] = AwaitableValue(value)
 
-    @classmethod
-    async def _build(cls) -> Capabilities:
-        from cc_sentiment.signing import KeyDiscovery
+    @cached_property
+    async def has_ssh_keygen(self) -> bool:
+        return await anyio.to_thread.run_sync(self._which, "ssh-keygen")
 
-        has_gh = shutil.which("gh") is not None
-        instance = cls(
-            has_ssh_keygen=shutil.which("ssh-keygen") is not None,
-            has_gpg=shutil.which("gpg") is not None,
-            has_gh=has_gh,
-            gh_authenticated=await KeyDiscovery.gh_authenticated() if has_gh else False,
-            has_brew=shutil.which("brew") is not None,
-        )
-        return instance
+    @cached_property
+    async def has_gpg(self) -> bool:
+        return await anyio.to_thread.run_sync(self._which, "gpg")
+
+    @cached_property
+    async def has_gh(self) -> bool:
+        return await anyio.to_thread.run_sync(self._which, "gh")
+
+    @cached_property
+    async def gh_authenticated(self) -> bool:
+        if not await self.has_gh:
+            return False
+        with anyio.fail_after(5):
+            result = await anyio.run_process(["gh", "auth", "status"], check=False)
+        return result.returncode == 0
+
+    @cached_property
+    async def has_brew(self) -> bool:
+        return await anyio.to_thread.run_sync(self._which, "brew")
+
+    @staticmethod
+    def _which(name: str) -> bool:
+        return shutil.which(name) is not None
