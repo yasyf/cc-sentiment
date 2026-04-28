@@ -13,12 +13,15 @@ from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.events import Event
 from cc_sentiment.onboarding.ui import BaseState, Screen
 from cc_sentiment.tui.onboarding.widgets import (
+    FallbackPanel,
     KeyPreview,
     PublishActions,
     WatcherRow,
 )
 from cc_sentiment.tui.widgets.body import Body
+from cc_sentiment.tui.widgets.card import Card
 from cc_sentiment.tui.widgets.card_screen import CardScreen
+from cc_sentiment.tui.widgets.link_row import LinkRow
 from cc_sentiment.tui.widgets.pending_status import PendingSpinner
 
 
@@ -38,54 +41,62 @@ class GhAddAutoView(CardScreen[Event]):
     GhAddAutoView Static#status { width: auto; color: $text-muted; }
     """
 
-    def __init__(self, *, title: str, status: str) -> None:
+    def __init__(self, *, title_auto: str, status_auto: str) -> None:
         super().__init__()
-        self.title = title
-        self._status = status
+        self.title = title_auto
+        self.status_auto = status_auto
 
     def compose_card(self) -> ComposeResult:
         with Horizontal():
             yield PendingSpinner()
-            yield Static(self._status, id="status")
+            yield Static(self.status_auto, id="status")
 
 
 class GhAddManualView(CardScreen[Event]):
     DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
     GhAddManualView > Card { min-width: 60; max-width: 80; }
+    GhAddManualView LinkRow#manual-link { margin: 1 0 0 0; }
     """
 
     def __init__(
         self,
         *,
-        title: str,
-        body: str,
-        key_text: str,
+        title_manual: str,
+        body_manual: str,
         key_preview_title: str,
-        open_label: str,
-        copy_label: str,
+        open_button: str,
+        copy_again_link: str,
         watch_label: str,
-        rate_limit_text: str,
+        manual_link: str,
+        fallback_intro: str,
+        fallback_confirm_button: str,
+        rate_limit_note: str,
+        key_text: str,
     ) -> None:
         super().__init__()
-        self.title = title
-        self.body_text = body
+        self.title = title_manual
+        self.body_manual = body_manual
         self.key_text = key_text
         self.key_preview_title = key_preview_title
-        self.open_label = open_label
-        self.copy_label = copy_label
+        self.open_button = open_button
+        self.copy_again_link = copy_again_link
         self.watch_label = watch_label
-        self.rate_limit_text = rate_limit_text
+        self.rate_limit_note = rate_limit_note
+        self.manual_link = manual_link
+        self.fallback_intro = fallback_intro
+        self.fallback_confirm_button = fallback_confirm_button
 
     def compose_card(self) -> ComposeResult:
-        yield Body(self.body_text, id="body")
+        yield Body(self.body_manual, id="body")
         yield KeyPreview(self.key_text, title=self.key_preview_title)
         yield PublishActions(
             open_url=GH_KEYS_URL,
             show_no_github=False,
-            open_label=self.open_label,
-            copy_label=self.copy_label,
+            open_label=self.open_button,
+            copy_label=self.copy_again_link,
         )
-        yield WatcherRow(self.watch_label, rate_limit_text=self.rate_limit_text)
+        yield WatcherRow(self.watch_label, rate_limit_text=self.rate_limit_note)
+        yield LinkRow(self.manual_link, id="manual-link", classes="muted")
 
     def on_mount(self) -> None:
         self.app.copy_to_clipboard(self.key_text)
@@ -98,6 +109,24 @@ class GhAddManualView(CardScreen[Event]):
     @on(PublishActions.CopyAgain)
     def _copy_again(self) -> None:
         self.app.copy_to_clipboard(self.key_text)
+
+    @on(LinkRow.Pressed, "#manual-link")
+    async def _show_fallback(self) -> None:
+        if self.query("#fallback-panel"):
+            return
+        panel = FallbackPanel(
+            key_text=self.key_text,
+            target_url=GH_KEYS_URL,
+            intro=self.fallback_intro,
+            confirm_label=self.fallback_confirm_button,
+        )
+        await self.query_one(Card).mount(panel, before=self.query_one(WatcherRow))
+        panel.visible = True
+        self.query_one("#manual-link", LinkRow).display = False
+
+    @on(FallbackPanel.Confirmed)
+    def _fallback_confirmed(self) -> None:
+        self.query_one("#fallback-panel", FallbackPanel).visible = False
 
 
 class GhAddScreen(Screen[State]):
@@ -118,6 +147,10 @@ class GhAddScreen(Screen[State]):
             "open_button": "Open GitHub",
             "copy_again_link": "Copy again",
             "watch_label": "Watching for it on GitHub…",
+            "manual_link": "Paste it manually →",
+            "fallback_intro": (
+                "Copy your signature below, then paste it at github.com/settings/keys."
+            ),
             "fallback_confirm_button": "I've added it",
             "rate_limit_note": "GitHub busy. Retrying.",
         }
@@ -184,16 +217,10 @@ class GhAddScreen(Screen[State]):
             under the watcher row, polling continues.
         """
         s = self.strings()
+        auto_keys = {"title_auto", "status_auto"}
         if caps.gh_authenticated:
-            return GhAddAutoView(title=s["title_auto"], status=s["status_auto"])
-        key_text = gs.selected.key.fingerprint if gs.selected and gs.selected.key else ""
+            return GhAddAutoView(**{k: s[k] for k in auto_keys})
         return GhAddManualView(
-            title=s["title_manual"],
-            body=s["body_manual"],
-            key_text=key_text,
-            key_preview_title=s["key_preview_title"],
-            open_label=s["open_button"],
-            copy_label=s["copy_again_link"],
-            watch_label=s["watch_label"],
-            rate_limit_text=s["rate_limit_note"],
+            **{k: v for k, v in s.items() if k not in auto_keys},
+            key_text=gs.selected.key.fingerprint if gs.selected and gs.selected.key else "",
         )

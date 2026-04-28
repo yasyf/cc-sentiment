@@ -3,6 +3,8 @@ from __future__ import annotations
 from textual.widgets import Button, DataTable
 
 from cc_sentiment.onboarding import Stage, State as GlobalState
+from cc_sentiment.onboarding.events import DiscoveryComplete
+from cc_sentiment.onboarding.state import ExistingKeys, Identity
 from cc_sentiment.onboarding.ui.screens import WelcomeScreen
 
 from .conftest import has_text, mounted
@@ -75,3 +77,28 @@ class TestWelcomeScreen:
             assert not has_text(pilot, "Detected:")
             assert not has_text(pilot, "Checked:")
             assert not has_text(pilot, "DEBUG")
+
+    async def test_get_started_button_no_op_before_discovery_done(self):
+        async with mounted(WelcomeScreen, gs_welcome()) as pilot:
+            await pilot.click("#get-started-btn")
+            await pilot.pause()
+            from cc_sentiment.onboarding.ui.screens.welcome import WelcomeView
+            assert isinstance(pilot.app.screen, WelcomeView)
+
+    async def test_button_label_swaps_to_continue_after_discovery(self):
+        async with mounted(WelcomeScreen, gs_welcome()) as pilot:
+            view = pilot.app.screen
+            event = DiscoveryComplete(identity=Identity(), existing_keys=ExistingKeys())
+            view.discovery_done(event)
+            await pilot.pause()
+            btn = view.query_one("#get-started-btn", Button)
+            assert btn.label.plain == "Continue"
+
+    async def test_checking_row_hidden_after_discovery_done(self):
+        async with mounted(WelcomeScreen, gs_welcome()) as pilot:
+            view = pilot.app.screen
+            view.discovery_done(
+                DiscoveryComplete(identity=Identity(), existing_keys=ExistingKeys())
+            )
+            await pilot.pause()
+            assert not view.query_one("#checking-row").display

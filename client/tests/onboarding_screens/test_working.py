@@ -43,3 +43,15 @@ class TestWorkingScreen:
         async with mounted(WorkingScreen, gs_working()) as pilot:
             assert not has_text(pilot, "Elapsed")
             assert not has_text(pilot, "Cancel")
+
+    async def test_set_status_updates_line(self):
+        # Plan: "Status line cycles through" three messages as work progresses.
+        async with mounted(WorkingScreen, gs_working()) as pilot:
+            view = pilot.app.screen
+            view.set_status("Creating GitHub gist…")
+            await pilot.pause()
+            status = view.query_one("#status")
+            assert "Creating GitHub gist" in str(status.render())
+            view.set_status("Verifying…")
+            await pilot.pause()
+            assert "Verifying" in str(view.query_one("#status").render())

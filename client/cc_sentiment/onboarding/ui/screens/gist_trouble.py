@@ -44,33 +44,35 @@ class GistTroubleView(CardScreen[Event]):
         *,
         title: str,
         body: str,
-        username: str,
         username_label: str,
         username_placeholder: str,
-        submit_label: str,
+        submit_button: str,
+        email_link: str,
+        rate_limit_note: str,
+        username: str,
         show_email_link: bool,
-        email_label: str,
     ) -> None:
         super().__init__()
         self.title = title
-        self.body_text = body
+        self.body = body
         self.username = username
         self.username_label = username_label
         self.username_placeholder = username_placeholder
-        self.submit_label = submit_label
+        self.submit_button = submit_button
         self.show_email_link = show_email_link
-        self.email_label = email_label
+        self.email_link = email_link
+        self.rate_limit_note = rate_limit_note
 
     def compose_card(self) -> ComposeResult:
-        yield Body(self.body_text, id="body")
+        yield Body(self.body, id="body")
         yield InlineUsernameRow(
             current=self.username,
             label=self.username_label,
             placeholder=self.username_placeholder,
         )
-        yield Center(Button(self.submit_label, id="submit-btn", variant="primary"))
+        yield Center(Button(self.submit_button, id="submit-btn", variant="primary"))
         if self.show_email_link:
-            yield LinkRow(self.email_label, id="email-link", classes="muted")
+            yield LinkRow(self.email_link, id="email-link", classes="muted")
 
     @on(Button.Pressed, "#submit-btn")
     @on(Input.Submitted, "#username-input")
@@ -152,14 +154,8 @@ class GistTroubleScreen(Screen[State]):
           - On gist API rate-limit during the still-running watcher, a
             tiny muted note appears: "GitHub busy — still trying."
         """
-        s = self.strings()
         return GistTroubleView(
-            title=s["title"],
-            body=s["body"],
+            **self.strings(),
             username=gs.identity.github_username,
-            username_label=s["username_label"],
-            username_placeholder=s["username_placeholder"],
-            submit_label=s["submit_button"],
             show_email_link=caps.has_gpg,
-            email_label=s["email_link"],
         )

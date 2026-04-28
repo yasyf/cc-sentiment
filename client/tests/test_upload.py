@@ -98,7 +98,7 @@ class TestUpload:
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_http_client)
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("cc_sentiment.upload.PayloadSigner.sign_records", return_value="fake-sig"), \
+        with patch("cc_sentiment.upload.PayloadSigner.sign_records", new=AsyncMock(return_value="fake-sig")), \
              patch("cc_sentiment.upload.httpx.AsyncClient", return_value=mock_ctx):
             uploader = Uploader()
 
@@ -206,7 +206,7 @@ class TestMintShare:
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_http_client)
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("cc_sentiment.upload.PayloadSigner.sign", return_value="fake-sig") as sign, \
+        with patch("cc_sentiment.upload.PayloadSigner.sign", new=AsyncMock(return_value="fake-sig")) as sign, \
              patch("cc_sentiment.upload.httpx.AsyncClient", return_value=mock_ctx):
             uploader = Uploader()
 
@@ -249,7 +249,7 @@ class TestMintShare:
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_http_client)
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("cc_sentiment.upload.PayloadSigner.sign", return_value="sig"), \
+        with patch("cc_sentiment.upload.PayloadSigner.sign", new=AsyncMock(return_value="sig")), \
              patch("cc_sentiment.upload.httpx.AsyncClient", return_value=mock_ctx):
             uploader = Uploader()
 

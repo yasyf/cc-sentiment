@@ -34,21 +34,21 @@ class KeyPickView(CardScreen[Event]):
         self,
         *,
         title: str,
+        managed_card_label: str,
+        managed_card_subline: str,
+        recommended_pill: str,
         ssh_keys: tuple[ExistingKey, ...],
         gpg_keys: tuple[ExistingKey, ...],
         managed_recommended: bool,
-        managed_label: str,
-        managed_subline: str,
-        recommended_pill: str,
     ) -> None:
         super().__init__()
         self.title = title
+        self.managed_card_label = managed_card_label
+        self.managed_card_subline = managed_card_subline
+        self.recommended_pill = recommended_pill
         self.ssh_keys = ssh_keys
         self.gpg_keys = gpg_keys
         self.managed_recommended = managed_recommended
-        self.managed_label = managed_label
-        self.managed_subline = managed_subline
-        self.recommended_pill = recommended_pill
 
     def compose_card(self) -> ComposeResult:
         managed_focused = self.managed_recommended
@@ -69,8 +69,8 @@ class KeyPickView(CardScreen[Event]):
         yield ManagedKeyCard(
             recommended=self.managed_recommended,
             focused=managed_focused,
-            label=self.managed_label,
-            subline=self.managed_subline,
+            label=self.managed_card_label,
+            subline=self.managed_card_subline,
             recommended_label=self.recommended_pill,
         )
 
@@ -149,14 +149,9 @@ class KeyPickScreen(Screen[State]):
           - GPG keys with no usable email never appear here at all
             (per plan Q&A: "omit GPG keys without usable email").
         """
-        s = self.strings()
-        usable_gpg = tuple(k for k in gs.existing_keys.gpg if k.label)
         return KeyPickView(
-            title=s["title"],
+            **self.strings(),
             ssh_keys=gs.existing_keys.ssh,
-            gpg_keys=usable_gpg,
+            gpg_keys=tuple(k for k in gs.existing_keys.gpg if k.label),
             managed_recommended=caps.gh_authenticated,
-            managed_label=s["managed_card_label"],
-            managed_subline=s["managed_card_subline"],
-            recommended_pill=s["recommended_pill"],
         )

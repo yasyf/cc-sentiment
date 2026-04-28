@@ -16,7 +16,6 @@ from cc_sentiment.onboarding.ui import BaseState, Screen
 from cc_sentiment.tui.widgets.body import Body
 from cc_sentiment.tui.widgets.card_screen import CardScreen
 from cc_sentiment.tui.widgets.link_row import LinkRow
-from cc_sentiment.tui.widgets.title import Title
 from cc_sentiment.upload import (
     AuthOk,
     AuthUnauthorized,
@@ -40,30 +39,21 @@ class SavedRetryView(CardScreen[Event]):
         *,
         title: str,
         body: str,
-        retry_label: str,
-        restart_label: str,
+        retry_button: str,
+        restart_link: str,
         config: ClientConfig | None,
     ) -> None:
         super().__init__()
         self.title = title
-        self.body_text = body
-        self.retry_label = retry_label
-        self.restart_label = restart_label
+        self.body = body
+        self.retry_button = retry_button
+        self.restart_link = restart_link
         self.config = config
 
-    def compose(self) -> ComposeResult:
-        # Override CardScreen.compose to control title placement and not yield extra
-        from cc_sentiment.tui.widgets.card import Card
-        yield Card(
-            Title(self.title),
-            Body(self.body_text),
-            Center(Button(self.retry_label, id="retry-btn", variant="primary")),
-            LinkRow(self.restart_label, id="restart-link"),
-            title="",
-        )
-
     def compose_card(self) -> ComposeResult:
-        return iter(())
+        yield Body(self.body)
+        yield Center(Button(self.retry_button, id="retry-btn", variant="primary"))
+        yield LinkRow(self.restart_link, id="restart-link")
 
     def on_mount(self) -> None:
         self.query_one("#retry-btn", Button).focus()
@@ -134,14 +124,7 @@ class SavedRetryScreen(Screen[State]):
           - During an in-flight retry, "Retry" disables and a tiny spinner
             sits beside it.
         """
-        s = self.strings()
-        return SavedRetryView(
-            title=s["title"],
-            body=s["body"],
-            retry_label=s["retry_button"],
-            restart_label=s["restart_link"],
-            config=getattr(self, "_config", None),
-        )
+        return SavedRetryView(**self.strings(), config=getattr(self, "_config", None))
 
     @classmethod
     def with_config(cls, config: ClientConfig) -> SavedRetryScreen:

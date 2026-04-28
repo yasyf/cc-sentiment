@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import orjson
 
@@ -13,6 +13,14 @@ from cc_sentiment.signing import (
 )
 from cc_sentiment.signing.discovery import GIST_DESCRIPTION, GIST_README_TEMPLATE
 from tests.helpers import make_record
+
+
+def _proc_result(returncode: int = 0, stdout: str = "", stderr: str = "") -> MagicMock:
+    return MagicMock(
+        returncode=returncode,
+        stdout=stdout.encode(),
+        stderr=stderr.encode(),
+    )
 
 
 class TestKeyDiscovery:
@@ -70,64 +78,74 @@ class TestPayloadSigner:
         assert ": " not in result
         assert ", " not in result
 
-    def test_sign_delegates_to_backend(self) -> None:
+    async def test_sign_delegates_to_backend(self) -> None:
         backend = MagicMock()
-        backend.sign.return_value = "fake-signature"
-        result = PayloadSigner.sign("test-data", backend)
+        backend.sign = AsyncMock(return_value="fake-signature")
+        result = await PayloadSigner.sign("test-data", backend)
         assert result == "fake-signature"
-        backend.sign.assert_called_once_with("test-data")
+        backend.sign.assert_awaited_once_with("test-data")
 
 
 class TestKeyGeneration:
-    def test_upload_github_ssh_key_success(self) -> None:
+    async def test_upload_github_ssh_key_success(self) -> None:
         key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
-        with patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            assert KeyDiscovery.upload_github_ssh_key(key) is True
+        with patch(
+            "cc_sentiment.signing.discovery.anyio.run_process",
+            new=AsyncMock(return_value=_proc_result(0)),
+        ):
+            assert await KeyDiscovery.upload_github_ssh_key(key) is True
 
-    def test_upload_github_ssh_key_failure(self) -> None:
+    async def test_upload_github_ssh_key_failure(self) -> None:
         key = SSHKeyInfo(path=Path("/home/.ssh/id_ed25519"), algorithm="ssh-ed25519", comment="")
-        with patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=1)
-            assert KeyDiscovery.upload_github_ssh_key(key) is False
+        with patch(
+            "cc_sentiment.signing.discovery.anyio.run_process",
+            new=AsyncMock(return_value=_proc_result(1)),
+        ):
+            assert await KeyDiscovery.upload_github_ssh_key(key) is False
 
-    def test_upload_github_gpg_key_success(self) -> None:
+    async def test_upload_github_gpg_key_success(self) -> None:
         key = GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096")
         with patch("cc_sentiment.signing.discovery.gnupg.GPG") as mock_gpg_cls, \
-             patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run, \
+             patch(
+                 "cc_sentiment.signing.discovery.anyio.run_process",
+                 new=AsyncMock(return_value=_proc_result(0)),
+             ), \
              patch("cc_sentiment.signing.discovery.tempfile.NamedTemporaryFile"), \
              patch("pathlib.Path.unlink"):
             mock_gpg_cls.return_value.export_keys.return_value = "-----BEGIN PGP PUBLIC KEY BLOCK-----"
-            mock_run.return_value = MagicMock(returncode=0)
-            assert KeyDiscovery.upload_github_gpg_key(key) is True
+            assert await KeyDiscovery.upload_github_gpg_key(key) is True
 
-    def test_upload_github_gpg_key_no_export(self) -> None:
+    async def test_upload_github_gpg_key_no_export(self) -> None:
         key = GPGKeyInfo(fpr="ABCDEF1234567890", email="test@example.com", algo="rsa4096")
         with patch("cc_sentiment.signing.discovery.gnupg.GPG") as mock_gpg_cls:
             mock_gpg_cls.return_value.export_keys.return_value = ""
-            assert KeyDiscovery.upload_github_gpg_key(key) is False
+            assert await KeyDiscovery.upload_github_gpg_key(key) is False
 
 
 class TestGistKeypair:
-    def test_gh_authenticated_missing_gh(self) -> None:
+    async def test_gh_authenticated_missing_gh(self) -> None:
         with patch.object(KeyDiscovery, "has_tool", return_value=False):
-            assert KeyDiscovery.gh_authenticated() is False
+            assert await KeyDiscovery.gh_authenticated() is False
 
-    def test_gh_authenticated_success(self) -> None:
+    async def test_gh_authenticated_success(self) -> None:
         with (
             patch.object(KeyDiscovery, "has_tool", return_value=True),
-            patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run,
+            patch(
+                "cc_sentiment.signing.discovery.anyio.run_process",
+                new=AsyncMock(return_value=_proc_result(0)),
+            ),
         ):
-            mock_run.return_value = MagicMock(returncode=0)
-            assert KeyDiscovery.gh_authenticated() is True
+            assert await KeyDiscovery.gh_authenticated() is True
 
-    def test_gh_authenticated_not_logged_in(self) -> None:
+    async def test_gh_authenticated_not_logged_in(self) -> None:
         with (
             patch.object(KeyDiscovery, "has_tool", return_value=True),
-            patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run,
+            patch(
+                "cc_sentiment.signing.discovery.anyio.run_process",
+                new=AsyncMock(return_value=_proc_result(1)),
+            ),
         ):
-            mock_run.return_value = MagicMock(returncode=1)
-            assert KeyDiscovery.gh_authenticated() is False
+            assert await KeyDiscovery.gh_authenticated() is False
 
     def test_find_gist_keypair_both_present(self, tmp_path: Path) -> None:
         key = tmp_path / "id_ed25519"
@@ -147,61 +165,65 @@ class TestGistKeypair:
         with patch("cc_sentiment.signing.discovery.CC_SENTIMENT_KEY_DIR", tmp_path):
             assert KeyDiscovery.find_gist_keypair() is None
 
-    def test_generate_managed_ssh_key_runs_ssh_keygen(self, tmp_path: Path) -> None:
+    async def test_generate_managed_ssh_key_runs_ssh_keygen(self, tmp_path: Path) -> None:
+        run_mock = AsyncMock(return_value=_proc_result(0))
         with (
             patch("cc_sentiment.signing.discovery.CC_SENTIMENT_KEY_DIR", tmp_path),
             patch.object(KeyDiscovery, "find_gist_keypair", return_value=None),
-            patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run,
+            patch("cc_sentiment.signing.discovery.anyio.run_process", new=run_mock),
         ):
             (tmp_path / "id_ed25519").write_text("private")
             (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA cc-sentiment\n")
-            mock_run.return_value = MagicMock(returncode=0)
-            result = KeyDiscovery.generate_managed_ssh_key()
+            result = await KeyDiscovery.generate_managed_ssh_key()
 
         assert result.path == tmp_path / "id_ed25519"
-        call_args = mock_run.call_args[0][0]
+        call_args = run_mock.await_args.args[0]
         assert call_args[:3] == ["ssh-keygen", "-t", "ed25519"]
         assert "-N" in call_args and call_args[call_args.index("-N") + 1] == ""
         assert "-C" in call_args and call_args[call_args.index("-C") + 1] == "cc-sentiment"
 
-    def test_generate_managed_ssh_key_skips_regeneration(self, tmp_path: Path) -> None:
+    async def test_generate_managed_ssh_key_skips_regeneration(self, tmp_path: Path) -> None:
         existing = tmp_path / "id_ed25519"
         existing.write_text("private")
         (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAA cc-sentiment")
+        run_mock = AsyncMock()
         with (
             patch("cc_sentiment.signing.discovery.CC_SENTIMENT_KEY_DIR", tmp_path),
-            patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run,
+            patch("cc_sentiment.signing.discovery.anyio.run_process", new=run_mock),
         ):
-            result = KeyDiscovery.generate_managed_ssh_key()
+            result = await KeyDiscovery.generate_managed_ssh_key()
 
         assert result.path == existing
-        mock_run.assert_not_called()
+        run_mock.assert_not_awaited()
 
-    def test_create_gist_from_text_writes_files_and_returns_id(self) -> None:
-        with patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0,
-                stdout="https://gist.github.com/octocat/abcdef1234567890abcd\n",
-            )
-            gist_id = KeyDiscovery.create_gist_from_text("ssh-ed25519 AAAAPUBKEY cc-sentiment")
+    async def test_create_gist_from_text_writes_files_and_returns_id(self) -> None:
+        run_mock = AsyncMock(return_value=_proc_result(
+            0, stdout="https://gist.github.com/octocat/abcdef1234567890abcd\n",
+        ))
+        with patch("cc_sentiment.signing.discovery.anyio.run_process", new=run_mock):
+            gist_id = await KeyDiscovery.create_gist_from_text("ssh-ed25519 AAAAPUBKEY cc-sentiment")
 
         assert gist_id == "abcdef1234567890abcd"
-        call_args = mock_run.call_args[0][0]
+        call_args = run_mock.await_args.args[0]
         assert call_args[:3] == ["gh", "gist", "create"]
         assert "--public" in call_args
         assert "-d" in call_args
         assert call_args[call_args.index("-d") + 1] == GIST_DESCRIPTION
 
-    def test_generate_managed_gpg_key_returns_only_new_fingerprint(self, tmp_path: Path) -> None:
+    async def test_generate_managed_gpg_key_returns_only_new_fingerprint(self, tmp_path: Path) -> None:
         existing = GPGKeyInfo(fpr="OLDFPR", email="alice@example.com", algo="rsa4096")
         new = GPGKeyInfo(fpr="NEWFPR", email="alice@example.com", algo="ed25519")
-
         sequence = [(existing,), (existing, new)]
         with (
-            patch.object(KeyDiscovery, "find_gpg_keys", side_effect=sequence),
-            patch("cc_sentiment.signing.discovery.subprocess.run") as mock_run,
+            patch.object(
+                KeyDiscovery, "find_gpg_keys",
+                new=AsyncMock(side_effect=sequence),
+            ),
+            patch(
+                "cc_sentiment.signing.discovery.anyio.run_process",
+                new=AsyncMock(return_value=_proc_result(0)),
+            ),
         ):
-            mock_run.return_value = MagicMock(returncode=0)
-            result = KeyDiscovery.generate_managed_gpg_key("cc-sentiment", "alice@example.com")
+            result = await KeyDiscovery.generate_managed_gpg_key("cc-sentiment", "alice@example.com")
 
         assert result.fpr == "NEWFPR"

@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
-import anyio
 import httpx
 from textual import on, work
 from textual import screen as t
@@ -36,28 +35,28 @@ class EmailView(CardScreen[Event]):
         *,
         title: str,
         body: str,
-        prefilled_email: str,
-        send_label: str,
+        send_button: str,
         sending_label: str,
         error_empty: str,
         error_unreachable: str,
+        prefilled_email: str,
         gpg_fpr: str,
     ) -> None:
         super().__init__()
         self.title = title
-        self.body_text = body
+        self.body = body
         self.prefilled_email = prefilled_email
-        self.send_label = send_label
+        self.send_button = send_button
         self.sending_label = sending_label
         self.error_empty = error_empty
         self.error_unreachable = error_unreachable
         self.gpg_fpr = gpg_fpr
 
     def compose_card(self) -> ComposeResult:
-        yield Body(self.body_text)
+        yield Body(self.body)
         yield Input(value=self.prefilled_email, id="email-input")
         yield Static("", id="email-status")
-        yield Center(Button(self.send_label, id="send-btn", variant="primary"))
+        yield Center(Button(self.send_button, id="send-btn", variant="primary"))
 
     def on_mount(self) -> None:
         self.query_one("#email-status", Static).display = False
@@ -83,21 +82,15 @@ class EmailView(CardScreen[Event]):
     @work(exit_on_error=False)
     async def _send_worker(self, email: str) -> None:
         try:
-            armor = await anyio.to_thread.run_sync(
-                lambda: GPGBackend(fpr=self.gpg_fpr).public_key_text()
-            )
-            token, statuses = await anyio.to_thread.run_sync(
-                KeyDiscovery.upload_openpgp_key, armor,
-            )
+            armor = await GPGBackend(fpr=self.gpg_fpr).public_key_text()
+            token, statuses = await KeyDiscovery.upload_openpgp_key(armor)
             unverified = [a for a, s in statuses.items() if s == "unpublished"] or [email]
-            await anyio.to_thread.run_sync(
-                KeyDiscovery.request_openpgp_verify, token, unverified,
-            )
+            await KeyDiscovery.request_openpgp_verify(token, unverified)
         except (httpx.HTTPError, OSError):
             self._set_status(self.error_unreachable)
             button = self.query_one("#send-btn", Button)
             button.disabled = False
-            button.label = self.send_label
+            button.label = self.send_button
             return
         self.dismiss(EmailSent())
 
@@ -165,14 +158,8 @@ class EmailScreen(Screen[State]):
           - Words "GPG" / "OpenPGP" never appear in the user-facing copy
             on this screen.
         """
-        s = self.strings()
         return EmailView(
-            title=s["title"],
-            body=s["body"],
+            **self.strings(),
             prefilled_email=gs.identity.email if gs.identity.email_usable else "",
-            send_label=s["send_button"],
-            sending_label=s["sending_label"],
-            error_empty=s["error_empty"],
-            error_unreachable=s["error_unreachable"],
             gpg_fpr=gs.selected.key.fingerprint if gs.selected and gs.selected.key else "",
         )

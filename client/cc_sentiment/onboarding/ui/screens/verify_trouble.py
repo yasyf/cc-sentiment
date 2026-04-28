@@ -34,17 +34,17 @@ class VerifyTroubleView(CardScreen[Event]):
     VerifyTroubleView Center > Button#restart-btn { width: auto; margin: 1 0 0 0; }
     """
 
-    def __init__(self, *, title: str, message: str, subhint: str, restart_label: str) -> None:
+    def __init__(self, *, title: str, message: str, subhint: str, restart_button: str) -> None:
         super().__init__()
         self.title = title
         self.message = message
         self.subhint = subhint
-        self.restart_label = restart_label
+        self.restart_button = restart_button
 
     def compose_card(self) -> ComposeResult:
         yield Body(self.message, id="message")
         yield MutedLine(self.subhint)
-        yield Center(Button(self.restart_label, id="restart-btn", variant="primary"))
+        yield Center(Button(self.restart_button, id="restart-btn", variant="primary"))
 
     @on(Button.Pressed, "#restart-btn")
     def _restart(self) -> None:
@@ -124,11 +124,11 @@ class VerifyTroubleScreen(Screen[State]):
           - No links to docs / support inside this card — restart is the
             single useful action.
         """
-        s = self.strings()
         assert isinstance(gs.trouble, VerifyTimeout)
+        s = self.strings()
         return VerifyTroubleView(
             title=s["title"],
-            message=self.message_for(gs.trouble.error_code),
             subhint=s["subhint"],
-            restart_label=s["restart_button"],
+            restart_button=s["restart_button"],
+            message=self.message_for(gs.trouble.error_code),
         )

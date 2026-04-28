@@ -130,3 +130,28 @@ class TestGhAddFallbackPanel:
         ) as pilot:
             assert not pilot.app.screen.query("#fallback-panel")
             assert not pilot.app.screen.query("#fallback-confirm-btn")
+
+    async def test_manual_link_present_and_quiet_in_manual_flavor(self):
+        async with mounted(
+            GhAddScreen, gs_gh_add(), fake_caps(gh_authenticated=False)
+        ) as pilot:
+            link = pilot.app.screen.query_one("#manual-link")
+            assert "muted" in (link.classes or set())
+
+    async def test_manual_link_click_reveals_fallback_panel(self):
+        from cc_sentiment.tui.widgets.link_row import LinkRow
+        async with mounted(
+            GhAddScreen, gs_gh_add(), fake_caps(gh_authenticated=False)
+        ) as pilot:
+            link = pilot.app.screen.query_one("#manual-link", LinkRow)
+            link.post_message(LinkRow.Pressed(link))
+            await pilot.pause()
+            panel = pilot.app.screen.query_one("#fallback-panel")
+            assert panel.display
+
+    async def test_manual_link_absent_in_auto_flavor(self):
+        # Auto flavor is silent — no manual UI.
+        async with mounted(
+            GhAddScreen, gs_gh_add(), fake_caps(gh_authenticated=True)
+        ) as pilot:
+            assert not pilot.app.screen.query("#manual-link")

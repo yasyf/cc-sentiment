@@ -15,9 +15,9 @@ class PayloadSigner:
         ).decode()
 
     @staticmethod
-    def sign(data: str, backend: SigningBackend) -> str:
-        return backend.sign(data)
+    async def sign(data: str, backend: SigningBackend) -> str:
+        return await backend.sign(data)
 
     @classmethod
-    def sign_records(cls, records: list[SentimentRecord], backend: SigningBackend) -> str:
-        return cls.sign(cls.canonical_json(records), backend)
+    async def sign_records(cls, records: list[SentimentRecord], backend: SigningBackend) -> str:
+        return await cls.sign(cls.canonical_json(records), backend)

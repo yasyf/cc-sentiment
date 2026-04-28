@@ -11,12 +11,15 @@ from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
 from cc_sentiment.onboarding.events import Event, TroubleChoseEmail
 from cc_sentiment.onboarding.ui import BaseState, Screen
 from cc_sentiment.tui.onboarding.widgets import (
+    FallbackPanel,
     KeyPreview,
     PublishActions,
     WatcherRow,
 )
 from cc_sentiment.tui.widgets.body import Body
+from cc_sentiment.tui.widgets.card import Card
 from cc_sentiment.tui.widgets.card_screen import CardScreen
+from cc_sentiment.tui.widgets.link_row import LinkRow
 
 
 GIST_NEW_URL = "https://gist.github.com/new"
@@ -30,6 +33,7 @@ class State(BaseState):
 class PublishView(CardScreen[Event]):
     DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
     PublishView > Card { min-width: 60; max-width: 80; }
+    PublishView LinkRow#manual-link { margin: 1 0 0 0; }
     """
 
     def __init__(
@@ -40,41 +44,44 @@ class PublishView(CardScreen[Event]):
         key_text: str,
         key_preview_title: str,
         show_no_github: bool,
-        no_github_label: str,
-        open_label: str,
-        copy_label: str,
+        no_github_link: str,
+        open_button: str,
+        copy_again_link: str,
         watch_label: str,
-        rate_limit_text: str,
+        rate_limit_note: str,
+        manual_link: str,
         fallback_intro: str,
-        fallback_confirm_label: str,
+        fallback_confirm_button: str,
         resumed: bool,
     ) -> None:
         super().__init__()
         self.title = title
-        self.body_text = body
+        self.body = body
         self.key_text = key_text
         self.key_preview_title = key_preview_title
         self.show_no_github = show_no_github
-        self.no_github_label = no_github_label
-        self.open_label = open_label
-        self.copy_label = copy_label
+        self.no_github_link = no_github_link
+        self.open_button = open_button
+        self.copy_again_link = copy_again_link
         self.watch_label = watch_label
-        self.rate_limit_text = rate_limit_text
+        self.rate_limit_note = rate_limit_note
+        self.manual_link = manual_link
         self.fallback_intro = fallback_intro
-        self.fallback_confirm_label = fallback_confirm_label
+        self.fallback_confirm_button = fallback_confirm_button
         self.resumed = resumed
 
     def compose_card(self) -> ComposeResult:
-        yield Body(self.body_text, id="body")
+        yield Body(self.body, id="body")
         yield KeyPreview(self.key_text, title=self.key_preview_title)
         yield PublishActions(
             open_url=GIST_NEW_URL,
             show_no_github=self.show_no_github,
-            open_label=self.open_label,
-            copy_label=self.copy_label,
-            no_github_label=self.no_github_label,
+            open_label=self.open_button,
+            copy_label=self.copy_again_link,
+            no_github_label=self.no_github_link,
         )
-        yield WatcherRow(self.watch_label, rate_limit_text=self.rate_limit_text)
+        yield WatcherRow(self.watch_label, rate_limit_text=self.rate_limit_note)
+        yield LinkRow(self.manual_link, id="manual-link", classes="muted")
 
     def on_mount(self) -> None:
         if self.resumed:
@@ -93,6 +100,24 @@ class PublishView(CardScreen[Event]):
     @on(PublishActions.NoGithub)
     def _no_github(self) -> None:
         self.dismiss(TroubleChoseEmail())
+
+    @on(LinkRow.Pressed, "#manual-link")
+    async def _show_fallback(self) -> None:
+        if self.query("#fallback-panel"):
+            return
+        panel = FallbackPanel(
+            key_text=self.key_text,
+            target_url=GIST_NEW_URL,
+            intro=self.fallback_intro,
+            confirm_label=self.fallback_confirm_button,
+        )
+        await self.query_one(Card).mount(panel, before=self.query_one(WatcherRow))
+        panel.visible = True
+        self.query_one("#manual-link", LinkRow).display = False
+
+    @on(FallbackPanel.Confirmed)
+    def _fallback_confirmed(self) -> None:
+        self.query_one("#fallback-panel", FallbackPanel).visible = False
 
 
 class PublishScreen(Screen[State]):
@@ -115,6 +140,7 @@ class PublishScreen(Screen[State]):
             "copy_again_link": "Copy again",
             "no_github_link": "I don't use GitHub →",
             "watch_label": "Watching for your gist…",
+            "manual_link": "Paste it manually →",
             "fallback_intro": (
                 "Copy your signature below, then paste it into a new public gist."
             ),
@@ -190,20 +216,9 @@ class PublishScreen(Screen[State]):
             continuing").
           - No eager verify before a candidate gist exists (per plan).
         """
-        s = self.strings()
-        key_text = gs.selected.key.fingerprint if gs.selected and gs.selected.key else ""
         return PublishView(
-            title=s["title"],
-            body=s["body"],
-            key_text=key_text,
-            key_preview_title=s["key_preview_title"],
+            **self.strings(),
+            key_text=gs.selected.key.fingerprint if gs.selected and gs.selected.key else "",
             show_no_github=caps.has_gpg,
-            no_github_label=s["no_github_link"],
-            open_label=s["open_button"],
-            copy_label=s["copy_again_link"],
-            watch_label=s["watch_label"],
-            rate_limit_text=s["rate_limit_note"],
-            fallback_intro=s["fallback_intro"],
-            fallback_confirm_label=s["fallback_confirm_button"],
             resumed=gs.resumed_from_pending,
         )

@@ -81,5 +81,4 @@ class InitialScreen(Screen[State]):
           line can update once to "Still checking…" — calm, never
           alarming.
         """
-        s = self.strings()
-        return InitialView(checking=s["checking"], still_checking=s["still_checking"])
+        return InitialView(**self.strings())

@@ -3,12 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
+from textual import on
 from textual import screen as t
 from textual.app import ComposeResult
 from textual.containers import Center, Horizontal
 from textual.widgets import Button, Static
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
+from cc_sentiment.onboarding.events import DiscoveryComplete, Event
 from cc_sentiment.onboarding.ui import BaseState, Screen
 from cc_sentiment.tui.widgets.body import Body
 from cc_sentiment.tui.widgets.card_screen import CardScreen
@@ -21,7 +23,7 @@ class State(BaseState):
     pass
 
 
-class WelcomeView(CardScreen[None]):
+class WelcomeView(CardScreen[Event]):
     DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
     WelcomeView > Card { min-width: 60; max-width: 70; }
     WelcomeView Center > Button#get-started-btn { width: auto; margin: 0 0 1 0; }
@@ -42,26 +44,45 @@ class WelcomeView(CardScreen[None]):
         *,
         title: str,
         body: str,
-        primary_label: str,
+        primary_button: str,
+        continue_button: str,
         checking: str,
-        saved_invalid_line: str | None,
+        saved_invalid_line: str,
+        show_saved_invalid: bool,
     ) -> None:
         super().__init__()
         self.title = title
-        self.body_text = body
-        self.primary_label = primary_label
+        self.body = body
+        self.primary_button = primary_button
+        self.continue_button = continue_button
         self.checking = checking
         self.saved_invalid_line = saved_invalid_line
+        self.show_saved_invalid = show_saved_invalid
+        self._discovery: DiscoveryComplete | None = None
 
     def compose_card(self) -> ComposeResult:
-        if self.saved_invalid_line:
+        if self.show_saved_invalid:
             yield MutedLine(self.saved_invalid_line, id="saved-invalid-line")
-        yield Body(self.body_text)
-        yield Center(Button(self.primary_label, id="get-started-btn", variant="primary"))
+        yield Body(self.body)
+        yield Center(Button(self.primary_button, id="get-started-btn", variant="primary"))
         with Center():
             with Horizontal(id="checking-row"):
                 yield PendingSpinner()
                 yield Static(self.checking, id="checking-status")
+
+    def discovery_done(self, event: DiscoveryComplete) -> None:
+        self._discovery = event
+        if event.auto_verified:
+            self.dismiss(event)
+            return
+        self.query_one("#checking-row").display = False
+        self.query_one("#get-started-btn", Button).label = self.continue_button
+
+    @on(Button.Pressed, "#get-started-btn")
+    def _click(self) -> None:
+        if self._discovery is None:
+            return
+        self.dismiss(self._discovery)
 
 
 class WelcomeScreen(Screen[State]):
@@ -80,6 +101,7 @@ class WelcomeScreen(Screen[State]):
                 "are yours. This usually takes about 30 seconds."
             ),
             "primary_button": "Get started",
+            "continue_button": "Continue",
             "checking": "Checking your setup…",
             "saved_invalid_line": "Your last verification needs refreshing.",
         }
@@ -125,11 +147,4 @@ class WelcomeScreen(Screen[State]):
             label can shift to "Continue" so the action stays obvious.
           - No tables of detected tools, no debug rows.
         """
-        s = self.strings()
-        return WelcomeView(
-            title=s["title"],
-            body=s["body"],
-            primary_label=s["primary_button"],
-            checking=s["checking"],
-            saved_invalid_line=s["saved_invalid_line"] if gs.has_saved_config else None,
-        )
+        return WelcomeView(**self.strings(), show_saved_invalid=gs.has_saved_config)

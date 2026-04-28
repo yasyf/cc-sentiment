@@ -182,7 +182,7 @@ class Uploader:
     async def _verify_credentials(self, config: Config) -> None:
         backend = self.backend_from_config(config)
         with anyio.fail_after(10):
-            signature = await anyio.to_thread.run_sync(PayloadSigner.sign, TEST_PAYLOAD, backend)
+            signature = await PayloadSigner.sign(TEST_PAYLOAD, backend)
         async with httpx.AsyncClient() as client:
             (await client.post(
                 f"{self.server_url}/verify",
@@ -219,7 +219,7 @@ class Uploader:
 
         backend = self.backend_from_config(state.config)
         with anyio.fail_after(10):
-            signature = await anyio.to_thread.run_sync(PayloadSigner.sign_records, records, backend)
+            signature = await PayloadSigner.sign_records(records, backend)
         payload = UploadPayload(
             contributor_type=state.config.contributor_type,
             contributor_id=self.wire_contributor_id(state.config),
@@ -262,7 +262,7 @@ class Uploader:
         ).decode()
         backend = self.backend_from_config(config)
         with anyio.fail_after(10):
-            signature = await anyio.to_thread.run_sync(PayloadSigner.sign, canonical, backend)
+            signature = await PayloadSigner.sign(canonical, backend)
         payload = DaemonEventPayload(
             contributor_type=config.contributor_type,
             contributor_id=self.wire_contributor_id(config),
@@ -309,7 +309,7 @@ class Uploader:
         ).decode()
         backend = self.backend_from_config(config)
         with anyio.fail_after(10):
-            signature = await anyio.to_thread.run_sync(PayloadSigner.sign, canonical, backend)
+            signature = await PayloadSigner.sign(canonical, backend)
         request = ShareMintRequest(
             contributor_type=config.contributor_type,
             contributor_id=self.wire_contributor_id(config),

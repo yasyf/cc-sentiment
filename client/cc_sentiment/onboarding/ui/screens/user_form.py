@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
-import anyio
 from textual import on, work
 from textual import screen as t
 from textual.app import ComposeResult
@@ -40,8 +39,8 @@ class UserFormView(CardScreen[Event]):
         *,
         title: str,
         placeholder: str,
-        primary_label: str,
-        no_github_label: str,
+        primary_button: str,
+        no_github_link: str,
         error_empty: str,
         error_not_found: str,
         error_unreachable: str,
@@ -50,8 +49,8 @@ class UserFormView(CardScreen[Event]):
         super().__init__()
         self.title = title
         self.placeholder = placeholder
-        self.primary_label = primary_label
-        self.no_github_label = no_github_label
+        self.primary_button = primary_button
+        self.no_github_link = no_github_link
         self.error_empty = error_empty
         self.error_not_found = error_not_found
         self.error_unreachable = error_unreachable
@@ -60,8 +59,8 @@ class UserFormView(CardScreen[Event]):
     def compose_card(self) -> ComposeResult:
         yield Input(placeholder=self.placeholder, id="username-input")
         yield Static("", id="status")
-        yield Center(Button(self.primary_label, id="continue-btn", variant="primary"))
-        yield LinkRow(self.no_github_label, id="no-github-link", classes="muted")
+        yield Center(Button(self.primary_button, id="continue-btn", variant="primary"))
+        yield LinkRow(self.no_github_link, id="no-github-link", classes="muted")
 
     def on_mount(self) -> None:
         self.query_one("#status", Static).display = False
@@ -89,7 +88,7 @@ class UserFormView(CardScreen[Event]):
 
     @work(exit_on_error=False)
     async def _validate(self, username: str) -> None:
-        result = await anyio.to_thread.run_sync(IdentityProbe.validate_username, username)
+        result = await IdentityProbe.validate_username(username)
         match result:
             case "ok":
                 self.dismiss(UsernameSubmitted(username=username))
@@ -167,14 +166,4 @@ class UserFormScreen(Screen[State]):
           - No tables, no progress bars, no debug.
           - "I don't use GitHub →" is muted; only colored on hover.
         """
-        s = self.strings()
-        return UserFormView(
-            title=s["title"],
-            placeholder=s["placeholder"],
-            primary_label=s["primary_button"],
-            no_github_label=s["no_github_link"],
-            error_empty=s["error_empty"],
-            error_not_found=s["error_not_found"],
-            error_unreachable=s["error_unreachable"],
-            validating=s["validating"],
-        )
+        return UserFormView(**self.strings())

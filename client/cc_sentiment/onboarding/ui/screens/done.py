@@ -52,10 +52,10 @@ class DoneView(CardScreen[Event]):
         *,
         title: str,
         verification_card_title: str,
-        verification_line: str,
         payload_card_title: str,
         payload_exclusion: str,
-        primary_label: str,
+        primary_button: str,
+        verification_line: str,
     ) -> None:
         super().__init__()
         self.title = title
@@ -63,7 +63,7 @@ class DoneView(CardScreen[Event]):
         self.verification_line = verification_line
         self.payload_card_title = payload_card_title
         self.payload_exclusion = payload_exclusion
-        self.primary_label = primary_label
+        self.primary_button = primary_button
 
     def compose_card(self) -> ComposeResult:
         yield Card(
@@ -79,7 +79,7 @@ class DoneView(CardScreen[Event]):
             id="payload-card",
             classes="done-card",
         )
-        yield Center(Button(self.primary_label, id="start-btn", variant="primary"))
+        yield Center(Button(self.primary_button, id="start-btn", variant="primary"))
 
     @on(Button.Pressed, "#start-btn")
     def _start(self) -> None:
@@ -184,11 +184,8 @@ class DoneScreen(Screen[State]):
           - No "advanced settings" link, no "edit" affordances.
         """
         s = self.strings()
+        verification_keys = {k for k in s if k.startswith("verification_") and k != "verification_card_title"}
         return DoneView(
-            title=s["title"],
-            verification_card_title=s["verification_card_title"],
+            **{k: v for k, v in s.items() if k not in verification_keys},
             verification_line=self.verification_line(gs),
-            payload_card_title=s["payload_card_title"],
-            payload_exclusion=s["payload_exclusion"],
-            primary_label=s["primary_button"],
         )

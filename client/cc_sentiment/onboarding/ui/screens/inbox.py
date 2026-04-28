@@ -40,26 +40,28 @@ class InboxView(CardScreen[Event]):
         title: str,
         body: str,
         waiting_label: str,
-        rotation: tuple[str, ...],
-        different_email_label: str,
-        recheck_label: str,
-        rate_limit_text: str,
+        still_waiting_label: str,
+        taking_a_moment_label: str,
+        different_email_link: str,
+        recheck_link: str,
+        rate_limit_note: str,
+        email: str,
     ) -> None:
         super().__init__()
         self.title = title
-        self.body_text = body
+        self.body = body.format(email=email)
         self.waiting_label = waiting_label
-        self.rotation = rotation
-        self.different_email_label = different_email_label
-        self.recheck_label = recheck_label
-        self.rate_limit_text = rate_limit_text
+        self.rotation = (waiting_label, still_waiting_label, taking_a_moment_label)
+        self.different_email_link = different_email_link
+        self.recheck_link = recheck_link
+        self.rate_limit_note = rate_limit_note
         self._rotation_index = 0
 
     def compose_card(self) -> ComposeResult:
-        yield Body(self.body_text, id="body")
-        yield WatcherRow(self.waiting_label, id="polling-status", rate_limit_text=self.rate_limit_text)
-        yield LinkRow(self.different_email_label, id="different-email-link", classes="muted")
-        yield LinkRow(self.recheck_label, id="recheck-link", classes="muted")
+        yield Body(self.body, id="body")
+        yield WatcherRow(self.waiting_label, id="polling-status", rate_limit_text=self.rate_limit_note)
+        yield LinkRow(self.different_email_link, id="different-email-link", classes="muted")
+        yield LinkRow(self.recheck_link, id="recheck-link", classes="muted")
 
     def on_mount(self) -> None:
         self.query_one("#different-email-link", LinkRow).display = False
@@ -149,13 +151,4 @@ class InboxScreen(Screen[State]):
           - On a transient rate-limit during polling, a tiny muted note
             appears: "Service busy — retrying soon." Polling continues.
         """
-        s = self.strings()
-        return InboxView(
-            title=s["title"],
-            body=s["body"].format(email=gs.identity.email),
-            waiting_label=s["waiting_label"],
-            rotation=(s["waiting_label"], s["still_waiting_label"], s["taking_a_moment_label"]),
-            different_email_label=s["different_email_link"],
-            recheck_label=s["recheck_link"],
-            rate_limit_text=s["rate_limit_note"],
-        )
+        return InboxView(**self.strings(), email=gs.identity.email)

@@ -45,42 +45,54 @@ class SshMethodView(CardScreen[Event]):
         *,
         title: str,
         body: str,
-        show_username_row: bool,
-        username: str,
         username_label: str,
         username_placeholder: str,
-        gist_label: str,
+        gist_button: str,
         gist_subline: str,
-        gh_add_label: str,
-        gh_add_subline: str,
-        gh_add_muted: bool,
+        gist_subline_no_user: str,
+        gh_add_link: str,
+        gh_add_subline_authed: str,
+        gh_add_subline_manual: str,
+        username: str,
+        show_username_row: bool,
+        gh_authenticated: bool,
     ) -> None:
         super().__init__()
         self.title = title
-        self.body_text = body
-        self.show_username_row = show_username_row
-        self.username = username
+        self.body = body
         self.username_label = username_label
         self.username_placeholder = username_placeholder
-        self.gist_label = gist_label
+        self.gist_button = gist_button
         self.gist_subline = gist_subline
-        self.gh_add_label = gh_add_label
-        self.gh_add_subline = gh_add_subline
-        self.gh_add_muted = gh_add_muted
+        self.gist_subline_no_user = gist_subline_no_user
+        self.gh_add_link = gh_add_link
+        self.gh_add_subline_authed = gh_add_subline_authed
+        self.gh_add_subline_manual = gh_add_subline_manual
+        self.username = username
+        self.show_username_row = show_username_row
+        self.gh_authenticated = gh_authenticated
 
     def compose_card(self) -> ComposeResult:
-        yield Body(self.body_text)
+        yield Body(self.body)
         if self.show_username_row:
             yield InlineUsernameRow(
                 current=self.username,
                 label=self.username_label,
                 placeholder=self.username_placeholder,
             )
-        yield Center(Button(self.gist_label, id="gist-btn", variant="primary"))
-        yield Static(self.gist_subline, id="gist-subline", classes="action-subline")
-        link_classes = "muted" if self.gh_add_muted else ""
-        yield LinkRow(self.gh_add_label, id="gh-add-link", classes=link_classes)
-        yield Static(self.gh_add_subline, id="gh-add-subline", classes="action-subline")
+        yield Center(Button(self.gist_button, id="gist-btn", variant="primary"))
+        yield Static(
+            self.gist_subline.format(username=self.username) if self.username else self.gist_subline_no_user,
+            id="gist-subline",
+            classes="action-subline",
+        )
+        link_classes = "" if self.gh_authenticated else "muted"
+        yield LinkRow(self.gh_add_link, id="gh-add-link", classes=link_classes)
+        yield Static(
+            self.gh_add_subline_authed if self.gh_authenticated else self.gh_add_subline_manual,
+            id="gh-add-subline",
+            classes="action-subline",
+        )
 
     def on_mount(self) -> None:
         self.query_one("#gist-btn", Button).focus()
@@ -118,6 +130,7 @@ class SshMethodScreen(Screen[State]):
             "username_placeholder": "yasyf",
             "gist_button": "Publish as a gist",
             "gist_subline": "Public gist on github.com/{username}. Delete it any time.",
+            "gist_subline_no_user": "Public gist on github.com — enter your username above.",
             "gh_add_link": "Add it to GitHub →",
             "gh_add_subline_authed": "We'll add it for you.",
             "gh_add_subline_manual": "You'll paste it into github.com/settings/keys.",
@@ -180,27 +193,9 @@ class SshMethodScreen(Screen[State]):
           - Plan: "default gist; explain tradeoffs" — sub-lines under
             each option carry the tradeoff in one line each.
         """
-        s = self.strings()
-        username = gs.identity.github_username
-        gist_subline_text = (
-            s["gist_subline"].format(username=username)
-            if username
-            else "Public gist on github.com/. Delete it any time."
-        )
         return SshMethodView(
-            title=s["title"],
-            body=s["body"],
+            **self.strings(),
+            username=gs.identity.github_username,
             show_username_row=not gs.identity.has_username,
-            username=username,
-            username_label=s["username_label"],
-            username_placeholder=s["username_placeholder"],
-            gist_label=s["gist_button"],
-            gist_subline=gist_subline_text,
-            gh_add_label=s["gh_add_link"],
-            gh_add_subline=(
-                s["gh_add_subline_authed"]
-                if caps.gh_authenticated
-                else s["gh_add_subline_manual"]
-            ),
-            gh_add_muted=not caps.gh_authenticated,
+            gh_authenticated=caps.gh_authenticated,
         )

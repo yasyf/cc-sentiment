@@ -124,3 +124,30 @@ class TestPublishScreen:
         async with mounted(PublishScreen, gs_publish(resumed=True)) as pilot:
             assert pilot.app.screen.query_one("#open-btn")
             assert pilot.app.screen.query_one("#watcher-row")
+
+    async def test_manual_link_present_and_quiet(self):
+        # Plan: clipboard/browser failure must surface a prominent fallback.
+        # Per design choice, a quiet always-visible "Paste it manually" link
+        # reveals the fallback panel on demand.
+        async with mounted(PublishScreen, gs_publish()) as pilot:
+            link = pilot.app.screen.query_one("#manual-link")
+            assert "muted" in (link.classes or set())
+            assert "manually" in str(getattr(link, "renderable", link.label.plain))
+
+    async def test_manual_link_click_reveals_fallback_panel(self):
+        from cc_sentiment.tui.widgets.link_row import LinkRow
+        async with mounted(PublishScreen, gs_publish()) as pilot:
+            assert not pilot.app.screen.query("#fallback-panel")
+            link = pilot.app.screen.query_one("#manual-link", LinkRow)
+            link.post_message(LinkRow.Pressed(link))
+            await pilot.pause()
+            panel = pilot.app.screen.query_one("#fallback-panel")
+            assert panel.display
+
+    async def test_manual_link_hidden_after_reveal(self):
+        from cc_sentiment.tui.widgets.link_row import LinkRow
+        async with mounted(PublishScreen, gs_publish()) as pilot:
+            link = pilot.app.screen.query_one("#manual-link", LinkRow)
+            link.post_message(LinkRow.Pressed(link))
+            await pilot.pause()
+            assert not pilot.app.screen.query_one("#manual-link").display

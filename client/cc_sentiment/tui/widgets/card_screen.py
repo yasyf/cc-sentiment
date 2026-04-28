@@ -15,6 +15,7 @@ T = TypeVar("T")
 class CardScreen(ModalScreen[T]):
     DEFAULT_CSS: ClassVar[str] = """
     CardScreen {
+        layout: vertical;
         align: center middle;
         background: $background 60%;
     }

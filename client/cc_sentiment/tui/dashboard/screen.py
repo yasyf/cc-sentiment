@@ -31,6 +31,8 @@ from cc_sentiment.engines import (
     ClaudeCLIEngine,
     ClaudeUnavailable,
     EngineFactory,
+    FrustrationFilter,
+    ImperativeMildIrritationFilter,
     InferenceEngine,
 )
 from cc_sentiment.engines.protocol import DEFAULT_MODEL
@@ -164,6 +166,7 @@ class DashboardScreen(Screen[None]):
         self._debug_state = DebugState()
         self._boot_screen: BootingScreen | None = None
         self._prewarmed = False
+        self._prewarmed_classifier: InferenceEngine | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -272,10 +275,12 @@ class DashboardScreen(Screen[None]):
             self._set_debug(prewarm_model=f"failed: {exc.__class__.__name__}")
             return
         try:
-            await anyio.to_thread.run_sync(SentimentClassifier, fused_dir)
+            classifier = SentimentClassifier(fused_dir)
+            await classifier.ensure_loaded()
         except (OSError, RuntimeError) as exc:
             self._set_debug(prewarm_model=f"failed: {exc.__class__.__name__}")
             return
+        self._prewarmed_classifier = classifier
         self._set_debug(prewarm_model="done")
 
     async def _dismiss_boot_screen(self) -> None:
@@ -435,7 +440,7 @@ class DashboardScreen(Screen[None]):
         self._debug(f"transcript-backend: {TranscriptParser.backend_name()}")
 
         build_task: asyncio.Task[InferenceEngine] | None = None
-        if engine == "mlx":
+        if engine == "mlx" and self._prewarmed_classifier is None:
             build_task = asyncio.create_task(
                 EngineFactory.build(engine, self.model_repo),
                 name="engine-build",
@@ -484,7 +489,12 @@ class DashboardScreen(Screen[None]):
 
             needs_classifier = bool(scan.transcripts) and bucket_count > 0
             if needs_classifier:
-                if build_task is not None:
+                if self._prewarmed_classifier is not None:
+                    classifier = ImperativeMildIrritationFilter(
+                        FrustrationFilter(self._prewarmed_classifier)
+                    )
+                    self._prewarmed_classifier = None
+                elif build_task is not None:
                     if not build_task.done():
                         self._set_boot_status("Loading the local model on this device...")
                     try:

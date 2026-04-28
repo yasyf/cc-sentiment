@@ -9,6 +9,7 @@ from textual.containers import Horizontal
 from textual.widgets import Static
 
 from cc_sentiment.onboarding import Capabilities, Stage, State as GlobalState
+from cc_sentiment.onboarding.events import Event
 from cc_sentiment.onboarding.ui import BaseState, Screen
 from cc_sentiment.tui.widgets.card_screen import CardScreen
 from cc_sentiment.tui.widgets.pending_status import PendingSpinner
@@ -19,7 +20,7 @@ class State(BaseState):
     pass
 
 
-class WorkingView(CardScreen[None]):
+class WorkingView(CardScreen[Event]):
     DEFAULT_CSS: ClassVar[str] = CardScreen.DEFAULT_CSS + """
     WorkingView > Card { min-width: 50; max-width: 60; }
     WorkingView Horizontal { width: auto; height: auto; }
@@ -30,15 +31,27 @@ class WorkingView(CardScreen[None]):
     }
     """
 
-    def __init__(self, *, title: str, status: str) -> None:
+    def __init__(
+        self,
+        *,
+        title: str,
+        creating_key: str,
+        creating_gist: str,
+        verifying: str,
+    ) -> None:
         super().__init__()
         self.title = title
-        self._initial_status = status
+        self.creating_key = creating_key
+        self.creating_gist = creating_gist
+        self.verifying = verifying
 
     def compose_card(self) -> ComposeResult:
         with Horizontal():
             yield PendingSpinner()
-            yield Static(self._initial_status, id="status")
+            yield Static(self.creating_key, id="status")
+
+    def set_status(self, text: str) -> None:
+        self.query_one("#status", Static).update(text)
 
 
 class WorkingScreen(Screen[State]):
@@ -52,9 +65,9 @@ class WorkingScreen(Screen[State]):
     def strings(cls) -> dict[str, str]:
         return {
             "title": "Setting up…",
-            "status_creating_key": "Creating your signature…",
-            "status_creating_gist": "Creating GitHub gist…",
-            "status_verifying": "Verifying…",
+            "creating_key": "Creating your signature…",
+            "creating_gist": "Creating GitHub gist…",
+            "verifying": "Verifying…",
         }
 
     def render(self, gs: GlobalState, caps: Capabilities) -> t.Screen:
@@ -88,5 +101,4 @@ class WorkingScreen(Screen[State]):
             same and the spinner keeps spinning. The user never sees
             the retry.
         """
-        s = self.strings()
-        return WorkingView(title=s["title"], status=s["status_creating_key"])
+        return WorkingView(**self.strings())

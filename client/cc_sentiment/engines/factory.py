@@ -3,7 +3,6 @@ from __future__ import annotations
 import platform
 import sys
 import threading
-from functools import partial
 
 import anyio.to_thread
 
@@ -53,9 +52,9 @@ class EngineFactory:
                 fused_dir = await anyio.to_thread.run_sync(
                     AdapterFuser.ensure_fused, model_repo or DEFAULT_MODEL
                 )
-                inner: InferenceEngine = await anyio.to_thread.run_sync(
-                    partial(SentimentClassifier, fused_dir)
-                )
+                classifier = SentimentClassifier(fused_dir)
+                await classifier.ensure_loaded()
+                inner: InferenceEngine = classifier
             case "claude":
                 inner = ClaudeCLIEngine(model_repo or ClaudeCLIEngine.HAIKU_MODEL)
             case _:

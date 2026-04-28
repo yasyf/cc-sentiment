@@ -1,44 +1,48 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
-from functools import cached_property
+from dataclasses import dataclass
 from typing import ClassVar
 
+import anyio
 
+
+@dataclass(frozen=True, slots=True)
 class Capabilities:
+    has_ssh_keygen: bool
+    has_gpg: bool
+    has_gh: bool
+    gh_authenticated: bool
+    has_brew: bool
+
     _instance: ClassVar[Capabilities | None] = None
+    _lock: ClassVar[anyio.Lock] = anyio.Lock()
 
-    def __new__(cls) -> Capabilities:
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+    @classmethod
+    async def get(cls) -> Capabilities:
+        if cls._instance is not None:
+            return cls._instance
+        async with cls._lock:
+            if cls._instance is not None:
+                return cls._instance
+            cls._instance = await cls._build()
+            return cls._instance
 
-    @cached_property
-    def has_ssh_keygen(self) -> bool:
-        return self._has_tool("ssh-keygen")
+    @classmethod
+    async def invalidate(cls) -> None:
+        async with cls._lock:
+            cls._instance = None
 
-    @cached_property
-    def has_gpg(self) -> bool:
-        return self._has_tool("gpg")
+    @classmethod
+    async def _build(cls) -> Capabilities:
+        from cc_sentiment.signing import KeyDiscovery
 
-    @cached_property
-    def has_gh(self) -> bool:
-        return self._has_tool("gh")
-
-    @cached_property
-    def gh_authenticated(self) -> bool:
-        if not self.has_gh:
-            return False
-        return subprocess.run(
-            ["gh", "auth", "status"],
-            capture_output=True, text=True, timeout=5,
-        ).returncode == 0
-
-    @cached_property
-    def has_brew(self) -> bool:
-        return self._has_tool("brew")
-
-    @staticmethod
-    def _has_tool(name: str) -> bool:
-        return shutil.which(name) is not None
+        has_gh = shutil.which("gh") is not None
+        instance = cls(
+            has_ssh_keygen=shutil.which("ssh-keygen") is not None,
+            has_gpg=shutil.which("gpg") is not None,
+            has_gh=has_gh,
+            gh_authenticated=await KeyDiscovery.gh_authenticated() if has_gh else False,
+            has_brew=shutil.which("brew") is not None,
+        )
+        return instance

@@ -41,30 +41,32 @@ class BlockedView(CardScreen[Event]):
         *,
         title: str,
         body: str,
-        install_hint: str,
-        install_label: str,
-        quit_label: str,
+        install_hint_brew: str,
+        install_hint_generic: str,
+        install_button: str,
+        quit_button: str,
+        has_brew: bool,
         kind: str,
     ) -> None:
         super().__init__()
         self.title = title
-        self.body_text = body
-        self.install_hint = install_hint
-        self.install_label = install_label
-        self.quit_label = quit_label
+        self.body = body
+        self.install_hint = install_hint_brew if has_brew else install_hint_generic
+        self.install_button = install_button
+        self.quit_button = quit_button
         self.kind = kind
 
     def compose_card(self) -> ComposeResult:
-        yield Body(self.body_text)
+        yield Body(self.body)
         yield Static(self.install_hint, id="install-hint")
         with Center():
             yield Button(
-                self.install_label,
+                self.install_button,
                 id="install-guide-btn",
                 variant="primary",
                 classes=self.kind,
             )
-            yield Button(self.quit_label, id="quit-btn")
+            yield Button(self.quit_button, id="quit-btn")
 
     @on(Button.Pressed, "#install-guide-btn")
     def _open_guide(self) -> None:
@@ -134,12 +136,8 @@ class BlockedScreen(Screen[State]):
           - No big red error UI, no "we can't help you" tone — we're
             just telling them what to install.
         """
-        s = self.strings()
         return BlockedView(
-            title=s["title"],
-            body=s["body"],
-            install_hint=s["install_hint_brew"] if caps.has_brew else s["install_hint_generic"],
-            install_label=s["install_button"],
-            quit_label=s["quit_button"],
+            **self.strings(),
+            has_brew=caps.has_brew,
             kind="ssh" if not caps.has_ssh_keygen else "gpg",
         )

@@ -37,32 +37,25 @@ from cc_sentiment.onboarding.discovery import (
 )
 from cc_sentiment.onboarding.events import (
     DiscoveryComplete,
-    EmailSent,
     Event,
     GhAddFailed,
     GhAddVerified,
     GistTimedOut,
     GistVerified,
-    KeyPicked,
     NoSavedConfig,
     QuitOnboarding,
-    RecheckRequested,
     ResumePendingEmail,
     ResumePendingGist,
     SavedConfigChecked,
     StartProcessing,
-    UsernameSubmitted,
     VerificationOk,
     VerificationTimedOut,
     WorkingFailed,
     WorkingSucceeded,
 )
 from cc_sentiment.onboarding.persistence import Persistence
-from cc_sentiment.onboarding.state import (
-    Identity,
-    KeySource,
-    SelectedKey,
-)
+from cc_sentiment.onboarding.state import Identity, KeySource
+from cc_sentiment.onboarding.state import GistTimeout, Trouble, VerifyTimeout
 from cc_sentiment.onboarding.ui.screens import (
     BlockedScreen,
     DoneScreen,
@@ -121,17 +114,19 @@ class OnboardingScreen(Screen[bool]):
     def __init__(self, app_state: AppState) -> None:
         super().__init__()
         self.app_state = app_state
-        self.caps = Capabilities()
+        self.caps: Capabilities | None = None
         self._verified_config: ClientConfig | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("", id="onboarding-bg")
 
     async def on_mount(self) -> None:
+        self.caps = await Capabilities.get()
         self._run()
 
     @work(group="orchestrator", exit_on_error=True)
     async def _run(self) -> None:
+        assert self.caps is not None, "on_mount must complete before _run starts"
         state = self._initial_state()
         while True:
             view = self._build_view(state)
@@ -167,12 +162,27 @@ class OnboardingScreen(Screen[bool]):
         )
 
     def _build_view(self, state: State) -> t.Screen:
-        screen_cls = SCREEN_FACTORIES[state.stage]
+        assert self.caps is not None
+        if state.stage is Stage.TROUBLE:
+            screen_cls = self._trouble_screen_for(state.trouble)
+        else:
+            screen_cls = SCREEN_FACTORIES[state.stage]
         if state.stage is Stage.SAVED_RETRY and self.app_state.config is not None:
             return SavedRetryScreen.with_config(self.app_state.config).render(state, self.caps)
         return screen_cls().render(state, self.caps)
 
+    @staticmethod
+    def _trouble_screen_for(trouble: Trouble | None) -> type:
+        match trouble:
+            case VerifyTimeout():
+                return VerifyTroubleScreen
+            case GistTimeout():
+                return GistTroubleScreen
+            case _:
+                return GistTroubleScreen
+
     def _apply_event(self, state: State, event: Event) -> State:
+        assert self.caps is not None
         if isinstance(event, DiscoveryComplete) and event.auto_verified_config is not None:
             self._verified_config = event.auto_verified_config
         if isinstance(event, StartProcessing):
@@ -228,39 +238,36 @@ class OnboardingScreen(Screen[bool]):
                 view.dismiss(SavedConfigChecked(result="unreachable"))
 
     async def _discovery_effect(self, state: State, view: t.Screen) -> None:
-        identity = await anyio.to_thread.run_sync(
-            IdentityProbe.detect, self.app_state.github_username,
-        )
+        identity = await IdentityProbe.detect(self.app_state.github_username)
         if identity.github_username and not identity.email_usable:
-            email, usable = await anyio.to_thread.run_sync(
-                IdentityProbe.mine_email, identity.github_username,
-            )
+            email, usable = await IdentityProbe.mine_email(identity.github_username)
             if email:
                 identity = Identity(
                     github_username=identity.github_username,
                     email=email,
                     email_usable=usable,
                 )
-        existing = await anyio.to_thread.run_sync(LocalKeysProbe.detect_all)
+        existing = await LocalKeysProbe.detect_all()
         verified = await AutoVerify.probe(identity, existing)
-        view.dismiss(DiscoveryComplete(
+        event = DiscoveryComplete(
             identity=identity,
             existing_keys=existing,
             auto_verified=verified is not None,
             auto_verified_config=verified,
-        ))
+        )
+        view.discovery_done(event)
 
     async def _working_effect(self, state: State, view: t.Screen) -> None:
         username = state.identity.github_username
+        s = WorkingScreen.strings()
         for attempt in range(MANAGED_RETRIES):
             try:
-                info = await anyio.to_thread.run_sync(KeyDiscovery.generate_managed_ssh_key)
-                pub_text = await anyio.to_thread.run_sync(
-                    lambda: SSHBackend(private_key_path=info.path).public_key_text(),
-                )
-                gist_id = await anyio.to_thread.run_sync(
-                    KeyDiscovery.create_gist_from_text, pub_text,
-                )
+                view.set_status(s["creating_key"])
+                info = await KeyDiscovery.generate_managed_ssh_key()
+                pub_text = await SSHBackend(private_key_path=info.path).public_key_text()
+                view.set_status(s["creating_gist"])
+                gist_id = await KeyDiscovery.create_gist_from_text(pub_text)
+                view.set_status(s["verifying"])
                 config: ClientConfig = GistConfig(
                     contributor_id=ContributorId(username),
                     key_path=info.path,
@@ -280,32 +287,44 @@ class OnboardingScreen(Screen[bool]):
 
     async def _publish_effect(self, state: State, view: t.Screen) -> None:
         username = state.identity.github_username
-        if not username:
-            return
-        public_key = self._public_key_for(state)
-        if not public_key:
+        public_key = await self._public_key_for(state)
+        if not username or not public_key:
+            view.dismiss(GistTimedOut())
             return
         await self._persist_pending(state, target="gist")
         await self._poll_gist_until_verified(
-            view, username=username, public_key=public_key, key_path=state.selected.key.path if state.selected and state.selected.key else None, gpg_fpr=state.selected.key.fingerprint if state.selected and state.selected.key and state.selected.source is KeySource.EXISTING_GPG else None,
-            success_event=GistVerified, timeout_event=GistTimedOut,
+            view,
+            username=username,
+            public_key=public_key,
+            key_path=state.selected.key.path if state.selected and state.selected.key else None,
+            gpg_fpr=(
+                state.selected.key.fingerprint
+                if state.selected and state.selected.key and state.selected.source is KeySource.EXISTING_GPG
+                else None
+            ),
         )
 
     async def _gh_add_effect(self, state: State, view: t.Screen) -> None:
-        if state.selected is None or state.selected.key is None or state.selected.key.path is None:
+        username = state.identity.github_username
+        if (
+            state.selected is None
+            or state.selected.key is None
+            or state.selected.key.path is None
+            or not username
+        ):
             view.dismiss(GhAddFailed())
             return
-        username = state.identity.github_username
+        key = state.selected.key
+        assert key.path is not None
+        assert self.caps is not None
         if self.caps.gh_authenticated:
-            ok = await anyio.to_thread.run_sync(
-                lambda: KeyDiscovery.upload_github_ssh_key(_ssh_key_info(state.selected.key)),
-            )
+            ok = await KeyDiscovery.upload_github_ssh_key(_ssh_key_info(key))
             if not ok:
                 view.dismiss(GhAddFailed())
                 return
             config: ClientConfig = SSHConfig(
                 contributor_id=ContributorId(username),
-                key_path=state.selected.key.path,
+                key_path=key.path,
             )
             if isinstance(await Uploader().probe_credentials(config), AuthOk):
                 self._verified_config = config
@@ -313,9 +332,10 @@ class OnboardingScreen(Screen[bool]):
             else:
                 view.dismiss(GhAddFailed())
             return
-        public_key = self._public_key_for(state)
         await self._persist_pending(state, target="gh_add")
-        await self._poll_gh_for_key_until_verified(view, username=username, public_key=public_key, key_path=state.selected.key.path)
+        await self._poll_gh_for_key_until_verified(
+            view, username=username, key_path=key.path,
+        )
 
     async def _inbox_effect(self, state: State, view: t.Screen) -> None:
         if state.selected is None or state.selected.key is None:
@@ -333,13 +353,13 @@ class OnboardingScreen(Screen[bool]):
 
     # ─── helpers ────────────────────────────────────────────────────────────
 
-    def _public_key_for(self, state: State) -> str:
+    async def _public_key_for(self, state: State) -> str:
         if state.selected is None or state.selected.key is None:
             return ""
         key = state.selected.key
         if key.path is not None:
-            return SSHBackend(private_key_path=key.path).public_key_text().strip()
-        return GPGBackend(fpr=key.fingerprint).public_key_text().strip()
+            return (await SSHBackend(private_key_path=key.path).public_key_text()).strip()
+        return (await GPGBackend(fpr=key.fingerprint).public_key_text()).strip()
 
     async def _persist_pending(self, state: State, *, target) -> None:
         model = Persistence.from_state(state, target=target)
@@ -354,20 +374,19 @@ class OnboardingScreen(Screen[bool]):
         public_key: str,
         key_path,
         gpg_fpr: str | None,
-        success_event,
-        timeout_event,
     ) -> None:
+        assert self.caps is not None
         interval = (
             GIST_POLL_INTERVAL_AUTHED_SECONDS
             if self.caps.gh_authenticated
             else GIST_POLL_INTERVAL_UNAUTHED_SECONDS
         )
         started = monotonic()
+        gist_seen = False
         while monotonic() - started < PROPAGATION_WINDOW_SECONDS:
-            ref = await anyio.to_thread.run_sync(
-                GistDiscovery.find_gist_with_public_key, username, public_key,
-            )
+            ref = await GistDiscovery.find_gist_with_public_key(username, public_key)
             if ref is not None:
+                gist_seen = True
                 config: ClientConfig
                 if gpg_fpr:
                     config = GistGPGConfig(
@@ -384,17 +403,20 @@ class OnboardingScreen(Screen[bool]):
                     )
                 if isinstance(await Uploader().probe_credentials(config), AuthOk):
                     self._verified_config = config
-                    view.dismiss(success_event())
+                    view.dismiss(GistVerified())
                     return
             await anyio.sleep(interval)
-        view.dismiss(timeout_event())
+        # Per plan: gist found but verify failed → restart-only VerifyTrouble;
+        # gist never found → GistTrouble with username edit.
+        view.dismiss(
+            VerificationTimedOut(error_code="key-not-found") if gist_seen else GistTimedOut()
+        )
 
     async def _poll_gh_for_key_until_verified(
         self,
         view: t.Screen,
         *,
         username: str,
-        public_key: str,
         key_path,
     ) -> None:
         started = monotonic()

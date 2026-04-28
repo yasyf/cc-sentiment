@@ -7,6 +7,7 @@ import pytest
 from textual.app import App, ComposeResult
 
 from cc_sentiment.models import AppState, ContributorId, SSHConfig
+from cc_sentiment.onboarding import Capabilities
 from cc_sentiment.onboarding.state import (
     ExistingKey,
     ExistingKeys,
@@ -41,13 +42,16 @@ class Harness(App[None]):
 
 @pytest.fixture
 def fast_caps(monkeypatch):
-    fake = MagicMock()
+    fake = MagicMock(spec=Capabilities)
     fake.has_ssh_keygen = True
     fake.has_gpg = False
     fake.has_gh = False
     fake.gh_authenticated = False
     fake.has_brew = False
-    monkeypatch.setattr("cc_sentiment.tui.onboarding.runner.Capabilities", lambda: fake)
+    monkeypatch.setattr(
+        "cc_sentiment.onboarding.capabilities.Capabilities.get",
+        AsyncMock(return_value=fake),
+    )
     return fake
 
 
@@ -74,9 +78,11 @@ async def test_saved_config_invalid_routes_to_welcome_then_discovery_to_blocked(
         return_value=AuthUnauthorized(status=401),
     ), patch(
         "cc_sentiment.onboarding.discovery.IdentityProbe.detect",
+        new_callable=AsyncMock,
         return_value=Identity(),
     ), patch(
         "cc_sentiment.onboarding.discovery.LocalKeysProbe.detect_all",
+        new_callable=AsyncMock,
         return_value=ExistingKeys(),
     ), patch(
         "cc_sentiment.onboarding.discovery.AutoVerify.probe",
@@ -85,6 +91,10 @@ async def test_saved_config_invalid_routes_to_welcome_then_discovery_to_blocked(
     ):
         harness = Harness(state)
         async with harness.run_test() as pilot:
+            await pilot.pause(delay=0.5)
+            from cc_sentiment.onboarding.ui.screens.welcome import WelcomeView
+            assert isinstance(pilot.app.screen, WelcomeView)
+            await pilot.click("#get-started-btn")
             await pilot.pause(delay=0.5)
             from cc_sentiment.onboarding.ui.screens.blocked import BlockedView
             assert isinstance(pilot.app.screen, BlockedView)
@@ -108,9 +118,11 @@ async def test_discovery_auto_verifies_existing_key_and_dones(fast_caps):
     )
     with patch(
         "cc_sentiment.onboarding.discovery.IdentityProbe.detect",
+        new_callable=AsyncMock,
         return_value=Identity(github_username="alice"),
     ), patch(
         "cc_sentiment.onboarding.discovery.LocalKeysProbe.detect_all",
+        new_callable=AsyncMock,
         return_value=existing,
     ), patch(
         "cc_sentiment.onboarding.discovery.AutoVerify.probe",
@@ -124,6 +136,35 @@ async def test_discovery_auto_verifies_existing_key_and_dones(fast_caps):
     assert state.config == SSH_CFG
 
 
+async def test_trouble_state_with_gist_timeout_renders_gist_trouble(fast_caps):
+    """Plan: gist never found → GistTrouble (with username edit + email)."""
+    from cc_sentiment.onboarding import Stage, State as GlobalState
+    from cc_sentiment.onboarding.state import GistTimeout
+    from cc_sentiment.tui.onboarding.runner import OnboardingScreen
+
+    state = AppState()
+    screen = OnboardingScreen(state)
+    gs = GlobalState(
+        stage=Stage.TROUBLE,
+        trouble=GistTimeout(),
+        identity=Identity(github_username="alice"),
+    )
+    screen.caps = MagicMock(has_gpg=False)
+    cls = OnboardingScreen._trouble_screen_for(gs.trouble)
+    from cc_sentiment.onboarding.ui.screens.gist_trouble import GistTroubleScreen
+    assert cls is GistTroubleScreen
+
+
+async def test_trouble_state_with_verify_timeout_renders_verify_trouble(fast_caps):
+    """Plan: gist found but verify failed → VerifyTrouble (restart only)."""
+    from cc_sentiment.onboarding.state import VerifyTimeout
+    from cc_sentiment.tui.onboarding.runner import OnboardingScreen
+
+    cls = OnboardingScreen._trouble_screen_for(VerifyTimeout(error_code="key-not-found"))
+    from cc_sentiment.onboarding.ui.screens.verify_trouble import VerifyTroubleScreen
+    assert cls is VerifyTroubleScreen
+
+
 async def test_saved_config_unreachable_shows_saved_retry_then_restart(fast_caps):
     fast_caps.has_ssh_keygen = False
     state = AppState(config=SSH_CFG)
@@ -133,9 +174,11 @@ async def test_saved_config_unreachable_shows_saved_retry_then_restart(fast_caps
         return_value=AuthUnreachable(detail="dns"),
     ), patch(
         "cc_sentiment.onboarding.discovery.IdentityProbe.detect",
+        new_callable=AsyncMock,
         return_value=Identity(),
     ), patch(
         "cc_sentiment.onboarding.discovery.LocalKeysProbe.detect_all",
+        new_callable=AsyncMock,
         return_value=ExistingKeys(),
     ), patch(
         "cc_sentiment.onboarding.discovery.AutoVerify.probe",
@@ -148,6 +191,10 @@ async def test_saved_config_unreachable_shows_saved_retry_then_restart(fast_caps
             from cc_sentiment.onboarding.ui.screens.saved_retry import SavedRetryView
             assert isinstance(pilot.app.screen, SavedRetryView)
             await pilot.click("#restart-link")
+            await pilot.pause(delay=0.5)
+            from cc_sentiment.onboarding.ui.screens.welcome import WelcomeView
+            assert isinstance(pilot.app.screen, WelcomeView)
+            await pilot.click("#get-started-btn")
             await pilot.pause(delay=0.5)
             from cc_sentiment.onboarding.ui.screens.blocked import BlockedView
             assert isinstance(pilot.app.screen, BlockedView)

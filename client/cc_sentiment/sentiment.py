@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import platform
+import queue
 import sys
 import tempfile
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from anyio import to_thread
+import anyio.to_thread
 
 from cc_sentiment.adapter import AdapterCodec
 from cc_sentiment.engines.base import BaseEngine
@@ -21,6 +24,9 @@ if sys.platform != "darwin" or platform.machine() != "arm64":
     )
 
 __all__ = ["AdapterFuser", "SentimentClassifier"]
+
+
+WORKER_STOP = object()
 
 
 class AdapterFuser:
@@ -62,28 +68,58 @@ class SentimentClassifier(BaseEngine):
     BATCH_SIZE = 2
 
     def __init__(self, fused_dir: Path) -> None:
-        MLXPatches.apply()
+        self._fused_dir = fused_dir
+        self._inbox: queue.SimpleQueue = queue.SimpleQueue()
+        self._loaded = threading.Event()
+        self._init_error: BaseException | None = None
+        self._thread = threading.Thread(target=self._worker, daemon=True, name="cc-mlx")
+        self._thread.start()
 
-        from mlx_lm import load
+    def _worker(self) -> None:
+        try:
+            MLXPatches.apply()
+            from mlx_lm import batch_generate, load
 
-        self.model, self.tokenizer = load(str(fused_dir))
-        self.logit_processor = self._score_only_logit_processor()
-        self.prefix_messages = build_prefix_messages()
-        self.prefix_tokens = self.tokenizer.apply_chat_template(
-            self.prefix_messages, tokenize=True, add_generation_prompt=False,
-        )
-        self.base_cache = None
-
-    def ensure_base_cache(self) -> None:
-        if self.base_cache is not None:
+            self.model, self.tokenizer = load(str(self._fused_dir))
+            self.logit_processor = self._score_only_logit_processor()
+            self.prefix_messages = build_prefix_messages()
+            self.prefix_tokens = self.tokenizer.apply_chat_template(
+                self.prefix_messages, tokenize=True, add_generation_prompt=False,
+            )
+            self.base_cache = batch_generate(
+                self.model, self.tokenizer, [self.prefix_tokens],
+                max_tokens=1, logits_processors=[self.logit_processor],
+                return_prompt_caches=True,
+            ).caches[0]
+        except BaseException as exc:
+            self._init_error = exc
+            self._loaded.set()
             return
-        from mlx_lm import batch_generate
+        self._loaded.set()
+        while True:
+            job = self._inbox.get()
+            if job is WORKER_STOP:
+                return
+            fn, args, on_result, on_error = job
+            try:
+                on_result(fn(*args))
+            except BaseException as exc:
+                on_error(exc)
 
-        self.base_cache = batch_generate(
-            self.model, self.tokenizer, [self.prefix_tokens],
-            max_tokens=1, logits_processors=[self.logit_processor],
-            return_prompt_caches=True,
-        ).caches[0]
+    async def ensure_loaded(self) -> None:
+        await anyio.to_thread.run_sync(self._loaded.wait)
+        if self._init_error is not None:
+            raise self._init_error
+
+    async def _submit(self, fn: Callable, *args):
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future = loop.create_future()
+        self._inbox.put((
+            fn, args,
+            lambda value: loop.call_soon_threadsafe(fut.set_result, value),
+            lambda exc: loop.call_soon_threadsafe(fut.set_exception, exc),
+        ))
+        return await fut
 
     def _score_only_logit_processor(self) -> Callable:
         import mlx.core as mx
@@ -103,7 +139,6 @@ class SentimentClassifier(BaseEngine):
     def _generate_chunk(self, chunk: list[list[dict[str, str]]]) -> list[str]:
         from mlx_lm import batch_generate
 
-        self.ensure_base_cache()
         suffixes = [
             self.tokenizer.apply_chat_template(
                 messages, tokenize=True, add_generation_prompt=True,
@@ -129,7 +164,7 @@ class SentimentClassifier(BaseEngine):
         for start in range(0, len(order), self.BATCH_SIZE):
             slice_ = order[start:start + self.BATCH_SIZE]
             chunk = [message_lists[i] for i in slice_]
-            chunk_responses = await to_thread.run_sync(self._generate_chunk, chunk)
+            chunk_responses = await self._submit(self._generate_chunk, chunk)
             for i, r in zip(slice_, chunk_responses):
                 responses[i] = r
             on_progress(len(chunk))

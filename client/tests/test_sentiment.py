@@ -142,9 +142,13 @@ class TestScoreMessagesSorting:
             seen_chunks.append([m[-1]["content"] for m in chunk])
             return [str(len(m[-1]["content"])) for m in chunk]
 
+        async def fake_submit(self, fn, *args):
+            return fn(*args)
+
         classifier = SentimentClassifier.__new__(SentimentClassifier)
         classifier.BATCH_SIZE = 2
-        with patch.object(SentimentClassifier, "_generate_chunk", fake_generate_chunk):
+        with patch.object(SentimentClassifier, "_generate_chunk", fake_generate_chunk), \
+             patch.object(SentimentClassifier, "_submit", fake_submit):
             responses = await classifier.score_messages(message_lists, on_progress=lambda n: None)
 
         flat_seen = [c for chunk in seen_chunks for c in chunk]
@@ -161,9 +165,13 @@ class TestScoreMessagesSorting:
         def fake_generate_chunk(self, chunk):
             return [str(len(m[-1]["content"])) for m in chunk]
 
+        async def fake_submit(self, fn, *args):
+            return fn(*args)
+
         classifier = SentimentClassifier.__new__(SentimentClassifier)
         classifier.BATCH_SIZE = 2
-        with patch.object(SentimentClassifier, "_generate_chunk", fake_generate_chunk):
+        with patch.object(SentimentClassifier, "_generate_chunk", fake_generate_chunk), \
+             patch.object(SentimentClassifier, "_submit", fake_submit):
             responses = await classifier.score_messages(message_lists, on_progress=lambda n: None)
 
         assert responses == ["50", "5", "200", "1", "30"]
@@ -216,6 +224,51 @@ async def test_score_meets_calibrated_throughput_floor() -> None:
     )
 
 
+@pytest.mark.skipif(not MLX_AVAILABLE, reason="requires mlx-lm (Apple Silicon)")
+class TestSentimentClassifierThreadAffinity:
+    async def test_load_and_inference_run_on_same_thread(self) -> None:
+        import threading
+
+        from cc_sentiment.sentiment import SentimentClassifier
+
+        observed: list[int] = []
+
+        def fake_load(path: str):
+            observed.append(threading.get_ident())
+            return MagicMock(), MagicMock(apply_chat_template=lambda *a, **k: [1, 2, 3])
+
+        def fake_batch_generate(*args, **kwargs):
+            observed.append(threading.get_ident())
+            result = MagicMock()
+            result.caches = [MagicMock()]
+            result.texts = ["3"]
+            return result
+
+        mock_mlx_lm = MagicMock()
+        mock_mlx_lm.load = fake_load
+        mock_mlx_lm.batch_generate = fake_batch_generate
+
+        from pathlib import Path
+        with patch.dict(sys.modules, {"mlx_lm": mock_mlx_lm}), \
+             patch("cc_sentiment.sentiment.MLXPatches.apply"), \
+             patch("cc_sentiment.text.build_prefix_messages", return_value=[]), \
+             patch.object(
+                 SentimentClassifier, "_score_only_logit_processor",
+                 return_value=MagicMock(),
+             ):
+            classifier = SentimentClassifier(Path("/tmp/fake-fused-dir"))
+            await classifier.ensure_loaded()
+            for _ in range(3):
+                await classifier._submit(classifier._generate_chunk, [
+                    [{"role": "user", "content": "hi"}],
+                ])
+
+        assert len(set(observed)) == 1, f"MLX work spread across threads: {observed}"
+        assert observed[0] != threading.get_ident(), (
+            "MLX work ran on the event loop thread, not the dedicated worker"
+        )
+
+
 class TestClassifierIntegration:
     async def test_score_calls_batch_generate(self) -> None:
         from cc_sentiment.sentiment import SentimentClassifier
@@ -230,7 +283,11 @@ class TestClassifierIntegration:
         mock_mlx_lm = MagicMock()
         mock_mlx_lm.batch_generate.return_value = mock_batch_result
 
-        with patch.dict(sys.modules, {"mlx_lm": mock_mlx_lm}):
+        async def fake_submit(self, fn, *args):
+            return fn(*args)
+
+        with patch.dict(sys.modules, {"mlx_lm": mock_mlx_lm}), \
+             patch.object(SentimentClassifier, "_submit", fake_submit):
             classifier = SentimentClassifier.__new__(SentimentClassifier)
             classifier.model = MagicMock()
             classifier.tokenizer = mock_tokenizer
