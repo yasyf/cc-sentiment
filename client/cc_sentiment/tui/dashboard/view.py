@@ -75,8 +75,9 @@ class ProcessingView:
     INSIGHTS_MIN_SAMPLES: ClassVar[int] = 3
     LABEL_WIDTH: ClassVar[int] = 10
 
-    def __init__(self, app: App[None]) -> None:
-        self.app = app
+    def __init__(self, screen) -> None:
+        self.screen = screen
+        self.app = screen.app if hasattr(screen, "app") else screen
         self.stats = StatsState()
         self.cta = CtaState()
 
@@ -86,29 +87,29 @@ class ProcessingView:
         widget.update(f"{existing}\n{addition}".strip())
 
     def update_status(self, text: str) -> None:
-        self.app.query_one("#status-line", Label).update(text)
+        self.screen.query_one("#status-line", Label).update(text)
 
     def append_status(self, addition: str) -> None:
-        self.append_line(self.app.query_one("#status-line", Label), addition)
+        self.append_line(self.screen.query_one("#status-line", Label), addition)
 
     def reset(self) -> None:
         self.stats = StatsState()
-        self.app.query_one("#scan-progress", ProgressBar).update(total=100, progress=0)
-        self.app.query_one("#progress-label", Label).update("")
-        self.app.query_one("#upload-progress", ProgressBar).update(total=100, progress=0)
-        self.app.query_one("#upload-label", Label).update("")
-        self.app.query_one("#progress-section").add_class("inactive")
-        self.app.query_one("#scoring-row").add_class("inactive")
-        self.app.query_one("#upload-row").add_class("inactive")
-        self.app.query_one("#score-digits", Digits).update("-.--")
-        self.app.query_one("#score-digits").add_class("inactive")
-        self.app.query_one("#score-label").add_class("inactive")
-        self.app.query_one("#hourly-chart", HourlyChart).update_chart([])
-        self.app.query_one("#sentiment-panel", SentimentPanel).update_from_records([])
-        self.app.query_one("#sentiment-section").add_class("inactive")
-        self.app.query_one("#hourly-section").add_class("inactive")
-        self.app.query_one("#stats-rows", Static).update("")
-        self.app.query_one("#stats-section").add_class("inactive")
+        self.screen.query_one("#scan-progress", ProgressBar).update(total=100, progress=0)
+        self.screen.query_one("#progress-label", Label).update("")
+        self.screen.query_one("#upload-progress", ProgressBar).update(total=100, progress=0)
+        self.screen.query_one("#upload-label", Label).update("")
+        self.screen.query_one("#progress-section").add_class("inactive")
+        self.screen.query_one("#scoring-row").add_class("inactive")
+        self.screen.query_one("#upload-row").add_class("inactive")
+        self.screen.query_one("#score-digits", Digits).update("-.--")
+        self.screen.query_one("#score-digits").add_class("inactive")
+        self.screen.query_one("#score-label").add_class("inactive")
+        self.screen.query_one("#hourly-chart", HourlyChart).update_chart([])
+        self.screen.query_one("#sentiment-panel", SentimentPanel).update_from_records([])
+        self.screen.query_one("#sentiment-section").add_class("inactive")
+        self.screen.query_one("#hourly-section").add_class("inactive")
+        self.screen.query_one("#stats-rows", Static).update("")
+        self.screen.query_one("#stats-section").add_class("inactive")
         self.reset_cta()
 
     def set_tweet(
@@ -141,14 +142,14 @@ class ProcessingView:
         self.render_cta()
 
     def render_cta(self) -> None:
-        section = self.app.query_one("#cta-section")
+        section = self.screen.query_one("#cta-section")
         if not (self.cta.has_any() and self.cta.active):
             section.add_class("inactive")
             return
         section.remove_class("inactive")
-        title = self.app.query_one("#cta-title", Static)
-        detail = self.app.query_one("#cta-detail", Static)
-        button = self.app.query_one("#cta-action", Button)
+        title = self.screen.query_one("#cta-title", Static)
+        detail = self.screen.query_one("#cta-detail", Static)
+        button = self.screen.query_one("#cta-action", Button)
         match self.cta.showing:
             case "tweet":
                 assert self.cta.tweet_stat is not None
@@ -161,9 +162,9 @@ class ProcessingView:
                 button.label = CtaState.SCHEDULE_LABEL
 
     def begin_scoring(self, total: int, total_files: int) -> None:
-        self.app.query_one("#scan-progress", ProgressBar).update(total=total, progress=0)
-        self.app.query_one("#scoring-row").remove_class("inactive")
-        self.app.query_one("#progress-section").remove_class("inactive")
+        self.screen.query_one("#scan-progress", ProgressBar).update(total=total, progress=0)
+        self.screen.query_one("#scoring-row").remove_class("inactive")
+        self.screen.query_one("#progress-section").remove_class("inactive")
         self.show_total_files(total_files)
 
     def show_total_files(self, total_files: int) -> None:
@@ -173,20 +174,20 @@ class ProcessingView:
     def update_progress_label(self, scoring: ScoringProgress, scored: int, total: int) -> None:
         elapsed = scoring.elapsed()
         projected = scoring.projected_total(scored, total)
-        self.app.query_one("#progress-label", Label).update(
+        self.screen.query_one("#progress-label", Label).update(
             f"[b]{TimeFormat.format_hms(elapsed)}[/] / [dim]~{TimeFormat.format_hms(projected)}[/]"
         )
 
     def bump_scored(self, scored: int, scoring: ScoringProgress) -> None:
-        self.app.query_one("#scan-progress", ProgressBar).update(progress=scored)
+        self.screen.query_one("#scan-progress", ProgressBar).update(progress=scored)
         self.stats.rate = scoring.rate(scored)
         self.render_stats()
 
     def update_upload(self, progress: UploadProgress) -> None:
-        section = self.app.query_one("#progress-section")
-        row = self.app.query_one("#upload-row")
-        bar = self.app.query_one("#upload-progress", ProgressBar)
-        label = self.app.query_one("#upload-label", Label)
+        section = self.screen.query_one("#progress-section")
+        row = self.screen.query_one("#upload-row")
+        bar = self.screen.query_one("#upload-progress", ProgressBar)
+        label = self.screen.query_one("#upload-label", Label)
         if progress.queued_records == 0:
             row.add_class("inactive")
             return
@@ -206,7 +207,7 @@ class ProcessingView:
         self.render_stats()
 
     def hide_moments(self) -> None:
-        self.app.query_one("#moments-section").add_class("inactive")
+        self.screen.query_one("#moments-section").add_class("inactive")
 
     def track_frustration(self, words: list[str]) -> None:
         self.stats.live_fun.bump(words)
@@ -215,15 +216,15 @@ class ProcessingView:
     def render_scores(self, records: list[SentimentRecord]) -> None:
         if not records:
             return
-        self.app.query_one("#sentiment-section").remove_class("inactive")
-        self.app.query_one("#hourly-section").remove_class("inactive")
-        self.app.query_one("#score-digits").remove_class("inactive")
-        self.app.query_one("#score-label").remove_class("inactive")
+        self.screen.query_one("#sentiment-section").remove_class("inactive")
+        self.screen.query_one("#hourly-section").remove_class("inactive")
+        self.screen.query_one("#score-digits").remove_class("inactive")
+        self.screen.query_one("#score-label").remove_class("inactive")
         scores = [int(r.sentiment_score) for r in records]
         avg = mean(scores)
-        self.app.query_one("#score-digits", Digits).update(f"{avg:.2f}")
-        self.app.query_one("#sentiment-panel", SentimentPanel).update_from_records(records)
-        self.app.query_one("#hourly-chart", HourlyChart).update_chart(records)
+        self.screen.query_one("#score-digits", Digits).update(f"{avg:.2f}")
+        self.screen.query_one("#sentiment-panel", SentimentPanel).update_from_records(records)
+        self.screen.query_one("#hourly-chart", HourlyChart).update_chart(records)
         sessions = len({r.conversation_id for r in records})
         self.stats.total_buckets = len(scores)
         self.stats.total_sessions = sessions
@@ -252,10 +253,10 @@ class ProcessingView:
         self.stats.toughest_day = self.pick_toughest(days, self.INSIGHTS_MIN_SAMPLES)
 
     def render_stats(self) -> None:
-        section = self.app.query_one("#stats-section")
+        section = self.screen.query_one("#stats-section")
         if self.stats.total_buckets == 0:
             section.add_class("inactive")
-            self.app.query_one("#stats-rows", Static).update("")
+            self.screen.query_one("#stats-rows", Static).update("")
             return
         section.remove_class("inactive")
         lines: list[str] = [self.stats_row("venting", self.venting_phrase())]
@@ -273,7 +274,7 @@ class ProcessingView:
         peaks = self.peaks_phrase()
         if peaks:
             lines.append(self.stats_row("lows", peaks))
-        self.app.query_one("#stats-rows", Static).update("\n".join(lines))
+        self.screen.query_one("#stats-rows", Static).update("\n".join(lines))
 
     @classmethod
     def stats_row(cls, label: str, value: str) -> str:

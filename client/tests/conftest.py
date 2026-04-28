@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from cc_sentiment.models import AppState
-from cc_sentiment.tui import CCSentimentApp
+from cc_sentiment.tui.dashboard import DashboardScreen
 from cc_sentiment.upload import AuthOk, AuthUnauthorized
 
 
@@ -28,7 +28,7 @@ def no_network_warmup(
         yield
         return
     monkeypatch.setattr(
-        "cc_sentiment.tui.app.CCSentimentApp._maybe_prewarm", lambda self: None
+        "cc_sentiment.tui.dashboard.screen.DashboardScreen._maybe_prewarm", lambda self: None
     )
     monkeypatch.setattr(
         "cc_sentiment.nlp.NLP.ensure_ready", AsyncMock(return_value=None)
@@ -40,7 +40,7 @@ def no_network_warmup(
     classifier.score = AsyncMock(return_value=[])
     classifier.close = AsyncMock()
     monkeypatch.setattr(
-        "cc_sentiment.tui.app.EngineFactory.build",
+        "cc_sentiment.tui.dashboard.screen.EngineFactory.build",
         AsyncMock(return_value=classifier),
     )
     monkeypatch.setattr(
@@ -74,5 +74,5 @@ def auth_unauthorized() -> Iterator[None]:
 def no_stat_share() -> Iterator[None]:
     async def _noop(self, config, push_share):
         return None
-    with patch.object(CCSentimentApp, "_fetch_card", new=_noop):
+    with patch.object(DashboardScreen, "_fetch_card", new=_noop):
         yield

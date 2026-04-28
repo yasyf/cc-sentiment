@@ -15,7 +15,7 @@ async def test_ccsentiment_app_engine_failure_shows_error_and_exits(tmp_path: Pa
     state = AppState()
     db_path = tmp_path / "records.db"
     with patch(
-        "cc_sentiment.tui.app.EngineFactory.resolve",
+        "cc_sentiment.tui.dashboard.screen.EngineFactory.resolve",
         side_effect=ClaudeUnavailable(ClaudeNotInstalled(brew_available=True)),
     ), patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
@@ -30,20 +30,20 @@ async def test_ccsentiment_app_debug_mode_composes(tmp_path: Path):
     state = AppState()
     db_path = tmp_path / "records.db"
     with patch(
-        "cc_sentiment.tui.app.EngineFactory.resolve",
+        "cc_sentiment.tui.dashboard.screen.EngineFactory.resolve",
         side_effect=ClaudeUnavailable(ClaudeNotInstalled(brew_available=True)),
     ), patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path, debug=True)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.1)
-            assert pilot.app.query_one(DebugSection) is not None
+            assert pilot.app.dashboard.query_one(DebugSection) is not None
 
 
 async def test_ccsentiment_app_claude_engine_shows_cost_review(tmp_path: Path, auth_ok):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="claude"), \
+    with patch("cc_sentiment.tui.dashboard.screen.EngineFactory.resolve", return_value="claude"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 50))):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -57,7 +57,7 @@ async def test_ccsentiment_app_cost_cancel_exits(tmp_path: Path, auth_ok):
     db_path = tmp_path / "records.db"
 
     mock_pipeline_run = AsyncMock(return_value=[])
-    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="claude"), \
+    with patch("cc_sentiment.tui.dashboard.screen.EngineFactory.resolve", return_value="claude"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 50))), \
          patch("cc_sentiment.pipeline.Pipeline.run", mock_pipeline_run):
         app = CCSentimentApp(state=state, db_path=db_path)
@@ -73,13 +73,13 @@ async def test_ccsentiment_app_idle_when_no_work(tmp_path: Path, auth_ok):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="mlx"), \
+    with patch("cc_sentiment.tui.dashboard.screen.EngineFactory.resolve", return_value="mlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.5)
-            assert isinstance(app.stage, (IdleEmpty, IdleCaughtUp))
-            assert "all" in app.status_text.lower() or "set" in app.status_text.lower()
+            assert isinstance(app.dashboard.stage, (IdleEmpty, IdleCaughtUp))
+            assert "all" in app.dashboard.status_text.lower() or "set" in app.dashboard.status_text.lower()
 
 
 async def test_ccsentiment_app_runs_pipeline_and_uploads(tmp_path: Path, auth_ok, no_stat_share):
@@ -94,7 +94,7 @@ async def test_ccsentiment_app_runs_pipeline_and_uploads(tmp_path: Path, auth_ok
 
     mock_upload = AsyncMock()
 
-    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="mlx"), \
+    with patch("cc_sentiment.tui.dashboard.screen.EngineFactory.resolve", return_value="mlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 2))), \
          patch("cc_sentiment.pipeline.Pipeline.run", side_effect=fake_run), \
          patch("cc_sentiment.upload.Uploader.upload", mock_upload):

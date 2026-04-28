@@ -13,19 +13,19 @@ async def test_authenticate_returns_true_when_creds_valid(tmp_path: Path, auth_o
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="mlx"), \
+    with patch("cc_sentiment.tui.dashboard.screen.EngineFactory.resolve", return_value="mlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
-            assert await app._authenticate() is True
+            assert await app.dashboard._authenticate() is True
 
 
 async def test_authenticate_returns_false_on_unreachable(tmp_path: Path):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="mlx"), \
+    with patch("cc_sentiment.tui.dashboard.screen.EngineFactory.resolve", return_value="mlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch(
              "cc_sentiment.upload.Uploader.probe_credentials",
@@ -35,14 +35,14 @@ async def test_authenticate_returns_false_on_unreachable(tmp_path: Path):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
-            assert await app._authenticate() is False
+            assert await app.dashboard._authenticate() is False
 
 
 async def test_authenticate_returns_false_on_server_error(tmp_path: Path):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="mlx"), \
+    with patch("cc_sentiment.tui.dashboard.screen.EngineFactory.resolve", return_value="mlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
          patch(
              "cc_sentiment.upload.Uploader.probe_credentials",
@@ -52,7 +52,7 @@ async def test_authenticate_returns_false_on_server_error(tmp_path: Path):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
             await pilot.pause(delay=0.3)
-            assert await app._authenticate() is False
+            assert await app.dashboard._authenticate() is False
 
 
 async def test_run_flow_aborts_when_authenticate_returns_false(tmp_path: Path):
@@ -60,7 +60,7 @@ async def test_run_flow_aborts_when_authenticate_returns_false(tmp_path: Path):
     db_path = tmp_path / "records.db"
 
     mock_run = AsyncMock(return_value=[])
-    with patch("cc_sentiment.tui.app.EngineFactory.resolve", return_value="mlx"), \
+    with patch("cc_sentiment.tui.dashboard.screen.EngineFactory.resolve", return_value="mlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 1))), \
          patch("cc_sentiment.pipeline.Pipeline.run", mock_run), \
          patch(

@@ -9,6 +9,7 @@ from cc_sentiment.tui.dashboard.progress import (
     LiveFunStats,
     ScoringProgress,
 )
+from cc_sentiment.tui.dashboard.screen import DashboardScreen
 from cc_sentiment.tui.dashboard.stages import (
     Authenticating,
     Booting,
@@ -30,6 +31,7 @@ __all__ = [
     "BootingScreen",
     "CardFetcher",
     "CtaState",
+    "DashboardScreen",
     "DebugState",
     "Discovering",
     "Error",
