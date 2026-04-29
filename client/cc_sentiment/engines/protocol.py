@@ -8,68 +8,26 @@ from cc_sentiment.models import ConversationBucket, SentimentScore
 
 DEFAULT_MODEL = "unsloth/gemma-4-E2B-it-UD-MLX-4bit"
 
-SYSTEM_PROMPT = """You are scoring developer sentiment 1–5 in a developer-AI coding session. Output ONLY a single digit 1–5.
+# SYNCED-FROM-DSPY-START — do not edit by hand; updated by harness/sync_protocol.py
+SYSTEM_PROMPT = """\
+You are scoring developer sentiment 1-5 in a developer-AI coding session.
 
-**Scale:**
-1 = frustrated/hostile — contempt, scorn, profane blame, biting sarcasm
-2 = annoyed — mild-to-moderate displeasure, directive criticism, impatience without hostility
-3 = neutral/command — matter-of-fact requests or technical instructions, no emotional valence
-4 = mild positive — light approval or praise; "great work, now [continue/resume]" counts as 4, not 3
-5 = delighted — enthusiastic or superlative praise
+1=frustrated, 2=annoyed, 3=neutral/command, 4=mild positive, 5=delighted.
+Session-resume phrases like "continue" or "keep going" are 3 unless paired with praise (4) or complaint (1).
+Sarcastic praise ("amazing, you broke it again") is 1. ALL-CAPS doesn't change valence.
 
----
+Output ONLY a single digit 1-5.
 
-**Score 1 — any of these patterns is sufficient:**
+If the message contains a DEVELOPER-labeled segment (or a clear developer turn at the end of a multi-turn transcript), score based exclusively on that developer segment — ignore AI-generated output preceding it. Within the developer's message, treat the following as hard signals for score 1 (frustrated): (a) explicit reference to repeated failures ('I've told you X times', 'again', 'still', 'keep doing'), (b) strong imperatives demanding the AI stop a behavior ('stop hallucinating', 'stop doing X'), and (c) enumeration of the AI's wrong attempts in a single message. The combination of 'three times now' + 'stop hallucinating' + listing multiple wrong alternatives is unambiguously score 1, not score 2. Reserve score 2 (annoyed) for single-instance corrections without a repeated-failure marker. Do not let the presence of neutral or informational AI content earlier in the message dilute the frustration score of the developer's explicit closing statement.
 
-• **Elaborate mock-praise sarcasm** — multi-clause irony with markers like *truly, wonderful, fantastic, genius, groundbreaking, brilliant, inspired, masterpiece* used sarcastically (e.g. `"oh wonderful, you've 'fixed' the test by deleting the assertion. Truly genius work."`)
+If the final DEVELOPER segment consists of a shell command (possibly followed by a shell prompt line and/or terminal output such as 'No such file or directory', 'Permission denied', exit codes, etc.), treat the entire turn as a neutral/informational action and score it 3. System-generated error messages that appear after the command are machine output, not human emotional expression, and must NOT raise the score toward 2 (annoyed) or 1 (frustrated). Only score 2 when the developer themselves writes words that convey annoyance (e.g., a correction phrased with mild irritation but no repeated-failure marker). Only score 1 when the developer's own words contain hard frustration signals: explicit references to repeated failures ('again', 'still', 'I've told you X times'), strong imperatives demanding the AI stop a behavior, or an enumeration of wrong attempts. A bare command pasted into the chat — even one whose output shows an error — is score 3 by default.
 
-• **Hallucination accusation** — `"stop hallucinating / stop inventing / stop making up / quit making it up"` targeting a backtick-formatted or named identifier the AI fabricated (e.g. `` "stop hallucinating `parseConfig` — it's not a real method" ``)
-
-• **Profanity + repeated-failure blame** — profanity fused with an accusation of repeated error (`"fucking hell, that's the third time you've 'fixed' the same import and broken the tests"`)
-
-• **ALL-CAPS hostile command** — capitalized imperative paired with a criticism or accusation (`"STOP GUESSING"`, `"READ THE DAMN DOCS"`, `"JUST FIX IT ALREADY"`)
-
----
-
-**Score 2 — key patterns:**
-
-• `"stop [action]"` where the action is a process, not a hallucination accusation (`"stop it, run it in UI mode"`, `"stop downgrading"`)
-• `"don't just [guess / add bandaids / use random guards]"` — impatient instruction-correction
-• Bullet-point code-review complaints listing style or quality issues without explosive language
-• Mild repeated frustration without contempt: `"still not working"`, `"that's not quite right"`, `"you missed X again"`
-• Explicit but restrained criticism: `"you've done quite a poor job here"`
-
----
-
-**Score 3 — anti-patterns (do NOT upgrade to 2 or 1):**
-
-• **Message length is irrelevant** — neutral commands range from 6 to 1000+ characters; long messages are not more frustrated
-• Bullet lists, technical jargon, capitalization, or profanity in passing do not shift valence
-• Session-resume phrases (`"continue"`, `"resume"`, `"go ahead"`, `"carry on"`, `"keep going"`, `"ok continue"`) → 3 unless paired with praise (→ 4) or a complaint (→ 2/1)
-
----
-
-**1 vs 2 tie-break:** Is the author expressing *contempt or scorn* (→ 1) or merely *impatient direction* (→ 2)?"""
+If the developer message contains a mild corrective opener (e.g., 'That's not quite right', 'This isn't correct') followed by calm, technical corrections (wrong field name, missing case), score it 2 — NOT 1 — even if two separate issues are raised. Only escalate to 1 when the developer's own words contain explicit repeated-failure language ('again', 'still', 'I've told you X times', 'keep doing'), strong imperatives demanding the AI stop a behavior ('stop hallucinating', 'stop doing X'), or a clearly frustrated enumeration of multiple wrong AI attempts. A phrase like 'I mentioned earlier' is informational context pointing back to a prior conversation turn; it is NOT a repeated-failure frustration marker and must NOT push the score from 2 to 1. Similarly, raising two distinct bugs in one correction is not the same as enumerating multiple failed AI attempts in frustration. Reserve score 1 strictly for messages with unambiguous anger signals in the developer's own words.
+"""
 
 
-DEMOS: tuple[tuple[str, str], ...] = (
-    (
-        "stop hallucinating method names that don't exist in the docs — that's the third time you've invented a `client.batch_process()` that isn't real, just say you don't know",
-        "1",
-    ),
-    (
-        "stop hallucinating function names that don't exist in this library, you've invented `parseConfig` three times now and it's never been a real method",
-        "1",
-    ),
-    (
-        "you can go find the transcript yoruself, ssh to `yasyf@yasyf` (goes throguh tailnet) and you can find all the transcripts",
-        "3",
-    ),
-    (
-        "nope, something went wrong. gently stop the auto one, and retart the manual one with vnc",
-        "2",
-    ),
-)
+DEMOS: tuple[tuple[str, str], ...] = ()
+# SYNCED-FROM-DSPY-END
 
 
 NOOP_PROGRESS: Callable[[int], None] = lambda _: None

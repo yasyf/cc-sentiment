@@ -30,7 +30,10 @@ def extract_score(response: str) -> SentimentScore:
 
 
 def build_user_content(text: str) -> str:
-    return f"CONVERSATION:\nDEVELOPER: {text.strip()}"
+    body = text.strip()
+    if body.startswith(("DEVELOPER:", "AI:")):
+        return f"CONVERSATION:\n{body}"
+    return f"CONVERSATION:\nDEVELOPER: {body}"
 
 
 def build_bucket_user_content(bucket: ConversationBucket) -> str:

@@ -10,6 +10,9 @@ import pytest
 
 from cc_sentiment.text import (
     MAX_CONVERSATION_CHARS,
+    build_bucket_messages,
+    build_bucket_user_content,
+    build_user_content,
     extract_score,
     format_conversation,
 )
@@ -118,6 +121,61 @@ class TestConversationFormatting:
         text = format_conversation(bucket)
         assert text.endswith("\n[... truncated]")
         assert len(text) == MAX_CONVERSATION_CHARS + len("\n[... truncated]")
+
+
+class TestBuildUserContent:
+    def test_flat_text(self) -> None:
+        assert build_user_content("continue") == "CONVERSATION:\nDEVELOPER: continue"
+
+    def test_strips_whitespace(self) -> None:
+        assert build_user_content("  continue  ") == "CONVERSATION:\nDEVELOPER: continue"
+
+    def test_preserves_role_marked_text(self) -> None:
+        text = "DEVELOPER: build it\nAI: done\nDEVELOPER: continue"
+        assert build_user_content(text) == f"CONVERSATION:\n{text}"
+
+    def test_role_marked_text_starting_with_ai(self) -> None:
+        text = "AI: starting work\nDEVELOPER: continue"
+        assert build_user_content(text) == f"CONVERSATION:\n{text}"
+
+    def test_matches_bucket_helper_for_single_user(self) -> None:
+        bucket = make_bucket([("user", "continue")])
+        assert build_user_content(format_conversation(bucket)) == build_bucket_user_content(bucket)
+
+    def test_matches_bucket_helper_for_multi_turn(self) -> None:
+        bucket = make_bucket([
+            ("user", "build it"),
+            ("assistant", "done"),
+            ("user", "continue"),
+        ])
+        assert build_user_content(format_conversation(bucket)) == build_bucket_user_content(bucket)
+
+    def test_no_double_developer_prefix_on_multi_turn(self) -> None:
+        bucket = make_bucket([
+            ("user", "build it"),
+            ("assistant", "done"),
+            ("user", "continue"),
+        ])
+        result = build_user_content(format_conversation(bucket))
+        assert "DEVELOPER: DEVELOPER:" not in result
+        assert result.count("CONVERSATION:") == 1
+
+
+class TestBuildBucketMessages:
+    def test_inference_path_byte_equality_with_text_helper(self) -> None:
+        bucket = make_bucket([
+            ("user", "build it"),
+            ("assistant", "done"),
+            ("user", "continue"),
+        ])
+        from cc_sentiment.text import build_prefix_messages
+
+        inf = build_bucket_messages(bucket)
+        from_text = [
+            *build_prefix_messages(),
+            {"role": "user", "content": build_user_content(format_conversation(bucket))},
+        ]
+        assert inf == from_text
 
 
 class TestScoreMessagesSorting:

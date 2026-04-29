@@ -1,32 +1,27 @@
 {
   "adapter_dtype": "F32",
-  "dataset_digest": "2c448b7286a59a2e",
-  "cc_sentiment_git_sha": "591acd1c1df4673e19a6b8700957c605422f029c",
-  "experiment_id": "c0_cascade_default",
-  "mean_exact_acc": 0.9787,
-  "pm1_acc": 0.9965,
-  "std_exact_acc": 0.0071,
+  "dataset_digest": "272d5cce7b6fb8fc",
+  "cc_sentiment_git_sha": "e37e04ecf51404b470b54bb46f160bafb1fc70bb",
+  "experiment_id": "s0_simba_resume",
+  "mean_exact_acc": 0.9804,
+  "pm1_acc": 1.0,
+  "std_exact_acc": 0.0,
   "seeds": [
-    42,
     1729
   ],
-  "mcnemar_p_vs_baseline": {
-    "1729": 0.012939453125,
-    "42": 0.03857421875
-  },
-  "session_resume_tag_acc": 0.8889,
+  "session_resume_tag_acc": 1.0,
   "imperative_irritation_tag_acc": 1.0,
   "shipped_seed": 1729,
-  "shipped_seed_exact_acc": 0.9858,
+  "shipped_seed_exact_acc": 0.9804,
   "shipped_seed_per_class_f1": {
-    "1": 0.9851,
-    "2": 1.0,
-    "3": 0.9677,
-    "4": 0.9333,
+    "1": 0.9697,
+    "2": 0.962,
+    "3": 0.9885,
+    "4": 1.0,
     "5": 1.0
   },
   "shipped_seed_tag_accuracy": {
-    "claude_labeled": 0.75,
+    "claude_labeled": 0.625,
     "sarcasm": 1.0,
     "ai_correction": 1.0,
     "swear_frustration": 1.0,
@@ -42,12 +37,12 @@
     "session_resume": 1.0,
     "imperative_irritation": 1.0
   },
-  "adapter_sha256": "c15b5e53708811d306d9db8fd2088efa4d79d9a99b0bb39ff9e29e2e5cf4e82d",
+  "adapter_sha256": "2bce2896b3194b3ff999d1bd71af064733a847f7070bf65a12fbe4d4dda0c04b",
   "smoke_eval_sha256": "9232cd0b4a9dc9041468e28cc99e2b7c2fa1b4bdcb581a5ac52ee4a7fa0aedbe",
   "mlx_lm_version": "0.31.3",
-  "train_command": "uv run python -m harness.run_cascade --experiment-id c0_cascade_default --seed 1729 --config configs/c0_cascade_default.json",
-  "notes": "DSPy optimizer-search cascade: tested bootstrap/copro/mipro/simba; MIPROv2 won val_exact_acc=0.895; LoRA distilled the MIPRO program (instructions+demos) on the base unsloth Gemma. Fixed the 'and again!' \u2192 1 mislabel (imperative_irritation tag: 0.182 \u2192 1.000). Shipped seed 1729 (exact=0.986); seed 42 had session_resume regression to 0.778. SIMBA prompt + DEMOS in protocol.py replaced with MIPRO outputs.",
-  "prompt_campaign": "DSPy MIPROv2 (auto=light) \u2014 winner of optimizer search across bootstrap, copro, mipro, simba",
+  "train_command": "uv run python -m harness.run_cascade --experiment-id s0_simba_resume --seed 1729 --config configs/s0_simba_resume.json",
+  "notes": "Closes 6 train/serve format/source skews + eliminates flat-text training. (1) build_user_content dispatches on DEVELOPER:/AI: prefix → byte-equal LoRA/DSPy/inference wraps. (2) ProtocolSync writes SIMBA's program.json into engines/protocol.py before LoRA, so LoRA + eval + inference all read from one source. (3) SingleDigitAdapter.format wraps via build_user_content. (4) Phase 6 wraps every synthetic flat row in a real prior-context fragment harvested from production transcripts so training shape matches inference. (5) Re-extracted 51 real_transcript rows in proper bucket format. (6) Harvested 60 real bare-resume buckets from yasyf@yasyf production transcripts (48 train, 12 eval). LoRA: 400 iters, max_seq_length=2048, batch_size=4, grad_checkpoint=true. session_resume_tag_acc 0.8889 (shipped MIPRO avg) → 1.000 (this SIMBA, single seed) on the production failure mode.",
+  "prompt_campaign": "DSPy SIMBA (num_candidates=6, max_steps=8) — single optimizer per user direction (better avg than MIPRO, ~30% cheaper)",
   "teacher_model": "claude-cli (--bare via OAuth bridge)",
   "student_model": "unsloth/gemma-4-E2B-it-UD-MLX-4bit (served via omlx)"
 }
