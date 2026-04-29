@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from cc_sentiment.engines import (
+    DEFAULT_FILTERS,
     NOOP_PROGRESS,
     ClaudeCLIEngine,
     ClaudeNotAuthenticated,
@@ -20,9 +21,11 @@ from cc_sentiment.engines import (
     ClaudeReady,
     ClaudeUnavailable,
     EngineFactory,
+    FilteredEngine,
     FrustrationFilter,
     ImperativeMildIrritationFilter,
     PositiveClampFilter,
+    ScoreFilter,
     SessionResumeFilter,
 )
 from cc_sentiment.engines.protocol import DEFAULT_MODEL
@@ -301,10 +304,9 @@ class TestMlxBuild:
     async def test_build_wraps_with_filter_chain(self) -> None:
         engine = await EngineFactory.build("mlx", DEFAULT_MODEL)
         try:
-            assert isinstance(engine, SessionResumeFilter)
-            assert isinstance(engine.inner, PositiveClampFilter)
-            assert isinstance(engine.inner.inner, ImperativeMildIrritationFilter)
-            assert isinstance(engine.inner.inner.inner, FrustrationFilter)
+            assert isinstance(engine, FilteredEngine)
+            assert engine.filters == DEFAULT_FILTERS
+            assert len(engine.filters) == 4
         finally:
             await engine.close()
 
@@ -429,60 +431,13 @@ class TestClaudeCLIEngine:
         assert calls == [1]
 
 
-class TestFrustrationFilter:
-    async def test_all_frustrated_skips_inner(self) -> None:
-        stub = StubEngine(scores=[])
-        wrapper = FrustrationFilter(stub)
-        buckets = [make_bucket("wtf is this"), make_bucket("this is fucking broken")]
-        scores = await wrapper.score(buckets)
-        assert scores == [SentimentScore(1), SentimentScore(1)]
-        assert stub.received == []
 
-    async def test_none_frustrated_forwards_all(self) -> None:
-        stub = StubEngine(scores=[SentimentScore(4), SentimentScore(3)])
-        wrapper = FrustrationFilter(stub)
-        buckets = [make_bucket("please help me"), make_bucket("great job")]
-        scores = await wrapper.score(buckets)
-        assert scores == [SentimentScore(4), SentimentScore(3)]
-        assert stub.received == buckets
+class TestFrustrationFilterTrigger:
+    def test_detects_wtf(self) -> None:
+        assert FrustrationFilter().short_circuit(make_bucket("wtf is this")) == SentimentScore(1)
 
-    async def test_mixed_scatters_by_index(self) -> None:
-        stub = StubEngine(scores=[SentimentScore(4)])
-        wrapper = FrustrationFilter(stub)
-        buckets = [
-            make_bucket("wtf is this"),
-            make_bucket("please help me"),
-            make_bucket("fuck you"),
-        ]
-        scores = await wrapper.score(buckets)
-        assert scores == [SentimentScore(1), SentimentScore(4), SentimentScore(1)]
-        assert stub.received == [buckets[1]]
-
-    async def test_on_progress_fires_pre_then_per_inferred(self) -> None:
-        stub = StubEngine(scores=[SentimentScore(4)])
-        wrapper = FrustrationFilter(stub)
-        buckets = [
-            make_bucket("wtf is this"),
-            make_bucket("please help me"),
-            make_bucket("fuck you"),
-        ]
-        calls: list[int] = []
-        await wrapper.score(buckets, on_progress=calls.append)
-        assert calls == [2, 1]
-
-    async def test_on_progress_skipped_when_no_frustration(self) -> None:
-        stub = StubEngine(scores=[SentimentScore(4)])
-        wrapper = FrustrationFilter(stub)
-        calls: list[int] = []
-        await wrapper.score([make_bucket("please help me")], on_progress=calls.append)
-        assert calls == [1]
-
-    async def test_close_and_peak_memory_delegate(self) -> None:
-        stub = StubEngine(scores=[])
-        wrapper = FrustrationFilter(stub)
-        assert wrapper.peak_memory_gb() == 0.42
-        await wrapper.close()
-        assert stub.closed is True
+    def test_does_not_short_circuit_neutral(self) -> None:
+        assert FrustrationFilter().short_circuit(make_bucket("please help me")) is None
 
 
 class TestImperativeMildIrritationTrigger:
@@ -547,30 +502,22 @@ class TestImperativeMildIrritationDemote:
             staticmethod(lambda _text: hostile),
         )
 
-    def test_demotes_when_trigger_no_hostile(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_demotes_when_trigger_no_hostile(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.patch_hostile(monkeypatch, hostile=False)
         bucket = make_bucket("and again! dont modify the repo")
         assert ImperativeMildIrritationFilter.should_demote(bucket) is True
 
-    def test_no_demote_when_trigger_with_hostile(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_demote_when_trigger_with_hostile(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.patch_hostile(monkeypatch, hostile=True)
         bucket = make_bucket("and again! this is broken")
         assert ImperativeMildIrritationFilter.should_demote(bucket) is False
 
-    def test_no_demote_without_trigger(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_demote_without_trigger(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.patch_hostile(monkeypatch, hostile=False)
         bucket = make_bucket("dont modify the repo")
         assert ImperativeMildIrritationFilter.should_demote(bucket) is False
 
-    def test_ignores_assistant_message_trigger(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_ignores_assistant_message_trigger(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.patch_hostile(monkeypatch, hostile=False)
         bucket = ConversationBucket(
             session_id=SessionId("test"),
@@ -582,76 +529,6 @@ class TestImperativeMildIrritationDemote:
             ),
         )
         assert ImperativeMildIrritationFilter.should_demote(bucket) is False
-
-
-class TestImperativeMildIrritationFilter:
-    async def test_demotes_one_when_trigger_matches(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            ImperativeMildIrritationFilter,
-            "has_hostile_lexicon",
-            staticmethod(lambda _text: False),
-        )
-        stub = StubEngine(scores=[SentimentScore(1)])
-        wrapper = ImperativeMildIrritationFilter(stub)
-        scores = await wrapper.score(
-            [make_bucket("and again! dont modify the repo, just do it in a python call")]
-        )
-        assert scores == [SentimentScore(2)]
-
-    async def test_passes_through_non_one_scores(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            ImperativeMildIrritationFilter,
-            "has_hostile_lexicon",
-            staticmethod(lambda _text: False),
-        )
-        stub = StubEngine(scores=[SentimentScore(3), SentimentScore(4), SentimentScore(5)])
-        wrapper = ImperativeMildIrritationFilter(stub)
-        buckets = [
-            make_bucket("and again! dont modify the repo"),
-            make_bucket("yet again, please use X"),
-            make_bucket("once again, do this"),
-        ]
-        scores = await wrapper.score(buckets)
-        assert scores == [SentimentScore(3), SentimentScore(4), SentimentScore(5)]
-
-    async def test_keeps_one_when_hostile_lexicon_present(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            ImperativeMildIrritationFilter,
-            "has_hostile_lexicon",
-            staticmethod(lambda _text: True),
-        )
-        stub = StubEngine(scores=[SentimentScore(1)])
-        wrapper = ImperativeMildIrritationFilter(stub)
-        scores = await wrapper.score([make_bucket("and again! this is broken garbage")])
-        assert scores == [SentimentScore(1)]
-
-    async def test_keeps_one_without_trigger(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            ImperativeMildIrritationFilter,
-            "has_hostile_lexicon",
-            staticmethod(lambda _text: False),
-        )
-        stub = StubEngine(scores=[SentimentScore(1)])
-        wrapper = ImperativeMildIrritationFilter(stub)
-        scores = await wrapper.score(
-            [make_bucket("you are wrong, this approach won't work")]
-        )
-        assert scores == [SentimentScore(1)]
-
-    async def test_close_and_peak_memory_delegate(self) -> None:
-        stub = StubEngine(scores=[])
-        wrapper = ImperativeMildIrritationFilter(stub)
-        assert wrapper.peak_memory_gb() == 0.42
-        await wrapper.close()
-        assert stub.closed is True
 
 
 class TestSessionResumeBare:
@@ -700,137 +577,276 @@ class TestSessionResumeBare:
         assert not SessionResumeFilter.is_bare_resume(text)
 
 
+class TestPositiveClampGate:
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("status?", True),
+            ("what now", True),
+            ("hi", True),
+            ("how are you", True),
+            ("are we good?", True),
+            ("are we doing well?", False),
+            ("this is taking too long", False),
+            ("", True),
+        ],
+    )
+    def test_is_short(self, text: str, expected: bool) -> None:
+        assert PositiveClampFilter.is_short(text) is expected
+
+
+@pytest.fixture
+def patch_imperative_hostile_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        ImperativeMildIrritationFilter,
+        "has_hostile_lexicon",
+        staticmethod(lambda _text: False),
+    )
+
+
+@pytest.fixture
+def patch_lexicon_noop(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def noop() -> None:
+        return None
+    monkeypatch.setattr("cc_sentiment.nlp.NLP.ensure_ready", noop)
+    monkeypatch.setattr("cc_sentiment.lexicon.Lexicon.ensure_ready", noop)
+
+
 class TestSessionResumeFilter:
     async def test_clamps_four_to_three_for_bare_continue(self) -> None:
-        stub = StubEngine(scores=[SentimentScore(4)])
-        wrapper = SessionResumeFilter(stub)
-        scores = await wrapper.score([make_bucket("Continue")])
-        assert scores == [SentimentScore(3)]
+        wrapper = FilteredEngine(StubEngine(scores=[SentimentScore(4)]), (SessionResumeFilter(),))
+        assert await wrapper.score([make_bucket("Continue")]) == [SentimentScore(3)]
 
     async def test_clamps_one_to_three_for_bare_resume(self) -> None:
-        stub = StubEngine(scores=[SentimentScore(1)])
-        wrapper = SessionResumeFilter(stub)
-        scores = await wrapper.score([make_bucket("resume")])
-        assert scores == [SentimentScore(3)]
+        wrapper = FilteredEngine(StubEngine(scores=[SentimentScore(1)]), (SessionResumeFilter(),))
+        assert await wrapper.score([make_bucket("resume")]) == [SentimentScore(3)]
 
     async def test_does_not_clamp_mixed_praise(self) -> None:
-        stub = StubEngine(scores=[SentimentScore(4)])
-        wrapper = SessionResumeFilter(stub)
-        scores = await wrapper.score([make_bucket("amazing! continue")])
-        assert scores == [SentimentScore(4)]
+        wrapper = FilteredEngine(StubEngine(scores=[SentimentScore(4)]), (SessionResumeFilter(),))
+        assert await wrapper.score([make_bucket("amazing! continue")]) == [SentimentScore(4)]
 
     async def test_does_not_touch_non_resume_5(self) -> None:
-        stub = StubEngine(scores=[SentimentScore(5)])
-        wrapper = SessionResumeFilter(stub)
-        scores = await wrapper.score([make_bucket("status?")])
-        assert scores == [SentimentScore(5)]
+        wrapper = FilteredEngine(StubEngine(scores=[SentimentScore(5)]), (SessionResumeFilter(),))
+        assert await wrapper.score([make_bucket("status?")]) == [SentimentScore(5)]
 
     async def test_clamps_long_form_continue_phrase(self) -> None:
-        stub = StubEngine(scores=[SentimentScore(4)])
-        wrapper = SessionResumeFilter(stub)
-        scores = await wrapper.score([make_bucket("Continue from where you left off")])
-        assert scores == [SentimentScore(3)]
+        wrapper = FilteredEngine(StubEngine(scores=[SentimentScore(4)]), (SessionResumeFilter(),))
+        assert await wrapper.score([make_bucket("Continue from where you left off")]) == [SentimentScore(3)]
 
     async def test_mixed_buckets_clamp_only_resume(self) -> None:
-        stub = StubEngine(scores=[SentimentScore(4), SentimentScore(5), SentimentScore(2)])
-        wrapper = SessionResumeFilter(stub)
-        buckets = [
-            make_bucket("Continue"),
-            make_bucket("amazing!"),
-            make_bucket("ugh, fix this"),
-        ]
-        scores = await wrapper.score(buckets)
-        assert scores == [SentimentScore(3), SentimentScore(5), SentimentScore(2)]
+        wrapper = FilteredEngine(
+            StubEngine(scores=[SentimentScore(4), SentimentScore(5), SentimentScore(2)]),
+            (SessionResumeFilter(),),
+        )
+        buckets = [make_bucket("Continue"), make_bucket("amazing!"), make_bucket("ugh, fix this")]
+        assert await wrapper.score(buckets) == [SentimentScore(3), SentimentScore(5), SentimentScore(2)]
 
-    async def test_close_and_peak_memory_delegate(self) -> None:
-        stub = StubEngine(scores=[])
-        wrapper = SessionResumeFilter(stub)
-        assert wrapper.peak_memory_gb() == 0.42
-        await wrapper.close()
-        assert stub.closed is True
+
+class TestImperativeMildIrritationFilter:
+    async def test_demotes_one_when_trigger_matches(
+        self,
+        patch_imperative_hostile_false: None,
+        patch_lexicon_noop: None,
+    ) -> None:
+        wrapper = FilteredEngine(
+            StubEngine(scores=[SentimentScore(1)]), (ImperativeMildIrritationFilter(),),
+        )
+        scores = await wrapper.score(
+            [make_bucket("and again! dont modify the repo, just do it in a python call")]
+        )
+        assert scores == [SentimentScore(2)]
+
+    async def test_passes_through_non_one_scores(
+        self,
+        patch_imperative_hostile_false: None,
+        patch_lexicon_noop: None,
+    ) -> None:
+        wrapper = FilteredEngine(
+            StubEngine(scores=[SentimentScore(3), SentimentScore(4), SentimentScore(5)]),
+            (ImperativeMildIrritationFilter(),),
+        )
+        buckets = [
+            make_bucket("and again! dont modify the repo"),
+            make_bucket("yet again, please use X"),
+            make_bucket("once again, do this"),
+        ]
+        assert await wrapper.score(buckets) == [SentimentScore(3), SentimentScore(4), SentimentScore(5)]
+
+    async def test_keeps_one_when_hostile_lexicon_present(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        patch_lexicon_noop: None,
+    ) -> None:
+        monkeypatch.setattr(
+            ImperativeMildIrritationFilter,
+            "has_hostile_lexicon",
+            staticmethod(lambda _text: True),
+        )
+        wrapper = FilteredEngine(
+            StubEngine(scores=[SentimentScore(1)]), (ImperativeMildIrritationFilter(),),
+        )
+        assert await wrapper.score([make_bucket("and again! this is broken garbage")]) == [SentimentScore(1)]
+
+    async def test_keeps_one_without_trigger(
+        self,
+        patch_imperative_hostile_false: None,
+        patch_lexicon_noop: None,
+    ) -> None:
+        wrapper = FilteredEngine(
+            StubEngine(scores=[SentimentScore(1)]), (ImperativeMildIrritationFilter(),),
+        )
+        assert await wrapper.score([make_bucket("you are wrong, this approach won't work")]) == [SentimentScore(1)]
 
 
 class TestPositiveClampFilter:
     @staticmethod
     def patch_positive(monkeypatch: pytest.MonkeyPatch, present: bool) -> None:
-        async def noop() -> None:
-            return None
         monkeypatch.setattr(
             PositiveClampFilter,
             "has_positive_lexicon",
             staticmethod(lambda _text: present),
         )
-        monkeypatch.setattr("cc_sentiment.engines.positive_clamp_filter.NLP.ensure_ready", noop)
-        monkeypatch.setattr("cc_sentiment.engines.positive_clamp_filter.Lexicon.ensure_ready", noop)
 
-    async def test_clamps_5_to_3_when_no_positive_lexicon(
-        self, monkeypatch: pytest.MonkeyPatch
+    async def test_clamps_5_to_3_when_short_no_positive(
+        self, monkeypatch: pytest.MonkeyPatch, patch_lexicon_noop: None
     ) -> None:
         self.patch_positive(monkeypatch, present=False)
-        stub = StubEngine(scores=[SentimentScore(5)])
-        wrapper = PositiveClampFilter(stub)
-        scores = await wrapper.score([make_bucket("status?")])
-        assert scores == [SentimentScore(3)]
+        wrapper = FilteredEngine(StubEngine(scores=[SentimentScore(5)]), (PositiveClampFilter(),))
+        assert await wrapper.score([make_bucket("status?")]) == [SentimentScore(3)]
 
-    async def test_keeps_5_when_positive_lexicon_present(
-        self, monkeypatch: pytest.MonkeyPatch
+    async def test_keeps_5_when_short_with_positive(
+        self, monkeypatch: pytest.MonkeyPatch, patch_lexicon_noop: None
     ) -> None:
         self.patch_positive(monkeypatch, present=True)
-        stub = StubEngine(scores=[SentimentScore(5)])
-        wrapper = PositiveClampFilter(stub)
-        scores = await wrapper.score([make_bucket("amazing! ship it")])
-        assert scores == [SentimentScore(5)]
+        wrapper = FilteredEngine(StubEngine(scores=[SentimentScore(5)]), (PositiveClampFilter(),))
+        assert await wrapper.score([make_bucket("amazing!")]) == [SentimentScore(5)]
+
+    async def test_keeps_5_when_long_message(
+        self, monkeypatch: pytest.MonkeyPatch, patch_lexicon_noop: None
+    ) -> None:
+        self.patch_positive(monkeypatch, present=False)
+        wrapper = FilteredEngine(StubEngine(scores=[SentimentScore(5)]), (PositiveClampFilter(),))
+        assert await wrapper.score([make_bucket("are we good or what")]) == [SentimentScore(5)]
+
+    async def test_keeps_5_for_4_word_question(
+        self, monkeypatch: pytest.MonkeyPatch, patch_lexicon_noop: None
+    ) -> None:
+        self.patch_positive(monkeypatch, present=False)
+        wrapper = FilteredEngine(StubEngine(scores=[SentimentScore(5)]), (PositiveClampFilter(),))
+        assert await wrapper.score([make_bucket("are we doing well?")]) == [SentimentScore(5)]
 
     async def test_does_not_touch_score_4(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, patch_lexicon_noop: None
     ) -> None:
         self.patch_positive(monkeypatch, present=False)
-        stub = StubEngine(scores=[SentimentScore(4)])
-        wrapper = PositiveClampFilter(stub)
-        scores = await wrapper.score([make_bucket("status?")])
-        assert scores == [SentimentScore(4)]
+        wrapper = FilteredEngine(StubEngine(scores=[SentimentScore(4)]), (PositiveClampFilter(),))
+        assert await wrapper.score([make_bucket("status?")]) == [SentimentScore(4)]
 
     async def test_does_not_touch_lower_scores(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, patch_lexicon_noop: None
     ) -> None:
         self.patch_positive(monkeypatch, present=False)
-        stub = StubEngine(scores=[SentimentScore(1), SentimentScore(2), SentimentScore(3)])
-        wrapper = PositiveClampFilter(stub)
-        scores = await wrapper.score(
-            [
-                make_bucket("wtf"),
-                make_bucket("ugh"),
-                make_bucket("status?"),
-            ]
+        wrapper = FilteredEngine(
+            StubEngine(scores=[SentimentScore(1), SentimentScore(2), SentimentScore(3)]),
+            (PositiveClampFilter(),),
         )
-        assert scores == [SentimentScore(1), SentimentScore(2), SentimentScore(3)]
+        assert await wrapper.score(
+            [make_bucket("wtf"), make_bucket("ugh"), make_bucket("status?")]
+        ) == [SentimentScore(1), SentimentScore(2), SentimentScore(3)]
 
-    async def test_mixed_clamps_only_5_without_positive(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        positive_for = {"amazing! ship it"}
-        async def noop() -> None:
-            return None
+
+@dataclass
+class StubFilter(ScoreFilter):
+    name: str = "stub"
+    short_value: SentimentScore | None = None
+    post_delta: int = 0
+    prepare_calls: list[str] = field(default_factory=list)
+
+    async def prepare(self) -> None:
+        self.prepare_calls.append(self.name)
+
+    def short_circuit(self, bucket: ConversationBucket) -> SentimentScore | None:
+        return self.short_value
+
+    def post_process(
+        self, bucket: ConversationBucket, score: SentimentScore
+    ) -> SentimentScore:
+        return SentimentScore(int(score) + self.post_delta) if self.post_delta else score
+
+
+class TestFilteredEngine:
+    async def test_no_filters_just_forwards(self) -> None:
+        stub = StubEngine(scores=[SentimentScore(3), SentimentScore(4)])
+        engine = FilteredEngine(stub, ())
+        assert await engine.score([make_bucket("a"), make_bucket("b")]) == [SentimentScore(3), SentimentScore(4)]
+        assert stub.received == [make_bucket("a"), make_bucket("b")]
+
+    async def test_short_circuit_skips_inference(self) -> None:
+        stub = StubEngine(scores=[])
+        engine = FilteredEngine(stub, (StubFilter(short_value=SentimentScore(1)),))
+        assert await engine.score([make_bucket("x"), make_bucket("y")]) == [SentimentScore(1), SentimentScore(1)]
+        assert stub.received == []
+
+    async def test_partial_short_circuit_scatters(self) -> None:
+        stub = StubEngine(scores=[SentimentScore(3)])
+        engine = FilteredEngine(
+            stub,
+            (FrustrationFilter(),),
+        )
+        buckets = [make_bucket("wtf"), make_bucket("please help"), make_bucket("fuck you")]
+        assert await engine.score(buckets) == [SentimentScore(1), SentimentScore(3), SentimentScore(1)]
+        assert stub.received == [buckets[1]]
+
+    async def test_post_process_runs_in_order(self) -> None:
+        stub = StubEngine(scores=[SentimentScore(2)])
+        engine = FilteredEngine(
+            stub,
+            (StubFilter(name="a", post_delta=1), StubFilter(name="b", post_delta=2)),
+        )
+        assert await engine.score([make_bucket("anything")]) == [SentimentScore(5)]
+
+    async def test_prepare_called_once_per_filter(self) -> None:
+        recorder: list[str] = []
+        f1 = StubFilter(name="alpha", prepare_calls=recorder)
+        f2 = StubFilter(name="beta", prepare_calls=recorder)
+        engine = FilteredEngine(StubEngine(scores=[SentimentScore(3)]), (f1, f2))
+        await engine.score([make_bucket("anything")])
+        assert sorted(recorder) == ["alpha", "beta"]
+
+    async def test_on_progress_fires_pre_then_per_inferred(self) -> None:
+        engine = FilteredEngine(
+            StubEngine(scores=[SentimentScore(4)]),
+            (FrustrationFilter(),),
+        )
+        buckets = [make_bucket("wtf"), make_bucket("please"), make_bucket("fuck you")]
+        calls: list[int] = []
+        await engine.score(buckets, on_progress=calls.append)
+        assert calls == [2, 1]
+
+    async def test_on_progress_skipped_when_all_inferred(self) -> None:
+        engine = FilteredEngine(StubEngine(scores=[SentimentScore(3)]), (FrustrationFilter(),))
+        calls: list[int] = []
+        await engine.score([make_bucket("please help")], on_progress=calls.append)
+        assert calls == [1]
+
+    async def test_default_filters_chain(self, patch_lexicon_noop: None, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            ImperativeMildIrritationFilter,
+            "has_hostile_lexicon",
+            staticmethod(lambda _text: False),
+        )
         monkeypatch.setattr(
             PositiveClampFilter,
             "has_positive_lexicon",
-            staticmethod(lambda text: text in positive_for),
+            staticmethod(lambda _text: False),
         )
-        monkeypatch.setattr("cc_sentiment.engines.positive_clamp_filter.NLP.ensure_ready", noop)
-        monkeypatch.setattr("cc_sentiment.engines.positive_clamp_filter.Lexicon.ensure_ready", noop)
-        stub = StubEngine(scores=[SentimentScore(5), SentimentScore(5), SentimentScore(4)])
-        wrapper = PositiveClampFilter(stub)
-        buckets = [
-            make_bucket("status?"),
-            make_bucket("amazing! ship it"),
-            make_bucket("anything"),
-        ]
-        scores = await wrapper.score(buckets)
-        assert scores == [SentimentScore(3), SentimentScore(5), SentimentScore(4)]
+        engine = FilteredEngine(StubEngine(scores=[SentimentScore(4), SentimentScore(5)]), DEFAULT_FILTERS)
+        buckets = [make_bucket("Continue"), make_bucket("status?")]
+        assert await engine.score(buckets) == [SentimentScore(3), SentimentScore(3)]
 
     async def test_close_and_peak_memory_delegate(self) -> None:
         stub = StubEngine(scores=[])
-        wrapper = PositiveClampFilter(stub)
-        assert wrapper.peak_memory_gb() == 0.42
-        await wrapper.close()
+        engine = FilteredEngine(stub, ())
+        assert engine.peak_memory_gb() == 0.42
+        await engine.close()
         assert stub.closed is True

@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import ClassVar
 
-from cc_sentiment.engines.protocol import NOOP_PROGRESS, InferenceEngine
+from cc_sentiment.engines.score_filter import ScoreFilter
 from cc_sentiment.models import ConversationBucket, SentimentScore
 
 TRAILING_PUNCT = ".!?…,;:"
 
 
-class SessionResumeFilter:
+class SessionResumeFilter(ScoreFilter):
     RESUME_PHRASES: ClassVar[frozenset[str]] = frozenset(
         {
             "continue",
@@ -40,9 +39,6 @@ class SessionResumeFilter:
         }
     )
 
-    def __init__(self, inner: InferenceEngine) -> None:
-        self.inner = inner
-
     @classmethod
     def is_bare_resume(cls, text: str) -> bool:
         return text.strip().rstrip(TRAILING_PUNCT).strip().lower() in cls.RESUME_PHRASES
@@ -54,19 +50,7 @@ class SessionResumeFilter:
             for msg in bucket.messages
         )
 
-    async def score(
-        self,
-        buckets: list[ConversationBucket],
-        on_progress: Callable[[int], None] = NOOP_PROGRESS,
-    ) -> list[SentimentScore]:
-        scores = await self.inner.score(buckets, on_progress)
-        return [
-            SentimentScore(3) if self.should_clamp(bucket) else score
-            for bucket, score in zip(buckets, scores)
-        ]
-
-    def peak_memory_gb(self) -> float:
-        return self.inner.peak_memory_gb()
-
-    async def close(self) -> None:
-        await self.inner.close()
+    def post_process(
+        self, bucket: ConversationBucket, score: SentimentScore
+    ) -> SentimentScore:
+        return SentimentScore(3) if self.should_clamp(bucket) else score

@@ -12,12 +12,10 @@ from textual.css.query import NoMatches
 from textual.widgets import Static
 
 from cc_sentiment.engines import (
+    DEFAULT_FILTERS,
     ClaudeCLIEngine,
-    FrustrationFilter,
-    ImperativeMildIrritationFilter,
+    FilteredEngine,
     InferenceEngine,
-    PositiveClampFilter,
-    SessionResumeFilter,
 )
 from cc_sentiment.hardware import Hardware
 from cc_sentiment.lexicon import Lexicon
@@ -133,11 +131,7 @@ class DashboardFlow:
                     return
             else:
                 inner = ClaudeCLIEngine(self.model_repo or ClaudeCLIEngine.HAIKU_MODEL)
-            classifier = SessionResumeFilter(
-                PositiveClampFilter(
-                    ImperativeMildIrritationFilter(FrustrationFilter(inner))
-                )
-            )
+            classifier = FilteredEngine(inner, DEFAULT_FILTERS)
 
         await self._dismiss_boot_screen()
 

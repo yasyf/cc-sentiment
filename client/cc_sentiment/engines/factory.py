@@ -8,11 +8,20 @@ import anyio.to_thread
 
 from cc_sentiment.engines.claude_cli import ClaudeCLIEngine, ClaudeReady, ClaudeStatus
 from cc_sentiment.engines.filter import FrustrationFilter
+from cc_sentiment.engines.filtered_engine import FilteredEngine
 from cc_sentiment.engines.imperative_filter import ImperativeMildIrritationFilter
 from cc_sentiment.engines.positive_clamp_filter import PositiveClampFilter
 from cc_sentiment.engines.protocol import DEFAULT_MODEL, InferenceEngine
+from cc_sentiment.engines.score_filter import ScoreFilter
 from cc_sentiment.engines.session_resume_filter import SessionResumeFilter
 from cc_sentiment.hardware import Hardware
+
+DEFAULT_FILTERS: tuple[ScoreFilter, ...] = (
+    FrustrationFilter(),
+    PositiveClampFilter(),
+    ImperativeMildIrritationFilter(),
+    SessionResumeFilter(),
+)
 
 
 class ClaudeUnavailable(Exception):
@@ -69,8 +78,4 @@ class EngineFactory:
                 inner = ClaudeCLIEngine(model_repo or ClaudeCLIEngine.HAIKU_MODEL)
             case _:
                 raise ValueError(f"Unknown engine: {kind}")
-        return SessionResumeFilter(
-            PositiveClampFilter(
-                ImperativeMildIrritationFilter(FrustrationFilter(inner))
-            )
-        )
+        return FilteredEngine(inner, DEFAULT_FILTERS)

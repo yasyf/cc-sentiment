@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
 from typing import ClassVar
 
+import anyio
+
 from cc_sentiment.engines.filter import FrustrationFilter
-from cc_sentiment.engines.protocol import NOOP_PROGRESS, InferenceEngine
+from cc_sentiment.engines.score_filter import ScoreFilter
 from cc_sentiment.lexicon import Lexicon
 from cc_sentiment.models import ConversationBucket, SentimentScore
 from cc_sentiment.nlp import NLP
@@ -21,11 +22,8 @@ MILD_IMPATIENCE_PATTERN = re.compile(
 )
 
 
-class ImperativeMildIrritationFilter:
+class ImperativeMildIrritationFilter(ScoreFilter):
     HOSTILE_LEXICON_FLOOR: ClassVar[int] = -3
-
-    def __init__(self, inner: InferenceEngine) -> None:
-        self.inner = inner
 
     @staticmethod
     def matches_trigger(text: str) -> bool:
@@ -52,21 +50,16 @@ class ImperativeMildIrritationFilter:
             for msg in bucket.messages
         )
 
-    async def score(
-        self,
-        buckets: list[ConversationBucket],
-        on_progress: Callable[[int], None] = NOOP_PROGRESS,
-    ) -> list[SentimentScore]:
-        await NLP.ensure_ready()
-        await Lexicon.ensure_ready()
-        scores = await self.inner.score(buckets, on_progress)
-        return [
-            SentimentScore(2) if int(score) == 1 and self.should_demote(bucket) else score
-            for bucket, score in zip(buckets, scores)
-        ]
+    async def prepare(self) -> None:
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(NLP.ensure_ready)
+            tg.start_soon(Lexicon.ensure_ready)
 
-    def peak_memory_gb(self) -> float:
-        return self.inner.peak_memory_gb()
-
-    async def close(self) -> None:
-        await self.inner.close()
+    def post_process(
+        self, bucket: ConversationBucket, score: SentimentScore
+    ) -> SentimentScore:
+        return (
+            SentimentScore(2)
+            if int(score) == 1 and self.should_demote(bucket)
+            else score
+        )

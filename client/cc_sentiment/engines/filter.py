@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
 
+from cc_sentiment.engines.score_filter import ScoreFilter
 from cc_sentiment.models import ConversationBucket, SentimentScore
-
-from cc_sentiment.engines.protocol import NOOP_PROGRESS, InferenceEngine
 
 FRUSTRATION_PATTERN = re.compile(
     r"\b("
@@ -26,10 +24,7 @@ FRUSTRATION_PATTERN = re.compile(
 )
 
 
-class FrustrationFilter:
-    def __init__(self, inner: InferenceEngine) -> None:
-        self.inner = inner
-
+class FrustrationFilter(ScoreFilter):
     @staticmethod
     def matches_text(text: str) -> bool:
         return FRUSTRATION_PATTERN.search(text) is not None
@@ -54,23 +49,5 @@ class FrustrationFilter:
     def check_frustration(cls, bucket: ConversationBucket) -> bool:
         return cls.matched_user_message(bucket) is not None
 
-    async def score(
-        self,
-        buckets: list[ConversationBucket],
-        on_progress: Callable[[int], None] = NOOP_PROGRESS,
-    ) -> list[SentimentScore]:
-        flags = [self.check_frustration(b) for b in buckets]
-        to_infer = [(i, b) for i, (b, f) in enumerate(zip(buckets, flags)) if not f]
-        if pre := sum(flags):
-            on_progress(pre)
-        inferred = await self.inner.score([b for _, b in to_infer], on_progress)
-        scores = [SentimentScore(1) if f else SentimentScore(0) for f in flags]
-        for (idx, _), s in zip(to_infer, inferred):
-            scores[idx] = s
-        return scores
-
-    def peak_memory_gb(self) -> float:
-        return self.inner.peak_memory_gb()
-
-    async def close(self) -> None:
-        await self.inner.close()
+    def short_circuit(self, bucket: ConversationBucket) -> SentimentScore | None:
+        return SentimentScore(1) if self.check_frustration(bucket) else None
