@@ -23,6 +23,7 @@ __all__ = [
     "ShareMintRequest",
     "ShareMintResponse",
     "ShareRecord",
+    "AdminSubmission",
 ]
 
 
@@ -125,7 +126,6 @@ class DataResponse(BaseModel):
     distribution: list[DistributionPoint]
     total_records: int
     total_sessions: int
-    total_contributors: int
     last_updated: datetime
     trend: TrendComparison
     model_breakdown: list[ModelBreakdown]
@@ -143,7 +143,6 @@ class MyStatResponse(BaseModel):
     percentile: int = Field(ge=0, le=100)
     text: str = Field(min_length=1)
     tweet_text: str = Field(min_length=1)
-    total_contributors: int = Field(ge=1)
 
 
 class DaemonEvent(BaseModel):
@@ -193,3 +192,16 @@ class ShareMintResponse(BaseModel):
 
     id: str = Field(min_length=1)
     url: str = Field(min_length=1)
+
+
+class AdminSubmission(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    contributor_type: Literal["github", "gpg", "gist"]
+    contributor_id: str = Field(min_length=1)
+    record_count: int = Field(ge=0)
+    session_count: int = Field(ge=0)
+    avg_score: float
+    last_uploaded: datetime
+    earliest_event: datetime
+    latest_event: datetime

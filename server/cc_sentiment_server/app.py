@@ -448,6 +448,17 @@ async def warm_share(share_id: str) -> None:
             await client.get(f"{DASHBOARD_URL}/share/{share_id}")
 
 
+@app.function(image=image, secrets=[modal.Secret.from_name("cc-sentiment-db")])
+async def list_recent_submissions(limit: int = 100) -> list[dict]:
+    db = Database(os.environ["TIMESCALE_DSN"])
+    await db.open()
+    try:
+        submissions = await db.query_recent_submissions(limit)
+    finally:
+        await db.close()
+    return [s.model_dump(mode="json") for s in submissions]
+
+
 @app.function(image=image, secrets=[modal.Secret.from_name("cc-sentiment-vercel")], enable_memory_snapshot=True)
 @modal.batched(max_batch_size=100, wait_ms=5_000)
 async def revalidate_dashboard(tags: list[str]) -> list[bool]:

@@ -11,7 +11,12 @@ dependencies = [
     "fastapi[standard]",
     "slowapi",
     "python-gnupg>=0.5",
+    "typer",
+    "rich",
 ]
+
+[project.scripts]
+cc-sentiment-admin = "cc_sentiment_server.admin:main"
 
 [dependency-groups]
 dev = [

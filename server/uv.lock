@@ -141,7 +141,9 @@ dependencies = [
     { name = "psycopg-pool" },
     { name = "pydantic" },
     { name = "python-gnupg" },
+    { name = "rich" },
     { name = "slowapi" },
+    { name = "typer" },
 ]
 
 [package.dev-dependencies]
@@ -162,7 +164,9 @@ requires-dist = [
     { name = "psycopg-pool" },
     { name = "pydantic" },
     { name = "python-gnupg", specifier = ">=0.5" },
+    { name = "rich" },
     { name = "slowapi" },
+    { name = "typer" },
 ]
 
 [package.metadata.requires-dev]

@@ -158,7 +158,7 @@
 				</p>
 			</div>
 		{:else}
-			<div class="mb-10 grid grid-cols-2 gap-4 sm:grid-cols-4">
+			<div class="mb-10 grid grid-cols-2 gap-4 sm:grid-cols-3">
 				<div class="rounded-lg border border-border bg-bg-card p-4">
 					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Peak frustration</p>
 					{#if worstSentimentHour}
@@ -199,11 +199,6 @@
 					</p>
 				</div>
 
-				<div class="rounded-lg border border-border bg-bg-card p-4">
-					<p class="text-[11px] font-medium uppercase tracking-widest text-text-dim">Contributors</p>
-					<p class="mt-2 text-3xl font-semibold tabular-nums text-text">{data.total_contributors}</p>
-					<p class="mt-0.5 text-xs text-text-muted">people who shared data</p>
-				</div>
 			</div>
 
 			<div class="space-y-8">
@@ -355,14 +350,10 @@
 								</div>
 							</div>
 
-							<div class="grid grid-cols-3 gap-4 text-center">
+							<div class="grid grid-cols-2 gap-4 text-center">
 								<div class="rounded-lg border border-border bg-bg-card p-4">
 									<p class="text-2xl font-semibold tabular-nums text-text">{data.total_records.toLocaleString()}</p>
 									<p class="mt-1 text-xs text-text-dim">total records</p>
-								</div>
-								<div class="rounded-lg border border-border bg-bg-card p-4">
-									<p class="text-2xl font-semibold tabular-nums text-text">{data.total_contributors}</p>
-									<p class="mt-1 text-xs text-text-dim">contributors</p>
 								</div>
 								<div class="rounded-lg border border-border bg-bg-card p-4">
 									<p class="text-2xl font-semibold tabular-nums text-text">{(data.total_records / Math.max(data.total_sessions, 1)).toFixed(1)}</p>

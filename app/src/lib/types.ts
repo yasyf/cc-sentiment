@@ -47,7 +47,6 @@ export interface DataResponse {
 	distribution: DistributionPoint[];
 	total_records: number;
 	total_sessions: number;
-	total_contributors: number;
 	last_updated: string;
 	trend: TrendComparison;
 	model_breakdown: ModelBreakdown[];
@@ -73,5 +72,4 @@ export interface MyStatResponse {
 	percentile: number;
 	text: string;
 	tweet_text: string;
-	total_contributors: number;
 }

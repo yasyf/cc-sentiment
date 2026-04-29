@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from cc_sentiment_server.db import Database, INGEST_SQL
-from cc_sentiment_server.models import DataResponse, MyStatResponse, SentimentRecord
+from cc_sentiment_server.models import AdminSubmission, DataResponse, MyStatResponse, SentimentRecord
 
 
 def make_record(
@@ -120,7 +120,6 @@ class TestQueryAll:
         assert result.distribution == []
         assert result.total_records == 0
         assert result.total_sessions == 0
-        assert result.total_contributors == 0
         assert result.last_updated is not None
 
     @pytest.mark.asyncio
@@ -136,7 +135,6 @@ class TestQueryAll:
 
         assert result.total_records == 2
         assert result.total_sessions == 1
-        assert result.total_contributors == 1
         assert len(result.distribution) >= 1
 
     @pytest.mark.asyncio
@@ -176,7 +174,6 @@ class TestQueryMyStat:
         result = await db.query_my_stat("topuser")
 
         assert isinstance(result, MyStatResponse)
-        assert result.total_contributors == 3
         assert result.kind in {
             "kindness", "thinking", "tool_calls", "turn_length",
             "read_before_edit", "subagents", "volume",
@@ -248,7 +245,6 @@ class TestQueryMyStat:
         assert result.tweet_text.startswith("My Claude rage peaks around ")
         assert result.tweet_text.endswith("Check out yours at")
         assert result.percentile == 0
-        assert result.total_contributors >= 1
 
     @pytest.mark.asyncio
     async def test_solo_contributor_below_threshold_returns_none(
@@ -276,3 +272,51 @@ class TestQueryMyStat:
 
         assert result is not None
         assert result.kind != "angriest_hour"
+
+
+class TestQueryRecentSubmissions:
+    @pytest.mark.asyncio
+    async def test_empty_db(self, db: Database) -> None:
+        assert await db.query_recent_submissions(limit=10) == []
+
+    @pytest.mark.asyncio
+    async def test_groups_by_contributor_and_orders_by_last_upload(
+        self, db: Database
+    ) -> None:
+        old = datetime.now(timezone.utc) - timedelta(days=5)
+        new = datetime.now(timezone.utc) - timedelta(hours=1)
+        await db.ingest([make_record(conv_id="a", t=old)], "alice", "github")
+        await db.ingest(
+            [
+                make_record(conv_id="b1", t=new),
+                make_record(conv_id="b2", bucket=1, t=new),
+                make_record(conv_id="b2", bucket=2, t=new),
+            ],
+            "bob",
+            "github",
+        )
+
+        result = await db.query_recent_submissions(limit=10)
+
+        assert len(result) == 2
+        assert all(isinstance(s, AdminSubmission) for s in result)
+        assert result[0].contributor_id == "bob"
+        assert result[0].record_count == 3
+        assert result[0].session_count == 2
+        assert result[1].contributor_id == "alice"
+        assert result[1].record_count == 1
+        assert result[1].session_count == 1
+        assert result[0].last_uploaded >= result[1].last_uploaded
+
+    @pytest.mark.asyncio
+    async def test_respects_limit(self, db: Database) -> None:
+        for i in range(5):
+            await db.ingest(
+                [make_record(conv_id=f"c-{i}")],
+                f"user-{i}",
+                "github",
+            )
+
+        result = await db.query_recent_submissions(limit=2)
+
+        assert len(result) == 2

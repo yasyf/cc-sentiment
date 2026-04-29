@@ -17,7 +17,6 @@ const MyStatResponseSchema = z.object({
 	percentile: z.number(),
 	text: z.string(),
 	tweet_text: z.string(),
-	total_contributors: z.number(),
 });
 
 const DataResponseSchema = z.object({
@@ -32,7 +31,6 @@ const DataResponseSchema = z.object({
 	distribution: z.array(z.object({ score: z.number(), count: z.number() })),
 	total_records: z.number(),
 	total_sessions: z.number(),
-	total_contributors: z.number(),
 	last_updated: z.string(),
 	trend: z.object({
 		sentiment_current: z.number(),

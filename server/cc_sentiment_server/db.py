@@ -9,6 +9,7 @@ from typing import ClassVar
 from psycopg_pool import AsyncConnectionPool
 
 from cc_sentiment_server.models import (
+    AdminSubmission,
     DaemonEvent,
     DataResponse,
     DistributionPoint,
@@ -43,7 +44,6 @@ class TrendsStats:
 class LifetimeStats:
     total_records: int
     total_sessions: int
-    total_contributors: int
     last_updated: datetime
 
 CREATE_TABLE_SQL = """
@@ -220,9 +220,22 @@ ORDER BY score
 
 LIFETIME_STATS_SQL = """
 SELECT COALESCE(SUM(total)::bigint, 0) AS total,
-       COALESCE(distinct_count(rollup(hll_sessions))::int, 0) AS total_sessions,
-       COALESCE(distinct_count(rollup(hll_contributors))::int, 0) AS total_contributors
+       COALESCE(distinct_count(rollup(hll_sessions))::int, 0) AS total_sessions
 FROM sentiment_totals_daily
+"""
+
+RECENT_SUBMISSIONS_SQL = """
+SELECT contributor_type, contributor_id,
+       COUNT(*)::bigint                          AS record_count,
+       COUNT(DISTINCT conversation_id)::bigint   AS session_count,
+       AVG(sentiment_score)::float               AS avg_score,
+       MAX(ingested_at)                          AS last_uploaded,
+       MIN(time)                                 AS earliest_event,
+       MAX(time)                                 AS latest_event
+FROM sentiment
+GROUP BY contributor_type, contributor_id
+ORDER BY MAX(ingested_at) DESC
+LIMIT %(limit)s
 """
 
 LAST_UPDATED_SQL = """
@@ -332,7 +345,6 @@ class PeerStat(StatCandidate):
                         percentile=percentile,
                         text=text,
                         tweet_text=f"{tweet} {self.TWEET_SUFFIX}",
-                        total_contributors=total,
                     ),
                     priority=abs(pr - 0.5),
                 )
@@ -396,7 +408,6 @@ class AngriestHourStat(StatCandidate):
                         percentile=0,
                         text=self.TEXT.format(hour=formatted),
                         tweet_text=f"{self.TWEET.format(hour=formatted)} {self.TWEET_SUFFIX}",
-                        total_contributors=max(count, 1),
                     ),
                     priority=self.FALLBACK_PRIORITY,
                 )
@@ -597,7 +608,6 @@ class Database:
         return LifetimeStats(
             total_records=lifetime_row[0],
             total_sessions=lifetime_row[1],
-            total_contributors=lifetime_row[2],
             last_updated=last_updated_row[0] or datetime.now(timezone.utc),
         )
 
@@ -611,6 +621,22 @@ class Database:
             case qualified:
                 return max(qualified, key=lambda s: s.priority).response
 
+    async def query_recent_submissions(self, limit: int = 100) -> list[AdminSubmission]:
+        rows = await self._fetch_all(RECENT_SUBMISSIONS_SQL, {"limit": limit})
+        return [
+            AdminSubmission(
+                contributor_type=row[0],
+                contributor_id=row[1],
+                record_count=row[2],
+                session_count=row[3],
+                avg_score=row[4],
+                last_uploaded=row[5],
+                earliest_event=row[6],
+                latest_event=row[7],
+            )
+            for row in rows
+        ]
+
     async def query_all(self, days: int) -> DataResponse:
         window, trends, lifetime = await asyncio.gather(
             self.query_window(days),
@@ -622,7 +648,6 @@ class Database:
             distribution=window.distribution,
             total_records=lifetime.total_records,
             total_sessions=lifetime.total_sessions,
-            total_contributors=lifetime.total_contributors,
             last_updated=lifetime.last_updated,
             trend=window.trend,
             model_breakdown=trends.model_breakdown,

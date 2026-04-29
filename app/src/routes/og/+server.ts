@@ -108,7 +108,7 @@ export const GET: RequestHandler = async ({ fetch }) => {
 										},
 										{
 											type: 'span',
-											props: { style: { fontSize: '16px', color: '#71717a' }, children: `sessions from ${data.total_contributors} contributor${data.total_contributors === 1 ? '' : 's'}` },
+											props: { style: { fontSize: '16px', color: '#71717a' }, children: 'sessions scored on-device' },
 										},
 									],
 								},
