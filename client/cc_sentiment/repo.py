@@ -5,6 +5,7 @@ import threading
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+from types import TracebackType
 
 from cc_sentiment.models import (
     BucketIndex,
@@ -94,6 +95,17 @@ class Repository:
     def close(self) -> None:
         with self.lock:
             self.conn.close()
+
+    def __enter__(self) -> Repository:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.close()
 
     def file_mtimes(self) -> dict[str, float]:
         with self.lock:

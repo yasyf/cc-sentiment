@@ -126,11 +126,8 @@ def run(ctx: typer.Context) -> None:
 
     debug = ctx.obj["debug"]
     state = AppState.load()
-    repo = Repository.open(Repository.default_path())
-    try:
+    with Repository.open(Repository.default_path()) as repo:
         outcome = anyio.run(HeadlessRunner.run, state, repo, debug)
-    finally:
-        repo.close()
 
     match outcome:
         case HeadlessOk(scored=s, uploaded=u):
@@ -161,11 +158,8 @@ def lookup(
     from cc_sentiment.debug import BucketLookup
     from cc_sentiment.repo import Repository
 
-    repo = Repository.open(Repository.default_path())
-    try:
+    with Repository.open(Repository.default_path()) as repo:
         result = anyio.run(BucketLookup.find, repo, bucket_hash)
-    finally:
-        repo.close()
     if result is None:
         typer.echo(f"No bucket found for hash {bucket_hash!r}.", err=True)
         raise typer.Exit(1)
