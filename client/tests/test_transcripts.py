@@ -260,6 +260,43 @@ class TestStreamTranscripts:
         }).decode()
         assert parse_single_line(tmp_path, line) is None
 
+    def test_drops_skill_directory_inject(self, tmp_path: Path) -> None:
+        content = (
+            "Base directory for this skill: /Users/me/.claude/plugins/cache/playwright-cli/playwright-cli/0.0.1/skills/playwright-cli\n"
+            "\n"
+            "# Browser Automation with playwright-cli\n"
+            "## Quick start\n"
+        )
+        line = orjson.dumps({
+            "parentUuid": None, "isSidechain": False, "type": "user",
+            "message": {"role": "user", "content": content},
+            "uuid": "u", "timestamp": "2026-04-10T07:36:00.000Z",
+            "sessionId": "s", "version": "2.1.92",
+        }).decode()
+        assert parse_single_line(tmp_path, line) is None
+
+    def test_drops_inline_markdown_menu_paste(self, tmp_path: Path) -> None:
+        content = "Help me with: ### Keyboard ### Mouse ### Save as ### Tabs ### DevTools"
+        line = orjson.dumps({
+            "parentUuid": None, "isSidechain": False, "type": "user",
+            "message": {"role": "user", "content": content},
+            "uuid": "u", "timestamp": "2026-04-10T07:36:00.000Z",
+            "sessionId": "s", "version": "2.1.92",
+        }).decode()
+        assert parse_single_line(tmp_path, line) is None
+
+    def test_allows_legitimate_single_h3_heading(self, tmp_path: Path) -> None:
+        content = "Reading the docs:\n### Setup\nWhat config goes here?"
+        line = orjson.dumps({
+            "parentUuid": None, "isSidechain": False, "type": "user",
+            "message": {"role": "user", "content": content},
+            "uuid": "u", "timestamp": "2026-04-10T07:36:00.000Z",
+            "sessionId": "s", "version": "2.1.92",
+        }).decode()
+        msg = parse_single_line(tmp_path, line)
+        assert isinstance(msg, UserMessage)
+        assert "Setup" in msg.content
+
     def test_drops_bare_request_interrupted(self, tmp_path: Path) -> None:
         line = orjson.dumps({
             "parentUuid": None, "isSidechain": False, "type": "user",

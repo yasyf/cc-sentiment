@@ -49,6 +49,8 @@ static JUNK_RE: Lazy<Regex> = Lazy::new(|| {
         r"|Stop hook feedback:",
         r"|REMAINING_TASKS_ACKNOWLEDGED",
         r"|<<[a-z][a-z0-9-]*>>",
+        r"|^Base directory for this skill:",
+        r"|(?:###\s+[\w][\w \-]{0,30}\s+){3,}###",
     ))
     .expect("static regex compiles")
 });
@@ -660,6 +662,28 @@ mod tests {
     fn skips_user_system_reminder() {
         let line = r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":"<system-reminder>x</system-reminder>"},"uuid":"u","timestamp":"2026-04-10T07:36:00Z","sessionId":"s","version":"2.1.92"}"#;
         assert!(parse_line(line).is_none());
+    }
+
+    #[test]
+    fn skips_skill_directory_inject() {
+        let line = r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":"Base directory for this skill: /Users/me/.claude/plugins/cache/playwright-cli/0.0.1\n\n# Browser Automation"},"uuid":"u","timestamp":"2026-04-10T07:36:00Z","sessionId":"s","version":"2.1.92"}"#;
+        assert!(parse_line(line).is_none());
+    }
+
+    #[test]
+    fn skips_inline_markdown_menu_paste() {
+        let line = r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":"Help me with: ### Keyboard ### Mouse ### Save as ### Tabs ### DevTools"},"uuid":"u","timestamp":"2026-04-10T07:36:00Z","sessionId":"s","version":"2.1.92"}"#;
+        assert!(parse_line(line).is_none());
+    }
+
+    #[test]
+    fn allows_single_h3_heading() {
+        let line = r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":"Reading the docs:\n### Setup\nWhat config?"},"uuid":"u","timestamp":"2026-04-10T07:36:00Z","sessionId":"s","version":"2.1.92"}"#;
+        let parsed = parse_line(line).unwrap();
+        match parsed {
+            Parsed::User { content, .. } => assert!(content.contains("Setup")),
+            _ => panic!("expected user"),
+        }
     }
 
     #[test]
