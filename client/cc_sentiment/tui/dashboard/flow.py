@@ -16,6 +16,8 @@ from cc_sentiment.engines import (
     FrustrationFilter,
     ImperativeMildIrritationFilter,
     InferenceEngine,
+    PositiveClampFilter,
+    SessionResumeFilter,
 )
 from cc_sentiment.hardware import Hardware
 from cc_sentiment.lexicon import Lexicon
@@ -131,7 +133,11 @@ class DashboardFlow:
                     return
             else:
                 inner = ClaudeCLIEngine(self.model_repo or ClaudeCLIEngine.HAIKU_MODEL)
-            classifier = ImperativeMildIrritationFilter(FrustrationFilter(inner))
+            classifier = SessionResumeFilter(
+                PositiveClampFilter(
+                    ImperativeMildIrritationFilter(FrustrationFilter(inner))
+                )
+            )
 
         await self._dismiss_boot_screen()
 
@@ -156,6 +162,7 @@ class DashboardFlow:
                         app=self.app,
                         section=self.query_one("#moments-section"),
                         log=self.query_one("#moments-log", Static),
+                        debug=self.debug_mode,
                     )
                     await NLP.ensure_ready()
                     await Lexicon.ensure_ready()

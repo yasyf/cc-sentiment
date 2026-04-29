@@ -155,6 +155,24 @@ def run(ctx: typer.Context) -> None:
 
 
 @app.command(hidden=True)
+def lookup(
+    bucket_hash: Annotated[str, typer.Argument(help="8-char bucket hash from --debug TUI")],
+) -> None:
+    from cc_sentiment.debug import BucketLookup
+    from cc_sentiment.repo import Repository
+
+    repo = Repository.open(Repository.default_path())
+    try:
+        result = anyio.run(BucketLookup.find, repo, bucket_hash)
+    finally:
+        repo.close()
+    if result is None:
+        typer.echo(f"No bucket found for hash {bucket_hash!r}.", err=True)
+        raise typer.Exit(1)
+    typer.echo(BucketLookup.format(result))
+
+
+@app.command(hidden=True)
 def benchmark(
     transcripts: Annotated[
         int, typer.Option("--transcripts", help="Max transcripts to benchmark")

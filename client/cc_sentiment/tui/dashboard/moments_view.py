@@ -73,6 +73,7 @@ class MomentsView:
     app: App
     section: Widget
     log: Static
+    debug: bool = False
     lines: deque[Text] = field(default_factory=lambda: deque(maxlen=8))
     last_snippet_at: float = 0.0
     last_snippet_score: int | None = None
@@ -87,7 +88,7 @@ class MomentsView:
     def hide(self) -> None:
         self.section.add_class("inactive")
 
-    async def add_snippet(self, snippet: str, score: int) -> None:
+    async def add_snippet(self, snippet: str, score: int, bucket_hash: str) -> None:
         now = time.monotonic()
         if now - self.last_snippet_at < self.SNIPPET_RATE_LIMIT:
             return
@@ -101,12 +102,13 @@ class MomentsView:
         highlighted = await anyio.to_thread.run_sync(
             Highlighter.windowed_highlight, snippet, score
         )
-        self.lines.append(
-            Text.assemble(
-                f'{ScoreEmoji.for_score(score)} {score}  "',
-                highlighted,
-                '"  ',
-                (comment, "dim"),
-            )
-        )
+        parts: list[str | Text | tuple[str, str]] = [
+            f'{ScoreEmoji.for_score(score)} {score}  "',
+            highlighted,
+            '"  ',
+        ]
+        if self.debug:
+            parts.append((f"#{bucket_hash} ", "dim cyan"))
+        parts.append((comment, "dim"))
+        self.lines.append(Text.assemble(*parts))
         self.log.update(Text("\n").join(self.lines))

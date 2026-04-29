@@ -17,6 +17,7 @@ Root `AGENTS.md` rules apply unless overridden here. The client follows a functi
    - `cc_sentiment/nlp.py` — spaCy lazy loader (`NLP` classmethods)
    - `cc_sentiment/lexicon.py` — AFINN + domain-overrides (`Lexicon` classmethods; async `ensure_ready` + sync `polarity`)
    - `cc_sentiment/highlight.py` — snippet styling (`Highlighter` classmethods + `HighlightSpan`/`WindowedSlice` dataclasses)
+   - `cc_sentiment/debug.py` — bucket hash + lookup (`BucketHash`/`BucketLookup` classmethods + `BucketLookupResult` dataclass)
    - `cc_sentiment/transcripts/parser.py` — carve-out: hosts `Backend`-implementing class plus picklable parsing helpers (`build_message`, `python_parse_chunk`, etc.) that must stay module-level for `anyio.to_process.run_sync`
    - `cc_sentiment/patches/__init__.py` — `apply_kv_cache_patch`
    - `cc_sentiment/_transcripts_rs.pyi` — `.pyi` stub; free `def` is required syntax

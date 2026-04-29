@@ -73,7 +73,7 @@ DEMOS: tuple[tuple[str, str], ...] = (
 
 
 NOOP_PROGRESS: Callable[[int], None] = lambda _: None
-NOOP_SNIPPET: Callable[[str, int], Awaitable[None]] = lambda *_: asyncio.sleep(0)
+NOOP_SNIPPET: Callable[[str, int, str], Awaitable[None]] = lambda *_: asyncio.sleep(0)
 
 
 class InferenceEngine(Protocol):

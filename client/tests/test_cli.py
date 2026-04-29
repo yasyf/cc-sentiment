@@ -50,6 +50,27 @@ class TestSingleCommand:
         result = runner.invoke(app, ["--help"])
         assert "benchmark" not in result.output
 
+    def test_lookup_hidden(self) -> None:
+        cmd = find_command("lookup")
+        assert cmd is not None
+        assert cmd.hidden is True
+
+    def test_lookup_not_in_help(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(app, ["--help"])
+        assert "lookup" not in result.output
+
+    def test_lookup_unknown_hash_exits_nonzero(self) -> None:
+        runner = CliRunner()
+        with patch("cc_sentiment.repo.Repository.open") as repo_open:
+            mock_repo = MagicMock()
+            mock_repo.all_records.return_value = []
+            mock_repo.close = MagicMock()
+            repo_open.return_value = mock_repo
+            result = runner.invoke(app, ["lookup", "deadbeef"])
+        assert result.exit_code == 1
+        assert "No bucket found" in result.output
+
 
 class TestMainLaunchesApp:
     def test_default_invocation_launches_app(self) -> None:

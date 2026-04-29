@@ -9,6 +9,7 @@ from pathlib import Path
 import anyio
 import anyio.to_thread
 
+from cc_sentiment.debug import BucketHash
 from cc_sentiment.engines import (
     NOOP_PROGRESS,
     NOOP_SNIPPET,
@@ -183,7 +184,7 @@ class Pipeline:
         classifier: InferenceEngine,
         scored_buckets: frozenset[BucketKey] = frozenset(),
         on_bucket: Callable[[int], None] = NOOP_PROGRESS,
-        on_snippet: Callable[[str, int], Awaitable[None]] = NOOP_SNIPPET,
+        on_snippet: Callable[[str, int, str], Awaitable[None]] = NOOP_SNIPPET,
         on_records: Callable[[list[SentimentRecord]], None] = lambda _: None,
         on_frustration: Callable[[list[str]], None] = lambda _: None,
     ) -> list[SentimentRecord]:
@@ -199,7 +200,7 @@ class Pipeline:
             scores = await classifier.score(chunk, on_progress=on_bucket)
             for bucket, score in zip(chunk, scores):
                 if snippet := await cls.snippet_for(bucket, int(score)):
-                    await on_snippet(snippet, int(score))
+                    await on_snippet(snippet, int(score), BucketHash.of_bucket(bucket))
                 if words := [
                     w
                     for msg in bucket.messages
@@ -230,7 +231,7 @@ class Pipeline:
         classifier: InferenceEngine,
         on_records: Callable[[list[SentimentRecord]], None] = lambda _: None,
         on_bucket: Callable[[int], None] = NOOP_PROGRESS,
-        on_snippet: Callable[[str, int], Awaitable[None]] = NOOP_SNIPPET,
+        on_snippet: Callable[[str, int, str], Awaitable[None]] = NOOP_SNIPPET,
         on_transcript_complete: Callable[[list[SentimentRecord]], None] = lambda _: None,
         on_frustration: Callable[[list[str]], None] = lambda _: None,
     ) -> list[SentimentRecord]:
