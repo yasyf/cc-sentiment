@@ -22,6 +22,8 @@ from cc_sentiment.engines import (
     EngineFactory,
     FrustrationFilter,
     ImperativeMildIrritationFilter,
+    PositiveClampFilter,
+    SessionResumeFilter,
 )
 from cc_sentiment.engines.protocol import DEFAULT_MODEL
 from cc_sentiment.text import extract_score
@@ -299,8 +301,10 @@ class TestMlxBuild:
     async def test_build_wraps_with_filter_chain(self) -> None:
         engine = await EngineFactory.build("mlx", DEFAULT_MODEL)
         try:
-            assert isinstance(engine, ImperativeMildIrritationFilter)
-            assert isinstance(engine.inner, FrustrationFilter)
+            assert isinstance(engine, SessionResumeFilter)
+            assert isinstance(engine.inner, PositiveClampFilter)
+            assert isinstance(engine.inner.inner, ImperativeMildIrritationFilter)
+            assert isinstance(engine.inner.inner.inner, FrustrationFilter)
         finally:
             await engine.close()
 
@@ -645,6 +649,188 @@ class TestImperativeMildIrritationFilter:
     async def test_close_and_peak_memory_delegate(self) -> None:
         stub = StubEngine(scores=[])
         wrapper = ImperativeMildIrritationFilter(stub)
+        assert wrapper.peak_memory_gb() == 0.42
+        await wrapper.close()
+        assert stub.closed is True
+
+
+class TestSessionResumeBare:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "continue",
+            "Continue",
+            "CONTINUE",
+            "continue.",
+            "Continue!",
+            "continue please",
+            "please continue",
+            "resume",
+            "go ahead",
+            "Go ahead",
+            "keep going",
+            "carry on",
+            "proceed",
+            "go on",
+            "ok continue",
+            "okay continue",
+            "Continue from where you left off",
+            "continue where you left off",
+            "[context restored] resume",
+        ],
+    )
+    def test_recognizes_resume(self, text: str) -> None:
+        assert SessionResumeFilter.is_bare_resume(text)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "amazing! continue",
+            "great work, continue please",
+            "continue with the refactor",
+            "stop continuing this",
+            "should I continue?",
+            "lets continue tomorrow",
+            "and continue from there",
+            "",
+            "status?",
+        ],
+    )
+    def test_does_not_match_non_resume(self, text: str) -> None:
+        assert not SessionResumeFilter.is_bare_resume(text)
+
+
+class TestSessionResumeFilter:
+    async def test_clamps_four_to_three_for_bare_continue(self) -> None:
+        stub = StubEngine(scores=[SentimentScore(4)])
+        wrapper = SessionResumeFilter(stub)
+        scores = await wrapper.score([make_bucket("Continue")])
+        assert scores == [SentimentScore(3)]
+
+    async def test_clamps_one_to_three_for_bare_resume(self) -> None:
+        stub = StubEngine(scores=[SentimentScore(1)])
+        wrapper = SessionResumeFilter(stub)
+        scores = await wrapper.score([make_bucket("resume")])
+        assert scores == [SentimentScore(3)]
+
+    async def test_does_not_clamp_mixed_praise(self) -> None:
+        stub = StubEngine(scores=[SentimentScore(4)])
+        wrapper = SessionResumeFilter(stub)
+        scores = await wrapper.score([make_bucket("amazing! continue")])
+        assert scores == [SentimentScore(4)]
+
+    async def test_does_not_touch_non_resume_5(self) -> None:
+        stub = StubEngine(scores=[SentimentScore(5)])
+        wrapper = SessionResumeFilter(stub)
+        scores = await wrapper.score([make_bucket("status?")])
+        assert scores == [SentimentScore(5)]
+
+    async def test_clamps_long_form_continue_phrase(self) -> None:
+        stub = StubEngine(scores=[SentimentScore(4)])
+        wrapper = SessionResumeFilter(stub)
+        scores = await wrapper.score([make_bucket("Continue from where you left off")])
+        assert scores == [SentimentScore(3)]
+
+    async def test_mixed_buckets_clamp_only_resume(self) -> None:
+        stub = StubEngine(scores=[SentimentScore(4), SentimentScore(5), SentimentScore(2)])
+        wrapper = SessionResumeFilter(stub)
+        buckets = [
+            make_bucket("Continue"),
+            make_bucket("amazing!"),
+            make_bucket("ugh, fix this"),
+        ]
+        scores = await wrapper.score(buckets)
+        assert scores == [SentimentScore(3), SentimentScore(5), SentimentScore(2)]
+
+    async def test_close_and_peak_memory_delegate(self) -> None:
+        stub = StubEngine(scores=[])
+        wrapper = SessionResumeFilter(stub)
+        assert wrapper.peak_memory_gb() == 0.42
+        await wrapper.close()
+        assert stub.closed is True
+
+
+class TestPositiveClampFilter:
+    @staticmethod
+    def patch_positive(monkeypatch: pytest.MonkeyPatch, present: bool) -> None:
+        async def noop() -> None:
+            return None
+        monkeypatch.setattr(
+            PositiveClampFilter,
+            "has_positive_lexicon",
+            staticmethod(lambda _text: present),
+        )
+        monkeypatch.setattr("cc_sentiment.engines.positive_clamp_filter.NLP.ensure_ready", noop)
+        monkeypatch.setattr("cc_sentiment.engines.positive_clamp_filter.Lexicon.ensure_ready", noop)
+
+    async def test_clamps_5_to_3_when_no_positive_lexicon(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self.patch_positive(monkeypatch, present=False)
+        stub = StubEngine(scores=[SentimentScore(5)])
+        wrapper = PositiveClampFilter(stub)
+        scores = await wrapper.score([make_bucket("status?")])
+        assert scores == [SentimentScore(3)]
+
+    async def test_keeps_5_when_positive_lexicon_present(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self.patch_positive(monkeypatch, present=True)
+        stub = StubEngine(scores=[SentimentScore(5)])
+        wrapper = PositiveClampFilter(stub)
+        scores = await wrapper.score([make_bucket("amazing! ship it")])
+        assert scores == [SentimentScore(5)]
+
+    async def test_does_not_touch_score_4(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self.patch_positive(monkeypatch, present=False)
+        stub = StubEngine(scores=[SentimentScore(4)])
+        wrapper = PositiveClampFilter(stub)
+        scores = await wrapper.score([make_bucket("status?")])
+        assert scores == [SentimentScore(4)]
+
+    async def test_does_not_touch_lower_scores(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self.patch_positive(monkeypatch, present=False)
+        stub = StubEngine(scores=[SentimentScore(1), SentimentScore(2), SentimentScore(3)])
+        wrapper = PositiveClampFilter(stub)
+        scores = await wrapper.score(
+            [
+                make_bucket("wtf"),
+                make_bucket("ugh"),
+                make_bucket("status?"),
+            ]
+        )
+        assert scores == [SentimentScore(1), SentimentScore(2), SentimentScore(3)]
+
+    async def test_mixed_clamps_only_5_without_positive(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        positive_for = {"amazing! ship it"}
+        async def noop() -> None:
+            return None
+        monkeypatch.setattr(
+            PositiveClampFilter,
+            "has_positive_lexicon",
+            staticmethod(lambda text: text in positive_for),
+        )
+        monkeypatch.setattr("cc_sentiment.engines.positive_clamp_filter.NLP.ensure_ready", noop)
+        monkeypatch.setattr("cc_sentiment.engines.positive_clamp_filter.Lexicon.ensure_ready", noop)
+        stub = StubEngine(scores=[SentimentScore(5), SentimentScore(5), SentimentScore(4)])
+        wrapper = PositiveClampFilter(stub)
+        buckets = [
+            make_bucket("status?"),
+            make_bucket("amazing! ship it"),
+            make_bucket("anything"),
+        ]
+        scores = await wrapper.score(buckets)
+        assert scores == [SentimentScore(3), SentimentScore(5), SentimentScore(4)]
+
+    async def test_close_and_peak_memory_delegate(self) -> None:
+        stub = StubEngine(scores=[])
+        wrapper = PositiveClampFilter(stub)
         assert wrapper.peak_memory_gb() == 0.42
         await wrapper.close()
         assert stub.closed is True
