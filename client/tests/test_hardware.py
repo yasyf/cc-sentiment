@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -106,3 +107,14 @@ class TestEstimateBucketsPerSec:
         assert rate == pytest.approx(
             Hardware.BASELINE_MLX_USER_MSGS_PER_SEC / Hardware.AVG_NON_FILTERED_USER_MSGS_PER_BUCKET
         )
+
+
+class TestReadFreeMemoryGb:
+    def test_returns_psutil_available_in_gb(self) -> None:
+        five_gb = 5 * (1024 ** 3) + 12345
+        with patch("psutil.virtual_memory", return_value=SimpleNamespace(available=five_gb)):
+            assert Hardware.read_free_memory_gb() == 5
+
+    def test_returns_zero_when_psutil_reports_zero(self) -> None:
+        with patch("psutil.virtual_memory", return_value=SimpleNamespace(available=0)):
+            assert Hardware.read_free_memory_gb() == 0

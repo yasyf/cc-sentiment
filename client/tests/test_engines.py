@@ -252,24 +252,6 @@ class TestFrustrationDetection:
         assert FrustrationFilter.matched_user_message(make_bucket("looks good")) is None
 
 
-class TestEstimateClaudeCost:
-    def test_zero_buckets(self) -> None:
-        assert ClaudeCLIEngine.estimate_cost_usd(0) == 0.0
-
-    def test_matches_haiku_rates(self) -> None:
-        n = 1000
-        expected = (
-            n * ClaudeCLIEngine.EST_INPUT_TOKENS_PER_BUCKET / 1_000_000 * ClaudeCLIEngine.HAIKU_INPUT_USD_PER_MTOK
-            + n * ClaudeCLIEngine.EST_OUTPUT_TOKENS_PER_BUCKET / 1_000_000 * ClaudeCLIEngine.HAIKU_OUTPUT_USD_PER_MTOK
-        )
-        assert ClaudeCLIEngine.estimate_cost_usd(n) == pytest.approx(expected)
-
-    def test_scales_linearly(self) -> None:
-        assert ClaudeCLIEngine.estimate_cost_usd(200) == pytest.approx(
-            2 * ClaudeCLIEngine.estimate_cost_usd(100)
-        )
-
-
 class TestClaudeCliStatus:
     def test_not_installed_with_brew(self) -> None:
         def which(name: str) -> str | None:
@@ -383,16 +365,35 @@ print("ok")
             EngineFactory.resolve("claude")
         assert exc_info.value.status == ClaudeNotAuthenticated()
 
+    def test_default_swaps_to_claude_when_low_ram_and_claude_ready(self) -> None:
+        with patch.object(EngineFactory, "default", return_value="mlx"), \
+             patch("cc_sentiment.engines.factory.Hardware.read_free_memory_gb", return_value=2), \
+             patch.object(ClaudeCLIEngine, "check_status", return_value=ClaudeReady()):
+            assert EngineFactory.resolve(None) == "claude"
+
+    def test_default_keeps_mlx_when_low_ram_but_claude_unavailable(self) -> None:
+        with patch.object(EngineFactory, "default", return_value="mlx"), \
+             patch("cc_sentiment.engines.factory.Hardware.read_free_memory_gb", return_value=2), \
+             patch.object(ClaudeCLIEngine, "check_status", return_value=ClaudeNotInstalled(brew_available=True)):
+            assert EngineFactory.resolve(None) == "mlx"
+
+    def test_default_keeps_mlx_when_ram_above_threshold(self) -> None:
+        with patch.object(EngineFactory, "default", return_value="mlx"), \
+             patch("cc_sentiment.engines.factory.Hardware.read_free_memory_gb", return_value=16), \
+             patch.object(ClaudeCLIEngine, "check_status") as check_status:
+            assert EngineFactory.resolve(None) == "mlx"
+            check_status.assert_not_called()
+
+    def test_explicit_mlx_request_skips_swap_even_when_low_ram(self) -> None:
+        with patch("cc_sentiment.engines.factory.Hardware.read_free_memory_gb", return_value=1), \
+             patch.object(ClaudeCLIEngine, "check_status") as check_status:
+            assert EngineFactory.resolve("mlx") == "mlx"
+            check_status.assert_not_called()
+
 
 class TestClaudeCLIEngine:
-    async def test_score_parses_json_response_and_tracks_cost(self) -> None:
-        response = orjson.dumps({
-            "type": "result",
-            "is_error": False,
-            "result": "4",
-            "total_cost_usd": 0.0025,
-            "usage": {"input_tokens": 2500, "output_tokens": 1},
-        })
+    async def test_score_parses_json_response(self) -> None:
+        response = orjson.dumps({"type": "result", "is_error": False, "result": "4"})
         proc = MagicMock(returncode=0, communicate=AsyncMock(return_value=(response, b"")))
 
         with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"):
@@ -401,9 +402,6 @@ class TestClaudeCLIEngine:
             scores = await engine.score([make_bucket("please help me fix this")])
 
         assert scores == [SentimentScore(4)]
-        assert engine.total_cost_usd == pytest.approx(0.0025)
-        assert engine.total_input_tokens == 2500
-        assert engine.total_output_tokens == 1
 
     async def test_score_raises_on_subprocess_failure(self) -> None:
         proc = MagicMock(returncode=2, communicate=AsyncMock(return_value=(b"", b"auth failed")))
@@ -415,13 +413,7 @@ class TestClaudeCLIEngine:
             await engine.score([make_bucket("please help me fix this")])
 
     async def test_score_fires_on_progress_for_inference_path(self) -> None:
-        response = orjson.dumps({
-            "type": "result",
-            "is_error": False,
-            "result": "4",
-            "total_cost_usd": 0.0025,
-            "usage": {"input_tokens": 2500, "output_tokens": 1},
-        })
+        response = orjson.dumps({"type": "result", "is_error": False, "result": "4"})
         proc = MagicMock(returncode=0, communicate=AsyncMock(return_value=(response, b"")))
 
         with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"):

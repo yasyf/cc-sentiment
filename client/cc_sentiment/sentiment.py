@@ -31,7 +31,7 @@ WORKER_STOP = object()
 
 class AdapterFuser:
     @classmethod
-    def ensure_fused(cls, model_repo: str) -> Path:
+    def ensure_fused(cls, model_repo: str, tqdm_class: type | None = None) -> Path:
         from huggingface_hub.constants import HF_HUB_CACHE
 
         digest = AdapterCodec.digest()
@@ -44,7 +44,7 @@ class AdapterFuser:
         from mlx.utils import tree_unflatten
         from mlx_lm.utils import load_adapters, load_model, load_tokenizer, save
 
-        src_path = Path(snapshot_download(model_repo))
+        src_path = Path(snapshot_download(model_repo, tqdm_class=tqdm_class))
         with tempfile.TemporaryDirectory() as tmp:
             staging = Path(tmp)
             (staging / "adapter_config.json").write_bytes(AdapterCodec.CONFIG.read_bytes())

@@ -9,7 +9,7 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import Button
 
-from cc_sentiment.engines import InferenceEngine
+from cc_sentiment.model_cache import ModelCache
 from cc_sentiment.models import AppState, SentimentRecord
 from cc_sentiment.pipeline import ScanCache
 from cc_sentiment.repo import Repository
@@ -106,8 +106,9 @@ class DashboardScreen(
         self._upload = UploadProgress()
         self._debug_state = DebugState()
         self._boot_screen: BootingScreen | None = None
-        self._prewarmed = False
-        self._prewarmed_classifier: InferenceEngine | None = None
+        self._model_cache = ModelCache()
+        self.engine: str | None = None
+        self._auto_swapped_to_claude = False
 
     @on(Button.Pressed, "#cta-action")
     async def on_cta_action(self) -> None:

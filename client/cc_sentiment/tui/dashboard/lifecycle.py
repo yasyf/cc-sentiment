@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import contextlib
+import threading
 from dataclasses import replace
 
 import anyio
 import anyio.to_thread
-import httpx
 from textual.css.query import NoMatches
 
 from cc_sentiment.daemon import LaunchAgent
-from cc_sentiment.engines import EngineFactory
+from cc_sentiment.engines import ClaudeStatus, ClaudeUnavailable, EngineFactory
 from cc_sentiment.engines.protocol import DEFAULT_MODEL
 from cc_sentiment.lexicon import Lexicon
+from cc_sentiment.model_cache import ModelLoadProgress
 from cc_sentiment.nlp import NLP
 from cc_sentiment.pipeline import ScanCache
 from cc_sentiment.repo import Repository
@@ -20,6 +21,7 @@ from cc_sentiment.tui.dashboard.popovers import BootingScreen
 from cc_sentiment.tui.dashboard.progress import DebugState
 from cc_sentiment.tui.dashboard.view import ProcessingView
 from cc_sentiment.tui.dashboard.widgets import DebugSection
+from cc_sentiment.tui.popovers import PlatformErrorScreen
 
 __all__ = ["DashboardLifecycle"]
 
@@ -40,7 +42,48 @@ class DashboardLifecycle:
         )
         self.set_interval(self.CTA_ROTATE_SECONDS, self.view.rotate_cta)
         self.set_interval(1.0, self._tick_progress_label)
+
+        self._boot_screen.status = "Picking the best way to score on this device..."
+        try:
+            self.engine = await anyio.to_thread.run_sync(EngineFactory.resolve, None)
+        except ClaudeUnavailable as e:
+            self.run_worker(
+                self._handle_platform_error(e.status),
+                name="platform-error", exit_on_error=False,
+            )
+            return
+
+        self._auto_swapped_to_claude = EngineFactory.default() == "mlx" and self.engine == "claude"
+        self._set_debug(engine_name=self.engine)
+        self._debug(f"engine={self.engine}")
+        if self._auto_swapped_to_claude:
+            self._debug("auto-swapped to claude, low free RAM")
+
+        if self.engine == "mlx":
+            self._kick_off_model_load()
+
         self.run_flow()
+
+    async def _handle_platform_error(self, status: ClaudeStatus) -> None:
+        await self._dismiss_boot_screen()
+        await self.app.push_screen_wait(PlatformErrorScreen(status))
+        self.app.exit()
+
+    def _kick_off_model_load(self) -> None:
+        EngineFactory.configure_hub_progress()
+        self._model_cache.subscribe(self._on_model_progress)
+        self.run_worker(
+            self._model_cache.ensure_started(self.model_repo or DEFAULT_MODEL),
+            name="model-load", group="model-load", exclusive=True, exit_on_error=False,
+        )
+
+    def _on_model_progress(self, progress: ModelLoadProgress) -> None:
+        if self._boot_screen is None:
+            return
+        if threading.current_thread() is threading.main_thread():
+            self._boot_screen.download_progress = progress
+        else:
+            self.app.call_from_thread(setattr, self._boot_screen, "download_progress", progress)
 
     def _tick_progress_label(self) -> None:
         if self.view is None:
@@ -55,42 +98,6 @@ class DashboardLifecycle:
             self._set_debug(nlp_state="failed", nlp_output=NLP.last_download_output)
             return
         self._set_debug(nlp_state="ready")
-
-    def _maybe_prewarm(self) -> None:
-        if self._prewarmed:
-            return
-        if EngineFactory.default() != "mlx":
-            return
-        self._prewarmed = True
-        self.run_worker(self._prewarm_model(), name="prewarm-model", exit_on_error=False)
-
-    async def _prewarm_model(self) -> None:
-        EngineFactory.configure_hub_progress()
-        from huggingface_hub import snapshot_download
-        from huggingface_hub.utils import disable_progress_bars
-
-        disable_progress_bars()
-        self._set_debug(prewarm_model="running")
-        try:
-            await anyio.to_thread.run_sync(snapshot_download, DEFAULT_MODEL)
-        except (OSError, httpx.HTTPError) as exc:
-            self._set_debug(prewarm_model=f"failed: {exc.__class__.__name__}")
-            return
-        from cc_sentiment.sentiment import AdapterFuser, SentimentClassifier
-
-        try:
-            fused_dir = await anyio.to_thread.run_sync(AdapterFuser.ensure_fused, DEFAULT_MODEL)
-        except OSError as exc:
-            self._set_debug(prewarm_model=f"failed: {exc.__class__.__name__}")
-            return
-        try:
-            classifier = SentimentClassifier(fused_dir)
-            await classifier.ensure_loaded()
-        except (OSError, RuntimeError) as exc:
-            self._set_debug(prewarm_model=f"failed: {exc.__class__.__name__}")
-            return
-        self._prewarmed_classifier = classifier
-        self._set_debug(prewarm_model="done")
 
     async def _dismiss_boot_screen(self) -> None:
         if self._boot_screen is None:

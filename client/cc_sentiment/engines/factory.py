@@ -10,6 +10,7 @@ from cc_sentiment.engines.claude_cli import ClaudeCLIEngine, ClaudeReady, Claude
 from cc_sentiment.engines.filter import FrustrationFilter
 from cc_sentiment.engines.imperative_filter import ImperativeMildIrritationFilter
 from cc_sentiment.engines.protocol import DEFAULT_MODEL, InferenceEngine
+from cc_sentiment.hardware import Hardware
 
 
 class ClaudeUnavailable(Exception):
@@ -35,6 +36,13 @@ class EngineFactory:
     @classmethod
     def resolve(cls, requested: str | None) -> str:
         engine = requested or cls.default()
+        if (
+            requested is None
+            and engine == "mlx"
+            and Hardware.read_free_memory_gb() < Hardware.LOW_RAM_THRESHOLD_GB
+            and isinstance(ClaudeCLIEngine.check_status(), ClaudeReady)
+        ):
+            engine = "claude"
         if engine != "claude":
             return engine
         match ClaudeCLIEngine.check_status():

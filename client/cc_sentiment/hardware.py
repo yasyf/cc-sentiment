@@ -33,6 +33,7 @@ class Hardware:
     }
     BASELINE_BANDWIDTH_GBPS: ClassVar[int] = 546
     MIN_MEMORY_GB: ClassVar[int] = 16
+    LOW_RAM_THRESHOLD_GB: ClassVar[int] = 4
 
     @staticmethod
     def read_brand() -> str:
@@ -54,6 +55,11 @@ class Hardware:
             ["sysctl", "-n", "hw.memsize"],
             check=True, capture_output=True, text=True, timeout=2,
         ).stdout.strip()) // (1024 ** 3)
+
+    @staticmethod
+    def read_free_memory_gb() -> int:
+        import psutil
+        return psutil.virtual_memory().available // (1024 ** 3)
 
     @classmethod
     def detect_profile(cls) -> HardwareProfile | None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from cc_sentiment.engines.protocol import DEFAULT_MODEL
 from cc_sentiment.upload import DASHBOARD_URL
 
 from cc_sentiment.tui.dashboard.stages import (
@@ -17,6 +18,11 @@ from cc_sentiment.tui.dashboard.stages import (
 )
 
 __all__ = ["DashboardStagePresenter"]
+
+
+AUTO_SWAP_HINT = (
+    " [dim]Using Claude this run. Free up RAM and rerun to score locally.[/]"
+)
 
 
 class DashboardStagePresenter:
@@ -41,24 +47,24 @@ class DashboardStagePresenter:
                 self._update_status("[dim]Done scoring. Uploading to sentiments.cc...[/]")
             case IdleEmpty():
                 self.view.show_stats(0, 0, 0)
-                self._update_status(
+                self._update_status(self._with_swap_hint(
                     "[$success]All set. No conversations yet. Come back after using Claude Code.[/] "
                     "[dim]Press O to open aggregate stats.[/]"
-                )
-                self._maybe_prewarm()
+                ))
+                self._kick_off_model_load_if_needed()
             case IdleCaughtUp(total_buckets=b, total_sessions=s, total_files=f):
                 self.view.show_stats(b, s, f)
-                self._update_status(
+                self._update_status(self._with_swap_hint(
                     f"[$success]All caught up.[/] "
                     f"{s} chat{'s' if s != 1 else ''}, "
                     f"{b} moment{'s' if b != 1 else ''} scored. "
                     f"[dim]Press R to rescan, O to open aggregate stats.[/]"
-                )
-                self._maybe_prewarm()
+                ))
+                self._kick_off_model_load_if_needed()
             case IdleAfterUpload(total_buckets=b, total_sessions=s, total_files=f):
                 self.view.show_stats(b, s, f)
                 self._update_status(self._uploaded_status_text())
-                self._maybe_prewarm()
+                self._kick_off_model_load_if_needed()
             case Error(message=m):
                 self._update_status(m)
             case RescanConfirm():
@@ -66,14 +72,24 @@ class DashboardStagePresenter:
                     "[$warning]Press R again within 5s to clear all state and rescan from scratch.[/]"
                 )
 
+    def _with_swap_hint(self, text: str) -> str:
+        return text + AUTO_SWAP_HINT if self._auto_swapped_to_claude else text
+
+    def _kick_off_model_load_if_needed(self) -> None:
+        if self.engine != "mlx":
+            return
+        self.run_worker(
+            self._model_cache.ensure_started(self.model_repo or DEFAULT_MODEL),
+            name="model-load", group="model-load", exclusive=True, exit_on_error=False,
+        )
+
     def _uploaded_status_text(self) -> str:
-        polling = self._debug_state.card_stopped is None
         suffix = (
             "[dim]Building your shareable card...[/]"
-            if polling
+            if self._debug_state.card_stopped is None
             else "[dim]Press O to open aggregate stats.[/]"
         )
-        return (
+        return self._with_swap_hint(
             "[$success]Uploaded to[/] "
             f"[link='{DASHBOARD_URL}'][b]sentiments.cc[/b][/link]. "
             f"{suffix}"

@@ -35,6 +35,7 @@ dependencies = [
     "zstandard>=0.25.0",
     "mlx-lm>=0.31.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "asyncstdlib>=3.14.0",
+    "psutil>=6.0",
 ]
 
 [project.scripts]
@@ -70,6 +71,7 @@ addopts = ["-m", "not slow and not integration"]
 markers = [
     "slow: opt-in MLX-backed smoke-eval (requires Apple Silicon and the shipped adapter)",
     "integration: requires external services (mitmproxy, real API, real LLM); skipped by default, opt-in with -m integration",
+    "real_model_cache: tests that exercise the real ModelCache; opts out of the autouse network-warmup fixture mocks",
 ]
 
 [tool.cibuildwheel]

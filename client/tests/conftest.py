@@ -42,12 +42,9 @@ def isolated_state_path(
 def no_network_warmup(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[None]:
-    if "slow" in request.keywords:
+    if "slow" in request.keywords or "real_model_cache" in request.keywords:
         yield
         return
-    monkeypatch.setattr(
-        "cc_sentiment.tui.dashboard.screen.DashboardScreen._maybe_prewarm", lambda self: None
-    )
     monkeypatch.setattr(
         "cc_sentiment.nlp.NLP.ensure_ready", AsyncMock(return_value=None)
     )
@@ -58,7 +55,11 @@ def no_network_warmup(
     classifier.score = AsyncMock(return_value=[])
     classifier.close = AsyncMock()
     monkeypatch.setattr(
-        "cc_sentiment.tui.dashboard.flow.EngineFactory.build",
+        "cc_sentiment.model_cache.ModelCache.ensure_started",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "cc_sentiment.model_cache.ModelCache.get",
         AsyncMock(return_value=classifier),
     )
     monkeypatch.setattr(

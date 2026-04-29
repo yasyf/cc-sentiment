@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 from cc_sentiment.engines import ClaudeNotInstalled, ClaudeUnavailable
 from cc_sentiment.models import AppState, ContributorId, GPGConfig, SSHConfig
 from cc_sentiment.tui import CCSentimentApp
-from cc_sentiment.tui.popovers import CostReviewScreen, PlatformErrorScreen
+from cc_sentiment.tui.popovers import PlatformErrorScreen
 from cc_sentiment.tui.dashboard.stages import IdleCaughtUp, IdleEmpty
 from cc_sentiment.tui.dashboard.widgets.debug_section import DebugSection
 from tests.helpers import make_record, make_scan
@@ -16,7 +16,7 @@ async def test_ccsentiment_app_engine_failure_shows_error_and_exits(tmp_path: Pa
     state = AppState()
     db_path = tmp_path / "records.db"
     with patch(
-        "cc_sentiment.tui.dashboard.flow.EngineFactory.resolve",
+        "cc_sentiment.tui.dashboard.lifecycle.EngineFactory.resolve",
         side_effect=ClaudeUnavailable(ClaudeNotInstalled(brew_available=True)),
     ), patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
@@ -29,7 +29,7 @@ async def test_ccsentiment_app_debug_mode_composes(tmp_path: Path):
     state = AppState()
     db_path = tmp_path / "records.db"
     with patch(
-        "cc_sentiment.tui.dashboard.flow.EngineFactory.resolve",
+        "cc_sentiment.tui.dashboard.lifecycle.EngineFactory.resolve",
         side_effect=ClaudeUnavailable(ClaudeNotInstalled(brew_available=True)),
     ), patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path, debug=True)
@@ -38,41 +38,11 @@ async def test_ccsentiment_app_debug_mode_composes(tmp_path: Path):
             assert pilot.app.dashboard.query_one(DebugSection) is not None
 
 
-async def test_ccsentiment_app_claude_engine_shows_cost_review(tmp_path: Path, auth_ok):
-    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
-    db_path = tmp_path / "records.db"
-
-    with patch("cc_sentiment.tui.dashboard.flow.EngineFactory.resolve", return_value="claude"), \
-         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 50))):
-        app = CCSentimentApp(state=state, db_path=db_path)
-        async with app.run_test() as pilot:
-            await pilot.pause(delay=0.5)
-            assert isinstance(pilot.app.screen, CostReviewScreen)
-            assert pilot.app.screen.bucket_count == 50
-
-
-async def test_ccsentiment_app_cost_cancel_exits(tmp_path: Path, auth_ok):
-    state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
-    db_path = tmp_path / "records.db"
-
-    mock_pipeline_run = AsyncMock(return_value=[])
-    with patch("cc_sentiment.tui.dashboard.flow.EngineFactory.resolve", return_value="claude"), \
-         patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 50))), \
-         patch("cc_sentiment.pipeline.Pipeline.run", mock_pipeline_run):
-        app = CCSentimentApp(state=state, db_path=db_path)
-        async with app.run_test() as pilot:
-            await pilot.pause(delay=0.5)
-            assert isinstance(pilot.app.screen, CostReviewScreen)
-            await pilot.click("#cost-no")
-            await pilot.pause()
-            mock_pipeline_run.assert_not_called()
-
-
 async def test_ccsentiment_app_idle_when_no_work(tmp_path: Path, auth_ok):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    with patch("cc_sentiment.tui.dashboard.flow.EngineFactory.resolve", return_value="mlx"), \
+    with patch("cc_sentiment.tui.dashboard.lifecycle.EngineFactory.resolve", return_value="mlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -93,7 +63,7 @@ async def test_ccsentiment_app_runs_pipeline_and_uploads(tmp_path: Path, auth_ok
 
     mock_upload = AsyncMock()
 
-    with patch("cc_sentiment.tui.dashboard.flow.EngineFactory.resolve", return_value="mlx"), \
+    with patch("cc_sentiment.tui.dashboard.lifecycle.EngineFactory.resolve", return_value="mlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan(Path("/fake.jsonl"), 2))), \
          patch("cc_sentiment.pipeline.Pipeline.run", side_effect=fake_run), \
          patch("cc_sentiment.upload.Uploader.upload", mock_upload):
