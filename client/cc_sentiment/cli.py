@@ -13,6 +13,7 @@ import typer
 from rich.console import Console
 
 from cc_sentiment.models import AppState
+from cc_sentiment.onboarding.capabilities import Capabilities
 
 DAEMON_PING_ERRORS = (httpx.HTTPError, subprocess.CalledProcessError, OSError, TimeoutError)
 
@@ -53,10 +54,32 @@ def main(
 
 
 @app.command()
-def setup(ctx: typer.Context) -> None:
+def setup(
+    ctx: typer.Context,
+    no_gh: Annotated[bool, typer.Option("--no-gh", hidden=True)] = False,
+    no_gh_auth: Annotated[bool, typer.Option("--no-gh-auth", hidden=True)] = False,
+    no_gpg: Annotated[bool, typer.Option("--no-gpg", hidden=True)] = False,
+    no_ssh_keygen: Annotated[bool, typer.Option("--no-ssh-keygen", hidden=True)] = False,
+    no_brew: Annotated[bool, typer.Option("--no-brew", hidden=True)] = False,
+) -> None:
+    if overrides := {
+        cap: False
+        for flag, caps in (
+            (no_gh, ("has_gh", "gh_authenticated")),
+            (no_gh_auth, ("gh_authenticated",)),
+            (no_gpg, ("has_gpg",)),
+            (no_ssh_keygen, ("has_ssh_keygen",)),
+            (no_brew, ("has_brew",)),
+        )
+        if flag
+        for cap in caps
+    }:
+        Capabilities.reset()
+        Capabilities.seed(**overrides)
+
     with Console().status("[dim]Starting cc-sentiment…[/]"):
         from cc_sentiment.tui import CCSentimentApp
-        tui_app = CCSentimentApp(state=AppState.load(), setup_only=True, debug=ctx.obj["debug"])
+        tui_app = CCSentimentApp(state=AppState(), setup_only=True, debug=ctx.obj["debug"])
     tui_app.run()
 
 
