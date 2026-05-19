@@ -397,10 +397,32 @@ print("ok")
             check_status.assert_not_called()
 
 
+class FakeStderr:
+    def __init__(self, lines: list[bytes]) -> None:
+        self._lines = list(lines)
+
+    def __aiter__(self) -> "FakeStderr":
+        return self
+
+    async def __anext__(self) -> bytes:
+        if not self._lines:
+            raise StopAsyncIteration
+        return self._lines.pop(0)
+
+
+def fake_proc(stdout: bytes, stderr: bytes = b"", rc: int = 0) -> MagicMock:
+    return MagicMock(
+        returncode=rc,
+        stdout=MagicMock(read=AsyncMock(return_value=stdout)),
+        stderr=FakeStderr([stderr] if stderr else []),
+        wait=AsyncMock(return_value=rc),
+    )
+
+
 class TestClaudeCLIEngine:
     async def test_score_parses_json_response(self) -> None:
         response = orjson.dumps({"type": "result", "is_error": False, "result": "4"})
-        proc = MagicMock(returncode=0, communicate=AsyncMock(return_value=(response, b"")))
+        proc = fake_proc(stdout=response)
 
         with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"):
             engine = ClaudeCLIEngine(model="claude-haiku-4-5")
@@ -410,17 +432,42 @@ class TestClaudeCLIEngine:
         assert scores == [SentimentScore(4)]
 
     async def test_score_raises_on_subprocess_failure(self) -> None:
-        proc = MagicMock(returncode=2, communicate=AsyncMock(return_value=(b"", b"auth failed")))
+        proc = fake_proc(stdout=b"", stderr=b"auth failed", rc=2)
 
         with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"):
             engine = ClaudeCLIEngine(model="claude-haiku-4-5")
         with patch("cc_sentiment.engines.claude_cli.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)), \
-             pytest.raises(RuntimeError, match="claude -p failed"):
+             pytest.raises(subprocess.CalledProcessError) as excinfo:
             await engine.score([make_bucket("please help me fix this")])
+        cpe = excinfo.value
+        assert cpe.returncode == 2
+        assert cpe.cmd[0] == "claude"
+        assert cpe.stderr == b"auth failed"
+
+    async def test_score_raises_on_is_error_json(self) -> None:
+        response = orjson.dumps({"type": "result", "is_error": True, "result": "rate limit"})
+        proc = fake_proc(stdout=response, rc=0)
+
+        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"):
+            engine = ClaudeCLIEngine(model="claude-haiku-4-5")
+        with patch("cc_sentiment.engines.claude_cli.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)), \
+             pytest.raises(subprocess.CalledProcessError) as excinfo:
+            await engine.score([make_bucket("please help me fix this")])
+        cpe = excinfo.value
+        assert cpe.returncode == 0
+        assert cpe.output == response
+
+    async def test_verbose_flag_added_when_constructor_sets_it(self) -> None:
+        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"):
+            quiet = ClaudeCLIEngine(model="claude-haiku-4-5")
+            loud = ClaudeCLIEngine(model="claude-haiku-4-5", verbose=True)
+        msg = [{"role": "user", "content": "hello"}]
+        assert "--verbose" not in quiet.argv(msg)
+        assert "--verbose" in loud.argv(msg)
 
     async def test_score_fires_on_progress_for_inference_path(self) -> None:
         response = orjson.dumps({"type": "result", "is_error": False, "result": "4"})
-        proc = MagicMock(returncode=0, communicate=AsyncMock(return_value=(response, b"")))
+        proc = fake_proc(stdout=response)
 
         with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"):
             engine = ClaudeCLIEngine(model="claude-haiku-4-5")

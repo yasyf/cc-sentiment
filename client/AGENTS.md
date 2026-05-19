@@ -57,6 +57,7 @@ uv run cc-sentiment scan           # Discover and score new transcripts
 uv run cc-sentiment upload         # Upload pending scores to server
 uv run cc-sentiment scan --upload  # Scan and upload in one step
 uv run cc-sentiment setup          # Configure a verification key
+uv run cc-sentiment debug          # Print hardware/engine/Claude/server/Sentry probes
 uv run pytest client/              # Run tests
 ```
 

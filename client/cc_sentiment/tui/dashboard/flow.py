@@ -130,7 +130,10 @@ class DashboardFlow:
                     self.stage = Error(f"[$error]Couldn't start the local model.[/] [dim]{exc}[/]")
                     return
             else:
-                inner = ClaudeCLIEngine(self.model_repo or ClaudeCLIEngine.HAIKU_MODEL)
+                inner = ClaudeCLIEngine(
+                    self.model_repo or ClaudeCLIEngine.HAIKU_MODEL,
+                    verbose=self.debug_mode,
+                )
             classifier = FilteredEngine(inner, DEFAULT_FILTERS)
 
         await self._dismiss_boot_screen()
@@ -194,6 +197,18 @@ class DashboardFlow:
                 self.stage = Error(
                     f"[red bold]Server rejected upload ({e.response.status_code}).[/] "
                     f"Records kept locally — press R to retry."
+                )
+                return
+            case subprocess.CalledProcessError(cmd=cmd) as e if cmd and cmd[0] == "claude":
+                hint = "" if not self._auto_swapped_to_claude else (
+                    " [dim]We switched to Claude because RAM was tight, and that failed too — "
+                    "free up memory and retry to score locally.[/]"
+                )
+                self.stage = Error(
+                    f"[red bold]Claude CLI couldn't score this run (exit {e.returncode}).[/] "
+                    "Run [b]claude /login[/] in another terminal, or close some apps to free RAM, "
+                    "then press R to retry."
+                    + hint
                 )
                 return
             case subprocess.CalledProcessError() as e:

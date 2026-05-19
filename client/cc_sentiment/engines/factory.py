@@ -63,7 +63,9 @@ class EngineFactory:
                 raise ClaudeUnavailable(status)
 
     @classmethod
-    async def build(cls, kind: str, model_repo: str | None = None) -> InferenceEngine:
+    async def build(
+        cls, kind: str, model_repo: str | None = None, *, verbose: bool = False,
+    ) -> InferenceEngine:
         match kind:
             case "mlx":
                 cls.configure_hub_progress()
@@ -75,7 +77,7 @@ class EngineFactory:
                 await classifier.ensure_loaded()
                 inner: InferenceEngine = classifier
             case "claude":
-                inner = ClaudeCLIEngine(model_repo or ClaudeCLIEngine.HAIKU_MODEL)
+                inner = ClaudeCLIEngine(model_repo or ClaudeCLIEngine.HAIKU_MODEL, verbose=verbose)
             case _:
                 raise ValueError(f"Unknown engine: {kind}")
         return FilteredEngine(inner, DEFAULT_FILTERS)

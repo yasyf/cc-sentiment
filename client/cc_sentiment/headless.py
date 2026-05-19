@@ -117,7 +117,7 @@ class HeadlessRunner:
 
         scored = 0
         if scan.transcripts:
-            classifier = await EngineFactory.build(engine)
+            classifier = await EngineFactory.build(engine, verbose=debug)
             try:
                 records = await Pipeline.run(repo, scan, classifier=classifier)
             finally:

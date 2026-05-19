@@ -14,6 +14,7 @@ import httpx
 import orjson
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+from cc_sentiment.debug_log import DebugLog
 from cc_sentiment.models import (
     CLIENT_VERSION,
     AppState,
@@ -31,6 +32,7 @@ from cc_sentiment.models import (
     SSHConfig,
     UploadPayload,
 )
+from cc_sentiment.observability import CrashReporter
 from cc_sentiment.repo import Repository
 from cc_sentiment.signing import GPGBackend, PayloadSigner, SigningBackend, SSHBackend
 
@@ -350,12 +352,16 @@ class UploadPool:
         self.repo = repo
         self.progress = progress
         self.on_progress_change = on_progress_change
-        self.debug = debug
+        self._inner_debug = debug
         self._send_stream, self._recv_stream = anyio.create_memory_object_stream[
             list[SentimentRecord]
         ](float("inf"))
         self._buffer: list[SentimentRecord] = []
         self._buffer_started_at: float = 0.0
+
+    def debug(self, msg: str) -> None:
+        DebugLog.get().append("upload", msg)
+        self._inner_debug(msg)
 
     def queue_records(self, records: list[SentimentRecord]) -> None:
         if not self._buffer:
@@ -379,30 +385,36 @@ class UploadPool:
 
     async def run(self, producer: Callable[[], Awaitable[None]]) -> None:
         self.progress.started_at = time.monotonic()
-        with anyio.fail_after(UPLOAD_POOL_TIMEOUT_SECONDS):
-            async with anyio.create_task_group() as tg:
-                for worker_id in range(UPLOAD_WORKER_COUNT):
-                    tg.start_soon(self._worker_loop, self._recv_stream.clone(), worker_id)
-                self._recv_stream.close()
-                try:
-                    async with anyio.create_task_group() as timer_tg:
-                        timer_tg.start_soon(self._flush_timer)
-                        try:
-                            await producer()
-                        finally:
-                            self.flush()
-                            timer_tg.cancel_scope.cancel()
-                finally:
-                    self._send_stream.close()
+        stop_timer = anyio.Event()
+        async with anyio.create_task_group() as tg:
+            for worker_id in range(UPLOAD_WORKER_COUNT):
+                tg.start_soon(self._worker_loop, self._recv_stream.clone(), worker_id)
+            self._recv_stream.close()
+            tg.start_soon(self._flush_timer, stop_timer)
+            try:
+                with anyio.fail_after(UPLOAD_POOL_TIMEOUT_SECONDS):
+                    await producer()
+            except subprocess.CalledProcessError as e:
+                self.debug(f"upload: producer fatal: {type(e).__name__} cmd={e.cmd!r} rc={e.returncode}")
+                self.progress.fatal = e
+                self.on_progress_change(self.progress)
+                CrashReporter.capture(e, source="upload.producer")
+            finally:
+                self.flush()
+                self._send_stream.close()
+                stop_timer.set()
         self.debug(
             f"upload: done — {self.progress.done_batches} ok, "
             f"{self.progress.failed_batches} failed, "
             f"elapsed {time.monotonic() - self.progress.started_at:.1f}s"
         )
 
-    async def _flush_timer(self) -> None:
-        while True:
-            await anyio.sleep(UPLOAD_BATCH_TIMER_TICK_SECONDS)
+    async def _flush_timer(self, stop_event: anyio.Event) -> None:
+        while not stop_event.is_set():
+            with anyio.move_on_after(UPLOAD_BATCH_TIMER_TICK_SECONDS):
+                await stop_event.wait()
+            if stop_event.is_set():
+                return
             if self._buffer and (time.monotonic() - self._buffer_started_at) >= UPLOAD_BATCH_MAX_AGE_SECONDS:
                 self.flush()
 
@@ -446,11 +458,20 @@ class UploadPool:
                             f"HTTPStatusError {e.response.status_code}"
                         )
                         self.progress.fatal = e
+                        CrashReporter.capture(
+                            e,
+                            source="upload.worker",
+                            worker_id=str(worker_id),
+                            http_status=str(e.response.status_code),
+                        )
                         return
                     last_exc = e
                 except subprocess.CalledProcessError as e:
                     self.debug(f"upload: worker {worker_id} fatal: {type(e).__name__}: {e}")
                     self.progress.fatal = e
+                    CrashReporter.capture(
+                        e, source="upload.worker", worker_id=str(worker_id),
+                    )
                     return
                 except (httpx.NetworkError, httpx.TimeoutException) as e:
                     last_exc = e

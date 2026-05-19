@@ -9,6 +9,7 @@ import anyio.to_thread
 from textual.css.query import NoMatches
 
 from cc_sentiment.daemon import LaunchAgent
+from cc_sentiment.debug_log import DebugLog
 from cc_sentiment.engines import ClaudeStatus, ClaudeUnavailable, EngineFactory
 from cc_sentiment.engines.protocol import DEFAULT_MODEL
 from cc_sentiment.lexicon import Lexicon
@@ -110,6 +111,7 @@ class DashboardLifecycle:
             self._boot_screen.status = value
 
     def _debug(self, msg: str) -> None:
+        DebugLog.get().append("cc-sentiment", msg)
         if not self.debug_mode:
             return
         if self._boot_screen is not None:

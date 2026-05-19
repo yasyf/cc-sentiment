@@ -34,6 +34,7 @@ Your conversation text, file contents, file paths, prompts, tool inputs, and too
 | `cc-sentiment scan` | Score transcripts without uploading |
 | `cc-sentiment upload` | Upload previously scored results |
 | `cc-sentiment rescan` | Clear state and re-score everything |
+| `cc-sentiment debug` | Print hardware, engine, Claude CLI, server, and Sentry probes for diagnostics |
 
 ## Links
 

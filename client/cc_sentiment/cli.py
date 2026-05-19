@@ -151,6 +151,28 @@ def run(ctx: typer.Context) -> None:
             raise typer.Exit(4)
 
 
+@app.command()
+def debug(
+    probe_claude: Annotated[
+        bool, typer.Option("--probe-claude/--no-probe-claude")
+    ] = True,
+    probe_sentry: Annotated[
+        bool, typer.Option("--probe-sentry/--no-probe-sentry")
+    ] = True,
+    probe_server: Annotated[
+        bool, typer.Option("--probe-server/--no-probe-server")
+    ] = True,
+    show_log: Annotated[
+        bool, typer.Option("--show-log/--no-show-log")
+    ] = True,
+) -> None:
+    from cc_sentiment.doctor import Doctor, ProbeOptions
+    options = ProbeOptions(
+        claude=probe_claude, sentry=probe_sentry, server=probe_server, show_log=show_log,
+    )
+    anyio.run(Doctor.run, options, Console())
+
+
 @app.command(hidden=True)
 def lookup(
     bucket_hash: Annotated[str, typer.Argument(help="8-char bucket hash from --debug TUI")],

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 import orjson
 
+from cc_sentiment.debug_log import DebugLog
 from cc_sentiment.engines.base import BaseEngine
 from cc_sentiment.engines.protocol import SYSTEM_PROMPT
 
@@ -34,8 +35,9 @@ class ClaudeCLIEngine(BaseEngine):
     HAIKU_MODEL = "claude-haiku-4-5"
     CONCURRENCY = 4
 
-    def __init__(self, model: str) -> None:
+    def __init__(self, model: str, *, verbose: bool = False) -> None:
         self.model = model
+        self.verbose = verbose
 
     @staticmethod
     def check_status() -> ClaudeStatus:
@@ -53,8 +55,8 @@ class ClaudeCLIEngine(BaseEngine):
     def _last_user_content(messages: list[dict[str, str]]) -> str:
         return next(m["content"] for m in reversed(messages) if m["role"] == "user")
 
-    async def _call(self, messages: list[dict[str, str]]) -> str:
-        proc = await asyncio.create_subprocess_exec(
+    def argv(self, messages: list[dict[str, str]]) -> list[str]:
+        argv = [
             "claude", "-p", self._last_user_content(messages),
             "--model", self.model,
             "--system-prompt", SYSTEM_PROMPT,
@@ -62,16 +64,48 @@ class ClaudeCLIEngine(BaseEngine):
             "--max-turns", "1",
             "--tools", "",
             "--disable-slash-commands",
+        ]
+        if self.verbose:
+            argv.append("--verbose")
+        return argv
+
+    async def _call(self, messages: list[dict[str, str]]) -> str:
+        argv = self.argv(messages)
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            raise RuntimeError(f"claude -p failed ({proc.returncode}): {stderr.decode()[:500]}")
+        stdout, stderr, rc = await self._collect(proc)
+        if rc != 0:
+            raise subprocess.CalledProcessError(
+                returncode=rc, cmd=argv, output=stdout, stderr=stderr,
+            )
         data = orjson.loads(stdout)
         if data["is_error"]:
-            raise RuntimeError(f"claude -p error: {data['result']}")
+            raise subprocess.CalledProcessError(
+                returncode=0, cmd=argv, output=stdout, stderr=stderr,
+            )
         return data["result"]
+
+    async def _collect(
+        self, proc: asyncio.subprocess.Process,
+    ) -> tuple[bytes, bytes, int]:
+        assert proc.stderr is not None, "create_subprocess_exec was called with stderr=PIPE"
+        assert proc.stdout is not None, "create_subprocess_exec was called with stdout=PIPE"
+        stderr_buf: bytearray = bytearray()
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(self._tee_stderr(proc.stderr, stderr_buf))
+            stdout_task = tg.create_task(proc.stdout.read())
+            rc_task = tg.create_task(proc.wait())
+        return stdout_task.result(), bytes(stderr_buf), rc_task.result()
+
+    @staticmethod
+    async def _tee_stderr(stream: asyncio.StreamReader, buf: bytearray) -> None:
+        log = DebugLog.get()
+        async for raw in stream:
+            buf.extend(raw)
+            log.append("claude", raw.decode(errors="replace"))
 
     async def score_messages(
         self,
