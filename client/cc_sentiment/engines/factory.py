@@ -6,11 +6,12 @@ import threading
 
 import anyio.to_thread
 
-from cc_transcript.sentiment import DEFAULT_FILTERS, FilteredEngine
+from cc_transcript.sentiment import FilteredEngine
 
 from cc_sentiment.engines.claude_cli import ClaudeCLIEngine, ClaudeReady, ClaudeStatus
 from cc_sentiment.engines.protocol import DEFAULT_MODEL, InferenceEngine
 from cc_sentiment.hardware import Hardware
+from cc_sentiment.transcripts.filterspec import SENTIMENT_SCORE_SPEC
 
 
 class ClaudeUnavailable(Exception):
@@ -69,4 +70,4 @@ class EngineFactory:
                 inner = ClaudeCLIEngine(model_repo or ClaudeCLIEngine.HAIKU_MODEL, verbose=verbose)
             case _:
                 raise ValueError(f"Unknown engine: {kind}")
-        return FilteredEngine(inner, DEFAULT_FILTERS)
+        return FilteredEngine(inner, SENTIMENT_SCORE_SPEC)

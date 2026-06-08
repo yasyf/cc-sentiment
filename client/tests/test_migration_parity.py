@@ -13,9 +13,10 @@ from typing import TYPE_CHECKING, Any
 
 import orjson
 import pytest
-from cc_transcript import CLAUDE_PROJECTS_DIR, SENTIMENT_SPEC, apply_spec, parse_events_from_bytes
+from cc_transcript import CLAUDE_PROJECTS_DIR, apply_spec, parse_events_from_bytes
 
 from cc_sentiment.models import AssistantMessage, BucketKey, SessionId, ToolCall, TranscriptMessage, UserMessage
+from cc_sentiment.transcripts.filterspec import SENTIMENT_SPEC
 from cc_sentiment.transcripts.adapter import to_messages
 from cc_sentiment.transcripts.bucketer import extract_bucket_keys
 

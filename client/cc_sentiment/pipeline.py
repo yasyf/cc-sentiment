@@ -13,8 +13,8 @@ from cc_sentiment.debug import BucketHash
 from cc_sentiment.engines import (
     NOOP_PROGRESS,
     NOOP_SNIPPET,
-    FrustrationFilter,
     InferenceEngine,
+    matched_user_message,
 )
 from cc_sentiment.highlight import Highlighter
 from cc_sentiment.models import (
@@ -136,7 +136,7 @@ class Pipeline:
 
     @classmethod
     async def snippet_for(cls, bucket: ConversationBucket, score: int) -> str:
-        if score == 1 and (matched := FrustrationFilter.matched_user_message(bucket)) is not None:
+        if score == 1 and (matched := matched_user_message(bucket)) is not None:
             if cleaned := cls.clean_snippet(matched):
                 return cleaned
         user_msgs = [m for m in bucket.messages if m.role == "user"]

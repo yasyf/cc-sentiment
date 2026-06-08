@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, ClassVar, Literal
 from cc_transcript import (
     CLAUDE_PROJECTS_DIR,
     JUNK_USER_MESSAGE_RE,
-    SENTIMENT_SPEC,
     TranscriptDiscovery,
     apply_spec,
     parse_events,
@@ -13,6 +12,7 @@ from cc_transcript import (
 from cc_transcript import TranscriptParser as CcTranscriptParser
 
 from cc_sentiment.transcripts.adapter import ASSISTANT_TRUNCATION, to_messages
+from cc_sentiment.transcripts.filterspec import SENTIMENT_SPEC
 from cc_sentiment.transcripts.backend import ParsedTranscript
 from cc_sentiment.transcripts.bucketer import (
     BUCKET_MINUTES,
