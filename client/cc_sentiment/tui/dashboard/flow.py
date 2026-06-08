@@ -48,8 +48,6 @@ from cc_sentiment.tui.dashboard.stages import (
 )
 from cc_sentiment.tui.onboarding.runner import OnboardingScreen
 
-__all__ = ["DashboardFlow"]
-
 
 class DashboardFlow:
     async def _authenticate(self) -> bool:

@@ -24,8 +24,6 @@ from cc_sentiment.tui.dashboard.view import ProcessingView
 from cc_sentiment.tui.dashboard.widgets import DebugSection
 from cc_sentiment.tui.popovers import PlatformErrorScreen
 
-__all__ = ["DashboardLifecycle"]
-
 
 class DashboardLifecycle:
     async def on_mount(self) -> None:

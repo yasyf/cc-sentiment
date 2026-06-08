@@ -36,8 +36,6 @@ from cc_sentiment_server.models import (
 from cc_sentiment_server.utils import noop
 from cc_sentiment_server.verify import ModalKeyCache, Verifier
 
-__all__ = ["app", "create_app"]
-
 
 class Cache(Protocol):
     async def get(self, key: str) -> object: ...

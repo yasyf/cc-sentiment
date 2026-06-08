@@ -23,9 +23,6 @@ if sys.platform != "darwin" or platform.machine() != "arm64":
         "Use the default engine on this platform."
     )
 
-__all__ = ["AdapterFuser", "SentimentClassifier"]
-
-
 WORKER_STOP = object()
 
 

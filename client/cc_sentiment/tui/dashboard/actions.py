@@ -19,8 +19,6 @@ from cc_sentiment.tui.dashboard.stages import (
     RescanConfirm,
 )
 
-__all__ = ["DashboardActions"]
-
 
 class DashboardActions:
     async def _fetch_card(self, config: Config, push_share: bool) -> None:

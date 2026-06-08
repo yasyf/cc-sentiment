@@ -14,8 +14,6 @@ from cc_sentiment.tui.dashboard.widgets import (
 )
 from cc_sentiment.tui.widgets import Card
 
-__all__ = ["DashboardLayout"]
-
 
 class DashboardLayout:
     def compose(self) -> ComposeResult:

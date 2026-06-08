@@ -24,29 +24,3 @@ from cc_sentiment.tui.dashboard.stages import (
     Uploading,
 )
 from cc_sentiment.tui.dashboard.view import CtaState, ProcessingView
-
-__all__ = [
-    "Authenticating",
-    "Booting",
-    "BootingScreen",
-    "CardFetcher",
-    "CtaState",
-    "DashboardScreen",
-    "DebugState",
-    "Discovering",
-    "Error",
-    "IdleAfterUpload",
-    "IdleCaughtUp",
-    "IdleEmpty",
-    "LiveFunStats",
-    "MomentsView",
-    "ProcessingView",
-    "RescanConfirm",
-    "ScoreEmoji",
-    "Scoring",
-    "ScoringProgress",
-    "Stage",
-    "StatShareScreen",
-    "TimeFormat",
-    "Uploading",
-]

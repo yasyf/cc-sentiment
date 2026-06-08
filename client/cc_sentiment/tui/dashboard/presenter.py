@@ -17,9 +17,6 @@ from cc_sentiment.tui.dashboard.stages import (
     Uploading,
 )
 
-__all__ = ["DashboardStagePresenter"]
-
-
 AUTO_SWAP_HINT = (
     " [dim]Using Claude this run. Free up RAM and rerun to score locally.[/]"
 )

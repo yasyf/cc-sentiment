@@ -55,6 +55,3 @@ def to_message(event: TranscriptEvent) -> TranscriptMessage | None:
 def to_messages(events: Iterable[TranscriptEvent]) -> tuple[TranscriptMessage, ...]:
     """Adapts a filtered event stream into cc-sentiment messages."""
     return tuple(message for event in events if (message := to_message(event)) is not None)
-
-
-__all__ = ["ASSISTANT_TRUNCATION", "to_message", "to_messages"]

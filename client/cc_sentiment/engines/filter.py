@@ -2,5 +2,3 @@ from __future__ import annotations
 
 from cc_transcript.sentiment import FrustrationFilter
 from cc_transcript.sentiment.scorefilters import FRUSTRATION_PATTERN
-
-__all__ = ["FRUSTRATION_PATTERN", "FrustrationFilter"]

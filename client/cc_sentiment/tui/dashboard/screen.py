@@ -25,8 +25,6 @@ from cc_sentiment.tui.dashboard.progress import DebugState, ScoringProgress
 from cc_sentiment.tui.dashboard.stages import Booting, Stage
 from cc_sentiment.tui.dashboard.view import ProcessingView
 
-__all__ = ["DashboardScreen"]
-
 
 class DashboardScreen(
     DashboardLayout,

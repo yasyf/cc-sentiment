@@ -10,7 +10,7 @@ Root `AGENTS.md` rules apply unless overridden here. The client follows a functi
 
 2. **Functional over imperative.** Walrus `:=`, comprehensions, chained operations. Avoid intermediate variables when a pipeline reads well. `extract_score` in `cc_sentiment/text.py` is the canonical pattern: walrus-guarded regex, no temporary `match` variable lying around.
 
-3. **No underscore prefixes on module-level helpers, classes, constants, or free functions.** Use `__all__` in package `__init__.py` for export control. Underscore prefixes are *only* allowed on class methods that are private: called only from within their own class. Positive examples: `OMLXEngine._spawn_server`, `OMLXEngine._drain`, `OMLXEngine._make_body`, `SentimentClassifier._ensure_prompt_cache`, `Pipeline._parse_buckets_with_metrics`, `Uploader._verify_credentials`, `UploadPool._worker_loop`. Negative examples (now fixed): `parser.py:_build_message`, `engines.py:_check_frustration`, `tui.py:_format_duration`.
+3. **No underscore prefixes on module-level helpers, classes, constants, or free functions.** Underscore prefixes are *only* allowed on class methods that are private: called only from within their own class. Positive examples: `OMLXEngine._spawn_server`, `OMLXEngine._drain`, `OMLXEngine._make_body`, `SentimentClassifier._ensure_prompt_cache`, `Pipeline._parse_buckets_with_metrics`, `Uploader._verify_credentials`, `UploadPool._worker_loop`. Negative examples (now fixed): `parser.py:_build_message`, `engines.py:_check_frustration`, `tui.py:_format_duration`.
 
 4. **No free-floating functions outside named pure utility modules.** Methods on classes belong in classes; everything else gets a class to live on. The named utility modules are:
    - `cc_sentiment/text.py` — `format_conversation`, `extract_score`, `MAX_CONVERSATION_CHARS`
@@ -210,7 +210,7 @@ Namespace `cc-sentiment` prevents signature reuse across applications. Canonical
 
 All rules from root `AGENTS.md` and the **Python Style** section above apply, plus:
 
-- **Submodule layout.** Each large concept (`engines`, `signing`, `models`, `tui`, `transcripts`) is a package under `cc_sentiment/`. The package `__init__.py` re-exports the public API (`from .factory import EngineFactory; ... __all__ = [...]`) so external callers `from cc_sentiment.engines import EngineFactory` keep working. One concept per file inside the package. Cross-references between split files are inter-package imports.
+- **Submodule layout.** Each large concept (`engines`, `signing`, `models`, `tui`, `transcripts`) is a package under `cc_sentiment/`. The package `__init__.py` re-exports the public API (`from .factory import EngineFactory`) so external callers `from cc_sentiment.engines import EngineFactory` keep working. One concept per file inside the package. Cross-references between split files are inter-package imports.
 - **MLX isolated in `sentiment.py`.** No MLX imports leak into other modules. Keeps the CLI testable on non-Apple-Silicon (mock `cc_sentiment.sentiment`).
 - **Subprocess calls use explicit argument lists.** Never `shell=True`. Always `subprocess.run(["ssh-keygen", "-Y", "sign", ...])`.
 - **Local state is split between JSON and SQLite.** `~/.cc-sentiment/state.json` holds only the signing config. Derived state (records, sessions, scored buckets, file mtimes) lives in `~/.cc-sentiment/records.db` via stdlib `sqlite3` wrapped in `anyio.to_thread.run_sync`.

@@ -23,7 +23,7 @@ Target Python 3.14 for server, 3.12+ for client. Both use `uv` for dependency ma
 
 **Functional over imperative.** Chain operations, use walrus `:=`, comprehensions over loops. No intermediate variables when a pipeline reads well.
 
-**No underscore prefixes.** Use `__all__` for export control, not naming conventions.
+**No underscore prefixes** on classes, constants, or module-level helpers. Reserve a leading underscore for private instance attributes.
 
 **No free-floating functions.** Methods on classes, except pure utility modules.
 

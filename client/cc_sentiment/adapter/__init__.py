@@ -7,8 +7,6 @@ from typing import ClassVar
 
 import orjson
 
-__all__ = ["AdapterCodec"]
-
 
 class AdapterCodec:
     DIR: ClassVar[Path] = Path(__file__).parent

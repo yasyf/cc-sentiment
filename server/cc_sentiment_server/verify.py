@@ -17,8 +17,6 @@ GIST_ID_PATTERN = re.compile(r"^[a-f0-9]{20,40}$")
 GIST_DESCRIPTION = "cc-sentiment public key"
 GIST_PUB_FILENAME = "cc-sentiment.pub"
 
-__all__ = ["Verifier"]
-
 
 class KeyCache:
     async def get(self, key: str) -> object | None: ...
