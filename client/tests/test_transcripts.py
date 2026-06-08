@@ -21,7 +21,6 @@ from cc_sentiment.transcripts import (
     BUCKET_MINUTES,
     ConversationBucketer,
     ParsedTranscript,
-    PythonBackend,
     TranscriptParser,
 )
 
@@ -50,14 +49,15 @@ def parse_single_line(tmp_path: Path, line: str) -> TranscriptMessage | None:
 
 @pytest.fixture(params=["python", "rust"])
 def backend(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
+    import cc_transcript.parser as ctp
+
     if request.param == "rust":
-        try:
-            from cc_sentiment.transcripts.rust import RustBackend
-        except ImportError:
+        if ctp.load_rust_backend() is None:
             pytest.skip("rust extension not built")
-        monkeypatch.setattr(TranscriptParser, "BACKEND", RustBackend())
+        monkeypatch.delenv("CC_TRANSCRIPT_DISABLE_RUST", raising=False)
     else:
-        monkeypatch.setattr(TranscriptParser, "BACKEND", PythonBackend())
+        monkeypatch.setenv("CC_TRANSCRIPT_DISABLE_RUST", "1")
+    monkeypatch.setattr(ctp.TranscriptParser, "backend_instance", None)
     return request.param
 
 

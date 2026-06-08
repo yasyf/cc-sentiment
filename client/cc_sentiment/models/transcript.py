@@ -1,38 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
-from typing import TYPE_CHECKING, Literal, NamedTuple
+from cc_transcript.sentiment.messages import (
+    AssistantMessage,
+    BaseMessage,
+    ToolCall,
+    TranscriptMessage,
+    UserMessage,
+)
 
-if TYPE_CHECKING:
-    from .bucket import SessionId
-
-
-class ToolCall(NamedTuple):
-    name: str
-    file_path: str | None = None
-
-
-class UserMessage(NamedTuple):
-    content: str
-    timestamp: datetime
-    session_id: SessionId
-    uuid: str
-    tool_calls: tuple[ToolCall, ...]
-    thinking_chars: int
-    cc_version: str
-    role: Literal["user"] = "user"
-
-
-class AssistantMessage(NamedTuple):
-    content: str
-    timestamp: datetime
-    session_id: SessionId
-    uuid: str
-    tool_calls: tuple[ToolCall, ...]
-    thinking_chars: int
-    claude_model: str
-    role: Literal["assistant"] = "assistant"
-
-
-BaseMessage = UserMessage | AssistantMessage
-TranscriptMessage = UserMessage | AssistantMessage
+__all__ = ["AssistantMessage", "BaseMessage", "ToolCall", "TranscriptMessage", "UserMessage"]

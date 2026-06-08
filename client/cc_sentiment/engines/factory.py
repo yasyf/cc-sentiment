@@ -6,22 +6,11 @@ import threading
 
 import anyio.to_thread
 
-from cc_sentiment.engines.claude_cli import ClaudeCLIEngine, ClaudeReady, ClaudeStatus
-from cc_sentiment.engines.filter import FrustrationFilter
-from cc_sentiment.engines.filtered_engine import FilteredEngine
-from cc_sentiment.engines.imperative_filter import ImperativeMildIrritationFilter
-from cc_sentiment.engines.positive_clamp_filter import PositiveClampFilter
-from cc_sentiment.engines.protocol import DEFAULT_MODEL, InferenceEngine
-from cc_sentiment.engines.score_filter import ScoreFilter
-from cc_sentiment.engines.session_resume_filter import SessionResumeFilter
-from cc_sentiment.hardware import Hardware
+from cc_transcript.sentiment import DEFAULT_FILTERS, FilteredEngine
 
-DEFAULT_FILTERS: tuple[ScoreFilter, ...] = (
-    FrustrationFilter(),
-    PositiveClampFilter(),
-    ImperativeMildIrritationFilter(),
-    SessionResumeFilter(),
-)
+from cc_sentiment.engines.claude_cli import ClaudeCLIEngine, ClaudeReady, ClaudeStatus
+from cc_sentiment.engines.protocol import DEFAULT_MODEL, InferenceEngine
+from cc_sentiment.hardware import Hardware
 
 
 class ClaudeUnavailable(Exception):

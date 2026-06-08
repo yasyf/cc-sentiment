@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime
-from typing import NamedTuple, NewType
+from typing import NewType
 
+from cc_transcript.models import SessionId
+from cc_transcript.sentiment.buckets import BucketIndex, BucketKey, ConversationBucket, SentimentScore
 from pydantic import BaseModel
 
 from .transcript import AssistantMessage, TranscriptMessage, UserMessage
 
-SessionId = NewType("SessionId", str)
-BucketIndex = NewType("BucketIndex", int)
-SentimentScore = NewType("SentimentScore", int)
 PromptVersion = NewType("PromptVersion", str)
 
 PROMPT_VERSION = PromptVersion("v1")
@@ -69,12 +67,8 @@ class BucketMetrics(BaseModel, frozen=True):
         return BucketMetrics(
             tool_counts=dict(tool_counts),
             read_edit_ratio=read_ops / write_ops if write_ops else None,
-            edits_without_prior_read_ratio=(
-                edits_without_read / edits_count if edits_count else None
-            ),
-            write_edit_ratio=(
-                writes_only / write_edit_total if write_edit_total else None
-            ),
+            edits_without_prior_read_ratio=(edits_without_read / edits_count if edits_count else None),
+            write_edit_ratio=(writes_only / write_edit_total if write_edit_total else None),
             tool_calls_per_turn=len(all_calls) / len(users),
             subagent_count=tool_counts.get("Agent", 0),
             turn_count=len(users),
@@ -85,17 +79,13 @@ class BucketMetrics(BaseModel, frozen=True):
         )
 
 
-class ConversationBucket(NamedTuple):
-    session_id: SessionId
-    bucket_index: BucketIndex
-    bucket_start: datetime
-    messages: tuple[TranscriptMessage, ...]
-
-    @property
-    def metrics(self) -> BucketMetrics:
-        return BucketMetrics.from_messages(self.messages)
-
-
-class BucketKey(NamedTuple):
-    session_id: SessionId
-    bucket_index: BucketIndex
+__all__ = [
+    "PROMPT_VERSION",
+    "BucketIndex",
+    "BucketKey",
+    "BucketMetrics",
+    "ConversationBucket",
+    "PromptVersion",
+    "SentimentScore",
+    "SessionId",
+]

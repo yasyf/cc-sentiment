@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Protocol
 
-from cc_sentiment.models import ConversationBucket, SentimentScore
+from cc_transcript.sentiment import NOOP_PROGRESS, InferenceEngine
 
 DEFAULT_MODEL = "unsloth/gemma-4-E2B-it-UD-MLX-4bit"
 
@@ -30,15 +29,7 @@ DEMOS: tuple[tuple[str, str], ...] = ()
 # SYNCED-FROM-DSPY-END
 
 
-NOOP_PROGRESS: Callable[[int], None] = lambda _: None
 NOOP_SNIPPET: Callable[[str, int, str], Awaitable[None]] = lambda *_: asyncio.sleep(0)
 
 
-class InferenceEngine(Protocol):
-    async def score(
-        self,
-        buckets: list[ConversationBucket],
-        on_progress: Callable[[int], None] = NOOP_PROGRESS,
-    ) -> list[SentimentScore]: ...
-    def peak_memory_gb(self) -> float: ...
-    async def close(self) -> None: ...
+__all__ = ["DEFAULT_MODEL", "DEMOS", "NOOP_PROGRESS", "NOOP_SNIPPET", "SYSTEM_PROMPT", "InferenceEngine"]

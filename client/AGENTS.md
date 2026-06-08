@@ -86,30 +86,37 @@ client/
     ├── highlight.py         # Highlighter — snippet styling (AFINN + profanity + negation)
     ├── tui/                 # split: stages, progress, status, format, widgets,
     │                        #        moments_view, view, app, screens/
-    ├── transcripts/         # parser, backend, rust
+    ├── transcripts/         # facade over cc-transcript: parser, adapter, bucketer
     └── patches/             # mlx-lm KV cache patch
 ```
 
-## Optional Rust Parser
+## Transcript Parsing (delegated to cc-transcript)
 
-`cc_sentiment._transcripts_rs` is a PyO3 extension under `crates/transcripts/` that provides a ~5× faster implementation of `stream_parse` (full parse, rayon + crossbeam-bounded channel) and `scan_bucket_keys` (metadata-only bucket count). It's **optional**, distributed as prebuilt abi3 wheels per `(os, arch)`, with a Python implementation as a permanent fallback.
+Parsing and the fast Rust path now live in the shared **cc-transcript** library (a
+dependency). cc-sentiment is pure-Python; the `cc_sentiment.transcripts/` package
+is a thin façade:
 
-- Backends live in the `cc_sentiment.transcripts/` package: `parser.py` holds the `TranscriptParser` classmethod façade plus `TranscriptDiscovery` / `ConversationBucketer` and module constants. `backend.py` defines the `Backend` Protocol. `python.py` and `rust.py` each export a backend class implementing that Protocol. `__init__.py` selects one at import time and binds it to `TranscriptParser.BACKEND`.
-- Selection is: respect `CC_SENTIMENT_DISABLE_RUST=1` to force `PythonBackend()`; else try to import `RustBackend` and fall back to `PythonBackend()` on `ImportError`. Call `TranscriptParser.backend_name()` to see which one is live.
-- `setuptools-rust` with `optional = true` means an sdist install on a platform without `cargo` produces a pure-Python install. No Rust toolchain required.
-- abi3 tagging is driven by a single canonical source: `[bdist_wheel] py_limited_api = cp313` in `setup.cfg`. setuptools-rust reads `bdist_wheel.py_limited_api` (see its `build.py:444-450`) to derive both the wheel tag (`cp313-abi3`) and the `pyo3/abi3-py313` Cargo feature passed to the build. `RustExtension.py_limited_api` is deprecated upstream. Leave it at its default (`"auto"`), don't duplicate the pin in `[[tool.setuptools-rust.ext-modules]]`. `pyproject` `[tool.distutils.bdist_wheel]` is not a stable config surface (see pypa/wheel#582), so `setup.cfg` is the only stable repo-level knob. `crates/transcripts/Cargo.toml` keeps `features = ["abi3-py313"]` on `pyo3` so direct `cargo build` / editable installs that skip setuptools-rust still compile against the stable ABI.
+- `parser.py` — `TranscriptParser` classmethods (`stream_transcripts`,
+  `scan_bucket_keys`, `backend_name`) delegating to `cc_transcript.TranscriptParser`
+  with `cc_transcript.SENTIMENT_SPEC` as the filter. Re-exports `CLAUDE_PROJECTS_DIR`
+  / `JUNK_USER_MESSAGE_RE` / `TranscriptDiscovery` from cc-transcript.
+- `adapter.py` — `to_messages`: maps filtered `cc_transcript` events onto
+  cc-sentiment `UserMessage`/`AssistantMessage`, reproducing the historical parser
+  exactly (user `.strip()`, assistant `[:1024]+"[...]"` truncation, `thinking_chars`,
+  `tool_calls`).
+- `bucketer.py` — `ConversationBucketer` + `extract_bucket_keys` (3-minute windows).
+- `backend.py` — the `ParsedTranscript` value type consumed by the pipeline.
 
-**Contributors who only touch Python code need nothing extra.** `uv sync && uv run pytest` works and exercises the Python path. The native extension is built lazily only when `cargo` is on `$PATH`.
+Backend selection (cc-transcript's Rust extension vs. its Python fallback) is
+controlled by `CC_TRANSCRIPT_DISABLE_RUST=1`; cc-transcript ships a prebuilt abi3
+wheel, so no Rust toolchain is needed to install cc-sentiment. Call
+`TranscriptParser.backend_name()` to see which is live.
 
-**Contributors working on the Rust crate** need rustup:
-
-```bash
-brew install rustup-init && rustup-init -y
-uv pip install -e . --force-reinstall   # rebuilds the extension
-cd crates/transcripts && cargo test      # unit tests for the Rust side
-```
-
-Parity tests in `tests/test_transcripts.py` are parametrized over both backends via a `backend` fixture that monkeypatches `TranscriptParser.BACKEND` with `PythonBackend()` / `RustBackend()` (skipping the rust param when the extension isn't importable). Any change to the Python parser must be mirrored in the Rust crate, and vice versa.
+`tests/test_transcripts.py` parametrizes both backends via a `backend` fixture that
+toggles `CC_TRANSCRIPT_DISABLE_RUST` and resets `cc_transcript.TranscriptParser`'s
+cached backend. `tests/test_migration_parity.py` pins byte-for-byte parity of the
+façade against a vendored copy of the legacy parser over fixtures and the real
+corpus — the guarantee that the cc-transcript migration changed nothing.
 
 ## Transcript Discovery
 
