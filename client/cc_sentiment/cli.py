@@ -119,6 +119,7 @@ def run(ctx: typer.Context) -> None:
         HeadlessNotConfigured,
         HeadlessNothingToDo,
         HeadlessOk,
+        HeadlessOutcome,
         HeadlessRunner,
         HeadlessUploadError,
     )
@@ -126,8 +127,12 @@ def run(ctx: typer.Context) -> None:
 
     debug = ctx.obj["debug"]
     state = AppState.load()
-    with Repository.open(Repository.default_path()) as repo:
-        outcome = anyio.run(HeadlessRunner.run, state, repo, debug)
+
+    async def _run() -> HeadlessOutcome:
+        async with await Repository.open(Repository.default_path()) as repo:
+            return await HeadlessRunner.run(state, repo, debug)
+
+    outcome = anyio.run(_run)
 
     match outcome:
         case HeadlessOk(scored=s, uploaded=u):
@@ -177,11 +182,14 @@ def debug(
 def lookup(
     bucket_hash: Annotated[str, typer.Argument(help="8-char bucket hash from --debug TUI")],
 ) -> None:
-    from cc_sentiment.debug import BucketLookup
+    from cc_sentiment.debug import BucketLookup, BucketLookupResult
     from cc_sentiment.repo import Repository
 
-    with Repository.open(Repository.default_path()) as repo:
-        result = anyio.run(BucketLookup.find, repo, bucket_hash)
+    async def _lookup() -> BucketLookupResult | None:
+        async with await Repository.open(Repository.default_path()) as repo:
+            return await BucketLookup.find(repo, bucket_hash)
+
+    result = anyio.run(_lookup)
     if result is None:
         typer.echo(f"No bucket found for hash {bucket_hash!r}.", err=True)
         raise typer.Exit(1)

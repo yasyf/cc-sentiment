@@ -33,7 +33,7 @@ class DashboardLifecycle:
         self._boot_screen = BootingScreen()
         await self.app.push_screen(self._boot_screen)
         self._boot_screen.status = "Loading your local data..."
-        self.repo = await anyio.to_thread.run_sync(Repository.open, self.db_path)
+        self.repo = await Repository.open(self.db_path)
         self.scan_cache = ScanCache(self.repo)
         await self._seed_from_repo()
         self.view.set_schedule_available(
@@ -136,15 +136,15 @@ class DashboardLifecycle:
 
     async def on_unmount(self) -> None:
         if self.repo:
-            await anyio.to_thread.run_sync(self.repo.close)
+            await self.repo.close()
 
     async def _seed_from_repo(self) -> None:
         assert self.repo is not None
         assert self.view is not None
-        existing = await anyio.to_thread.run_sync(self.repo.all_records)
+        existing = await self.repo.all_records()
         if not existing:
             return
         self.records = list(existing)
-        _, _, total_files = await anyio.to_thread.run_sync(self.repo.stats)
+        _, _, total_files = await self.repo.stats()
         self.view.show_total_files(total_files)
         self.view.render_scores(self.records)

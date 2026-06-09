@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import AsyncMock
 
-import anyio
 import orjson
 import pytest
 
@@ -104,23 +104,25 @@ class TestBucketHash:
 
 
 class TestBucketLookup:
-    def test_returns_none_for_unknown_prefix(self, tmp_path: Path) -> None:
-        with Repository.open(tmp_path / "records.db") as repo:
-            result = anyio.run(BucketLookup.find, repo, "deadbeef")
+    async def test_returns_none_for_unknown_prefix(self, tmp_path: Path) -> None:
+        async with await Repository.open(tmp_path / "records.db") as repo:
+            result = await BucketLookup.find(repo, "deadbeef")
         assert result is None
 
-    def test_strips_leading_hash(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_strips_leading_hash(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from cc_sentiment.debug import TranscriptDiscovery
-        monkeypatch.setattr(TranscriptDiscovery, "find_transcripts", staticmethod(lambda: []))
+        monkeypatch.setattr(
+            TranscriptDiscovery, "find_transcripts", staticmethod(AsyncMock(return_value=[]))
+        )
 
-        with Repository.open(tmp_path / "records.db") as repo:
+        async with await Repository.open(tmp_path / "records.db") as repo:
             rec = make_record("session-x", 0, 4)
-            repo.save_records("/tmp/x.jsonl", 1.0, [rec])
+            await repo.save_records("/tmp/x.jsonl", 1.0, [rec])
             full_hash = BucketHash.of_record(rec)
-            with_hash = anyio.run(BucketLookup.find, repo, f"#{full_hash}")
+            with_hash = await BucketLookup.find(repo, f"#{full_hash}")
         assert with_hash is None
 
-    def test_resolves_known_record_via_real_transcript(
+    async def test_resolves_known_record_via_real_transcript(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from cc_sentiment.debug import TranscriptDiscovery
@@ -133,20 +135,20 @@ class TestBucketLookup:
         monkeypatch.setattr(
             TranscriptDiscovery,
             "find_transcripts",
-            staticmethod(lambda: [jsonl]),
+            staticmethod(AsyncMock(return_value=[jsonl])),
         )
 
-        with Repository.open(tmp_path / "records.db") as repo:
+        async with await Repository.open(tmp_path / "records.db") as repo:
             rec = make_record(session_id, 0, 4)
-            repo.save_records(str(jsonl), jsonl.stat().st_mtime, [rec])
+            await repo.save_records(str(jsonl), jsonl.stat().st_mtime, [rec])
             target = BucketHash.of_record(rec)
-            result = anyio.run(BucketLookup.find, repo, target)
+            result = await BucketLookup.find(repo, target)
         assert isinstance(result, BucketLookupResult)
         assert result.record.conversation_id == session_id
         assert result.transcript_path == jsonl
         assert any(m.role == "user" for m in result.bucket.messages)
 
-    def test_distinguishes_long_prefix_among_collisions(
+    async def test_distinguishes_long_prefix_among_collisions(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from cc_sentiment.debug import TranscriptDiscovery
@@ -161,15 +163,15 @@ class TestBucketLookup:
         monkeypatch.setattr(
             TranscriptDiscovery,
             "find_transcripts",
-            staticmethod(lambda: list(jsonls)),
+            staticmethod(AsyncMock(return_value=list(jsonls))),
         )
 
-        with Repository.open(tmp_path / "records.db") as repo:
+        async with await Repository.open(tmp_path / "records.db") as repo:
             recs = [make_record(sid, 0, 4) for sid in sessions]
             for rec, jsonl in zip(recs, jsonls):
-                repo.save_records(str(jsonl), jsonl.stat().st_mtime, [rec])
+                await repo.save_records(str(jsonl), jsonl.stat().st_mtime, [rec])
             target = BucketHash.of_record(recs[1])
-            result = anyio.run(BucketLookup.find, repo, target)
+            result = await BucketLookup.find(repo, target)
         assert result is not None
         assert result.record.conversation_id == sessions[1]
 

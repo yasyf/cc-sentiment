@@ -55,9 +55,9 @@ async def test_enter_idle_after_upload_mentions_dashboard(tmp_path: Path, auth_o
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    seed = Repository.open(db_path)
-    seed.save_records("/fake.jsonl", 1.0, [make_record()])
-    seed.close()
+    seed = await Repository.open(db_path)
+    await seed.save_records("/fake.jsonl", 1.0, [make_record()])
+    await seed.close()
 
     with patch("cc_sentiment.tui.dashboard.lifecycle.EngineFactory.resolve", return_value="mlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
@@ -97,7 +97,7 @@ async def test_successful_upload_lands_in_idle_after_upload(tmp_path: Path, auth
     db_path = tmp_path / "records.db"
 
     async def fake_run(repo, *args, on_transcript_complete=lambda _: None, **kwargs):
-        repo.save_records("/fake.jsonl", 0.0, records)
+        await repo.save_records("/fake.jsonl", 0.0, records)
         on_transcript_complete(records)
         return records
 
@@ -118,7 +118,7 @@ async def test_stage_transitions_across_successful_run(tmp_path: Path, auth_ok, 
     db_path = tmp_path / "records.db"
 
     async def fake_run(repo, *args, on_transcript_complete=lambda _: None, **kwargs):
-        repo.save_records("/fake.jsonl", 0.0, records)
+        await repo.save_records("/fake.jsonl", 0.0, records)
         on_transcript_complete(records)
         return records
 
@@ -151,9 +151,9 @@ async def test_rescan_confirm_restores_previous_stage_on_cancel(tmp_path: Path, 
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    seed = Repository.open(db_path)
-    seed.save_records("/fake.jsonl", 1.0, [make_record()])
-    seed.close()
+    seed = await Repository.open(db_path)
+    await seed.save_records("/fake.jsonl", 1.0, [make_record()])
+    await seed.close()
 
     with patch("cc_sentiment.tui.dashboard.lifecycle.EngineFactory.resolve", return_value="mlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
@@ -177,9 +177,9 @@ async def test_ccsentiment_app_rescan_clears_state(tmp_path: Path, auth_ok, no_s
     state = AppState(config=SSHConfig(contributor_id=ContributorId("testuser"), key_path=Path("/home/.ssh/id_ed25519")))
     db_path = tmp_path / "records.db"
 
-    seed = Repository.open(db_path)
-    seed.save_records("/fake.jsonl", 1.0, [make_record()])
-    seed.close()
+    seed = await Repository.open(db_path)
+    await seed.save_records("/fake.jsonl", 1.0, [make_record()])
+    await seed.close()
 
     with patch("cc_sentiment.tui.dashboard.lifecycle.EngineFactory.resolve", return_value="mlx"), \
          patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())), \
@@ -196,8 +196,8 @@ async def test_ccsentiment_app_rescan_clears_state(tmp_path: Path, auth_ok, no_s
             await pilot.press("r")
             await pilot.pause()
 
-    verify = Repository.open(db_path)
+    verify = await Repository.open(db_path)
     try:
-        assert verify.stats() == (0, 0, 0)
+        assert await verify.stats() == (0, 0, 0)
     finally:
-        verify.close()
+        await verify.close()

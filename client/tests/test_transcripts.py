@@ -404,15 +404,19 @@ class TestStreamTranscripts:
 
 @pytest.mark.usefixtures("backend")
 class TestScanBucketKeys:
-    def test_scan_bucket_keys_matches_full_parse(self, tmp_path: Path) -> None:
+    async def test_scan_bucket_keys_matches_full_parse(self, tmp_path: Path) -> None:
         f = tmp_path / "t.jsonl"
         f.write_bytes(FIXTURE_PATH.read_bytes())
 
-        scanned = TranscriptParser.scan_bucket_keys(tmp_path)
+        scanned = await TranscriptParser.scan_bucket_keys(tmp_path)
         assert len(scanned) == 1
         _, _, keys = scanned[0]
 
-        full_messages = parse_file(f)
+        full_messages = [
+            m
+            async for p in TranscriptParser.stream_transcripts([(f, 0.0)])
+            for m in p.messages
+        ]
         expected = {
             BucketKey(session_id=b.session_id, bucket_index=b.bucket_index)
             for b in ConversationBucketer.bucket_messages(full_messages)

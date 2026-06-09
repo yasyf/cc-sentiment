@@ -43,12 +43,11 @@ class EngineResult:
 class BenchmarkRunner:
     @staticmethod
     def collect_buckets(max_transcripts: int) -> list[ConversationBucket]:
-        transcripts = TranscriptDiscovery.find_transcripts()[:max_transcripts]
-        paths: list[tuple[Path, float]] = [
-            (p, TranscriptDiscovery.stat_mtime(p) or 0.0) for p in transcripts
-        ]
-
         async def collect() -> list[ConversationBucket]:
+            transcripts = (await TranscriptDiscovery.find_transcripts())[:max_transcripts]
+            paths: list[tuple[Path, float]] = [
+                (p, await TranscriptDiscovery.stat_mtime(p) or 0.0) for p in transcripts
+            ]
             buckets: list[ConversationBucket] = []
             with click.progressbar(length=len(paths), label="Parsing transcripts") as bar:
                 async for parsed in TranscriptParser.stream_transcripts(paths):

@@ -57,7 +57,7 @@ async def test_ccsentiment_app_runs_pipeline_and_uploads(tmp_path: Path, auth_ok
     db_path = tmp_path / "records.db"
 
     async def fake_run(repo, *args, on_transcript_complete=lambda _: None, **kwargs):
-        repo.save_records("/fake.jsonl", 0.0, records)
+        await repo.save_records("/fake.jsonl", 0.0, records)
         on_transcript_complete(records)
         return records
 

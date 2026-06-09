@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from functools import cached_property, partial
+from functools import cached_property
 from pathlib import Path
 
 import anyio
@@ -65,11 +65,9 @@ class ScanResult:
 class Pipeline:
     @staticmethod
     async def scan(repo: Repository) -> ScanResult:
-        known = await anyio.to_thread.run_sync(repo.file_mtimes)
-        scored_by_path = await anyio.to_thread.run_sync(repo.scored_buckets_for_all)
-        raw = await anyio.to_thread.run_sync(
-            partial(TranscriptParser.scan_bucket_keys, CLAUDE_PROJECTS_DIR, known_mtimes=known)
-        )
+        known = await repo.file_mtimes()
+        scored_by_path = await repo.scored_buckets_for_all()
+        raw = await TranscriptParser.scan_bucket_keys(CLAUDE_PROJECTS_DIR, known_mtimes=known)
         return ScanResult(
             transcripts=tuple(
                 ScannedTranscript(
@@ -248,9 +246,7 @@ class Pipeline:
                 on_records=on_records, on_frustration=on_frustration,
             )
             all_records.extend(records)
-            await anyio.to_thread.run_sync(
-                repo.save_records, str(parsed.path), parsed.mtime, records
-            )
+            await repo.save_records(str(parsed.path), parsed.mtime, records)
             if records:
                 on_transcript_complete(records)
 

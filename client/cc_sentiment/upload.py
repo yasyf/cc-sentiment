@@ -9,7 +9,6 @@ from urllib.parse import urlencode
 
 import anyio
 import anyio.streams.memory
-import anyio.to_thread
 import httpx
 import orjson
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
@@ -245,9 +244,7 @@ class Uploader:
                 timeout=30.0,
             )).raise_for_status()
 
-        await anyio.to_thread.run_sync(
-            repo.mark_sessions_uploaded, {r.conversation_id for r in records}
-        )
+        await repo.mark_sessions_uploaded({r.conversation_id for r in records})
 
     async def record_daemon_event(
         self,

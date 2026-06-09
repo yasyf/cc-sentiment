@@ -7,7 +7,6 @@ from typing import ClassVar
 
 from cc_sentiment.models import (
     BucketIndex,
-    BucketKey,
     ConversationBucket,
     SentimentRecord,
     SessionId,
@@ -45,7 +44,7 @@ class BucketLookup:
     @classmethod
     async def find(cls, repo: Repository, prefix: str) -> BucketLookupResult | None:
         prefix = prefix.lower().strip().lstrip("#")
-        records = repo.all_records()
+        records = await repo.all_records()
         match = next(
             (r for r in records if BucketHash.of_record(r).startswith(prefix)),
             None,
@@ -54,8 +53,8 @@ class BucketLookup:
             return None
         target_session = match.conversation_id
         target_idx = match.bucket_index
-        for path in TranscriptDiscovery.find_transcripts():
-            mtime = TranscriptDiscovery.transcript_mtime(path)
+        for path in await TranscriptDiscovery.find_transcripts():
+            mtime = await TranscriptDiscovery.transcript_mtime(path)
             async for parsed in TranscriptParser.stream_transcripts([(path, mtime)]):
                 bucket = cls.locate_bucket(parsed.messages, target_session, target_idx)
                 if bucket is not None:

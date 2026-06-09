@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -35,52 +35,55 @@ def parse_fixture() -> ParsedTranscript:
 
 
 @pytest.fixture
-def repo(tmp_path: Path) -> Iterator[Repository]:
-    r = Repository.open(tmp_path / "records.db")
+async def repo(tmp_path: Path) -> AsyncIterator[Repository]:
+    r = await Repository.open(tmp_path / "records.db")
     try:
         yield r
     finally:
-        r.close()
+        await r.close()
 
 
 class TestScan:
-    def test_finds_new_files(self, repo: Repository) -> None:
+    async def test_finds_new_files(self, repo: Repository) -> None:
         fake_path = Path("/fake/transcript.jsonl")
         key = BucketKey(session_id=SessionId("s1"), bucket_index=BucketIndex(0))
         with patch(
             "cc_sentiment.pipeline.TranscriptParser.scan_bucket_keys",
+            new_callable=AsyncMock,
             return_value=[(str(fake_path), 100.0, [key])],
         ):
-            result = anyio.run(lambda: Pipeline.scan(repo))
+            result = await Pipeline.scan(repo)
         assert len(result.transcripts) == 1
         assert result.transcripts[0].path == fake_path
         assert result.transcripts[0].mtime == 100.0
         assert result.transcripts[0].new_bucket_keys == (key,)
         assert result.total_new_buckets == 1
 
-    def test_skips_fully_scored_files(self, repo: Repository) -> None:
+    async def test_skips_fully_scored_files(self, repo: Repository) -> None:
         key = BucketKey(session_id=SessionId("s1"), bucket_index=BucketIndex(0))
-        repo.save_records("/fake/transcript.jsonl", 100.0, [
+        await repo.save_records("/fake/transcript.jsonl", 100.0, [
             make_record(session_id="s1", bucket_index=0)
         ])
         with patch(
             "cc_sentiment.pipeline.TranscriptParser.scan_bucket_keys",
+            new_callable=AsyncMock,
             return_value=[("/fake/transcript.jsonl", 100.0, [key])],
         ):
-            result = anyio.run(lambda: Pipeline.scan(repo))
+            result = await Pipeline.scan(repo)
         assert result.transcripts == ()
 
-    def test_includes_partially_new_files(self, repo: Repository) -> None:
+    async def test_includes_partially_new_files(self, repo: Repository) -> None:
         scored_key = BucketKey(session_id=SessionId("s1"), bucket_index=BucketIndex(0))
         new_key = BucketKey(session_id=SessionId("s1"), bucket_index=BucketIndex(1))
-        repo.save_records("/fake/transcript.jsonl", 100.0, [
+        await repo.save_records("/fake/transcript.jsonl", 100.0, [
             make_record(session_id="s1", bucket_index=0)
         ])
         with patch(
             "cc_sentiment.pipeline.TranscriptParser.scan_bucket_keys",
+            new_callable=AsyncMock,
             return_value=[("/fake/transcript.jsonl", 200.0, [scored_key, new_key])],
         ):
-            result = anyio.run(lambda: Pipeline.scan(repo))
+            result = await Pipeline.scan(repo)
         assert len(result.transcripts) == 1
         assert result.transcripts[0].new_bucket_keys == (new_key,)
 
@@ -143,20 +146,20 @@ class TestBucketCaching:
         assert result == []
         classifier.score.assert_not_called()
 
-    def test_save_records_persists_bucket_keys(self, repo: Repository) -> None:
+    async def test_save_records_persists_bucket_keys(self, repo: Repository) -> None:
         record = make_record()
-        repo.save_records("/fake.jsonl", 100.0, [record])
+        await repo.save_records("/fake.jsonl", 100.0, [record])
 
-        scored = repo.scored_buckets_for("/fake.jsonl")
+        scored = await repo.scored_buckets_for("/fake.jsonl")
         assert BucketKey(session_id=SessionId("session-1"), bucket_index=BucketIndex(0)) in scored
 
-    def test_save_records_merges_bucket_keys(self, repo: Repository) -> None:
+    async def test_save_records_merges_bucket_keys(self, repo: Repository) -> None:
         first = make_record(session_id="old", bucket_index=99)
         second = make_record()
-        repo.save_records("/fake.jsonl", 50.0, [first])
-        repo.save_records("/fake.jsonl", 100.0, [second])
+        await repo.save_records("/fake.jsonl", 50.0, [first])
+        await repo.save_records("/fake.jsonl", 100.0, [second])
 
-        scored = repo.scored_buckets_for("/fake.jsonl")
+        scored = await repo.scored_buckets_for("/fake.jsonl")
         assert BucketKey(session_id=SessionId("old"), bucket_index=BucketIndex(99)) in scored
         assert BucketKey(session_id=SessionId("session-1"), bucket_index=BucketIndex(0)) in scored
 
@@ -211,7 +214,7 @@ def _stub_stream(parsed_list: list[ParsedTranscript]):
 
 
 class TestPipelineStateUpdate:
-    def test_repo_updated_with_records(self, repo: Repository) -> None:
+    async def test_repo_updated_with_records(self, repo: Repository) -> None:
         record = make_record()
         parsed = make_parsed(Path("/fake.jsonl"), (), mtime=100.0)
         scan_result = ScanResult(
@@ -233,19 +236,15 @@ class TestPipelineStateUpdate:
 
         with patch.object(TranscriptParser, "stream_transcripts", new=_stub_stream([parsed])), \
              patch.object(Pipeline, "score_transcript", new_callable=AsyncMock, return_value=[record]):
+            result = await Pipeline.run(repo, scan_result, classifier=mock_classifier)
 
-            async def do_run() -> list[SentimentRecord]:
-                return await Pipeline.run(repo, scan_result, classifier=mock_classifier)
-
-            result = anyio.run(do_run)
-
-        all_records = repo.all_records()
+        all_records = await repo.all_records()
         assert len(all_records) == 1
         assert all_records[0].conversation_id == SessionId("session-1")
-        pending = repo.pending_records()
+        pending = await repo.pending_records()
         assert len(pending) == 1
         assert pending[0] == record
-        assert str(Path("/fake.jsonl")) in repo.file_mtimes()
+        assert str(Path("/fake.jsonl")) in await repo.file_mtimes()
         assert len(result) == 1
 
 
@@ -324,7 +323,7 @@ class TestOnBucketPlumbing:
         _, kwargs = classifier.score.call_args
         assert kwargs.get("on_progress") is cb
 
-    def test_run_threads_on_bucket_through_to_score_transcript(self, repo: Repository) -> None:
+    async def test_run_threads_on_bucket_through_to_score_transcript(self, repo: Repository) -> None:
         cb = MagicMock()
         captured: dict[str, object] = {}
 
@@ -348,12 +347,9 @@ class TestOnBucketPlumbing:
             scored_by_path={},
         )
 
-        async def run() -> None:
-            with patch.object(TranscriptParser, "stream_transcripts", new=_stub_stream([parsed])), \
-                 patch.object(Pipeline, "score_transcript", new=fake_score):
-                await Pipeline.run(repo, scan_result, classifier=classifier, on_bucket=cb)
-
-        anyio.run(run)
+        with patch.object(TranscriptParser, "stream_transcripts", new=_stub_stream([parsed])), \
+             patch.object(Pipeline, "score_transcript", new=fake_score):
+            await Pipeline.run(repo, scan_result, classifier=classifier, on_bucket=cb)
         assert captured["on_bucket"] is cb
 
 
@@ -361,39 +357,34 @@ class TestScanCache:
     def _scan_result(self) -> ScanResult:
         return ScanResult(transcripts=(), scored_by_path={})
 
-    def test_first_get_calls_scan_once(self, repo: Repository) -> None:
+    async def test_first_get_calls_scan_once(self, repo: Repository) -> None:
         result = self._scan_result()
         cache = ScanCache(repo)
         with patch.object(Pipeline, "scan", AsyncMock(return_value=result)) as scan:
-            got = anyio.run(lambda: cache.get())
+            got = await cache.get()
         assert got is result
         assert scan.call_count == 1
 
-    def test_repeat_get_uses_cache(self, repo: Repository) -> None:
+    async def test_repeat_get_uses_cache(self, repo: Repository) -> None:
         result = self._scan_result()
         cache = ScanCache(repo)
         with patch.object(Pipeline, "scan", AsyncMock(return_value=result)) as scan:
-            async def run() -> tuple[ScanResult, ScanResult]:
-                return await cache.get(), await cache.get()
-            first, second = anyio.run(run)
+            first, second = await cache.get(), await cache.get()
         assert first is second is result
         assert scan.call_count == 1
 
-    def test_invalidate_triggers_rescan(self, repo: Repository) -> None:
+    async def test_invalidate_triggers_rescan(self, repo: Repository) -> None:
         a, b = self._scan_result(), self._scan_result()
         cache = ScanCache(repo)
         with patch.object(Pipeline, "scan", AsyncMock(side_effect=[a, b])) as scan:
-            async def run() -> tuple[ScanResult, ScanResult]:
-                first = await cache.get()
-                cache.invalidate()
-                second = await cache.get()
-                return first, second
-            first, second = anyio.run(run)
+            first = await cache.get()
+            cache.invalidate()
+            second = await cache.get()
         assert first is a
         assert second is b
         assert scan.call_count == 2
 
-    def test_concurrent_get_runs_one_scan(self, repo: Repository) -> None:
+    async def test_concurrent_get_runs_one_scan(self, repo: Repository) -> None:
         result = self._scan_result()
         cache = ScanCache(repo)
         scan_calls = 0
@@ -410,11 +401,8 @@ class TestScanCache:
             async def collect() -> None:
                 results.append(await cache.get())
 
-            async def run() -> None:
-                async with anyio.create_task_group() as tg:
-                    for _ in range(5):
-                        tg.start_soon(collect)
-
-            anyio.run(run)
+            async with anyio.create_task_group() as tg:
+                for _ in range(5):
+                    tg.start_soon(collect)
         assert scan_calls == 1
         assert all(r is result for r in results)

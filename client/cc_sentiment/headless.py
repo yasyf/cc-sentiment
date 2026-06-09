@@ -97,7 +97,7 @@ class HeadlessRunner:
             return HeadlessClaudeEngineBlocked()
 
         scan = await Pipeline.scan(repo)
-        pending = await anyio.to_thread.run_sync(repo.pending_records)
+        pending = await repo.pending_records()
         cls.trace(debug, f"transcripts={len(scan.transcripts)} pending={len(pending)}")
         if not scan.transcripts and not pending:
             return HeadlessNothingToDo()
@@ -124,7 +124,7 @@ class HeadlessRunner:
                 await classifier.close()
             scored = len(records)
 
-        pending = await anyio.to_thread.run_sync(repo.pending_records)
+        pending = await repo.pending_records()
         if not pending:
             return HeadlessOk(scored=scored, uploaded=0)
 

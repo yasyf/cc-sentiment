@@ -6,8 +6,6 @@ from cc_transcript import (
     CLAUDE_PROJECTS_DIR,
     JUNK_USER_MESSAGE_RE,
     TranscriptDiscovery,
-    apply_spec,
-    parse_events,
 )
 from cc_transcript import TranscriptParser as CcTranscriptParser
 
@@ -41,7 +39,7 @@ class TranscriptParser:
         return CcTranscriptParser.backend_name()
 
     @classmethod
-    def scan_bucket_keys(
+    async def scan_bucket_keys(
         cls,
         directory: Path,
         *,
@@ -49,12 +47,16 @@ class TranscriptParser:
         limit: int | None = None,
         known_mtimes: dict[str, float] | None = None,
     ) -> list[tuple[Path, float, list[BucketKey]]]:
-        return [
-            (path, mtime, extract_bucket_keys(list(to_messages(apply_spec(parse_events(path), SENTIMENT_SPEC)))))
-            for path, mtime in TranscriptDiscovery.find_in(
-                directory, name_contains=name_contains, limit=limit, known_mtimes=known_mtimes
-            )
-        ]
+        paths = await TranscriptDiscovery.find_in(
+            directory, name_contains=name_contains, limit=limit, known_mtimes=known_mtimes
+        )
+        return sorted(
+            [
+                (parsed.path, parsed.mtime, list(parsed.bucket_keys))
+                async for parsed in cls.stream_transcripts(paths)
+            ],
+            key=lambda t: t[0],
+        )
 
     @classmethod
     async def stream_transcripts(

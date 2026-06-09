@@ -114,7 +114,7 @@ class DashboardActions:
     async def _reset_for_rescan(self) -> None:
         assert self.repo is not None
         assert self.view is not None
-        await anyio.to_thread.run_sync(self.repo.clear_all)
+        await self.repo.clear_all()
         if self.scan_cache is not None:
             self.scan_cache.invalidate()
         self.records = []

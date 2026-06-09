@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from typer.models import CommandInfo
 from typer.testing import CliRunner
@@ -62,11 +62,13 @@ class TestSingleCommand:
 
     def test_lookup_unknown_hash_exits_nonzero(self) -> None:
         runner = CliRunner()
-        with patch("cc_sentiment.repo.Repository.open") as repo_open:
-            mock_repo = MagicMock()
-            mock_repo.all_records.return_value = []
-            mock_repo.close = MagicMock()
-            repo_open.return_value = mock_repo
+        mock_repo = MagicMock()
+        mock_repo.all_records = AsyncMock(return_value=[])
+        mock_repo.__aenter__ = AsyncMock(return_value=mock_repo)
+        mock_repo.__aexit__ = AsyncMock(return_value=False)
+        with patch(
+            "cc_sentiment.repo.Repository.open", new=AsyncMock(return_value=mock_repo)
+        ):
             result = runner.invoke(app, ["lookup", "deadbeef"])
         assert result.exit_code == 1
         assert "No bucket found" in result.output

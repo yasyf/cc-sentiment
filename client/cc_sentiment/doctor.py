@@ -7,7 +7,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-import anyio.to_thread
 import httpx
 import sentry_sdk
 from rich.console import Console
@@ -134,16 +133,16 @@ class Doctor:
         if not db_path.exists():
             table.add_row("Records DB", f"{db_path} — not created yet")
             return
-        records, sessions, files = await anyio.to_thread.run_sync(cls.read_db_stats, db_path)
+        records, sessions, files = await cls.read_db_stats(db_path)
         table.add_row(
             "Records DB",
             f"{db_path} — {records:,} records, {sessions:,} sessions, {files:,} files",
         )
 
     @staticmethod
-    def read_db_stats(db_path: Path) -> tuple[int, int, int]:
-        with Repository.open(db_path) as repo:
-            return repo.stats()
+    async def read_db_stats(db_path: Path) -> tuple[int, int, int]:
+        async with await Repository.open(db_path) as repo:
+            return await repo.stats()
 
     @classmethod
     async def add_claude_probe_rows(cls, table: Table) -> None:

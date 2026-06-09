@@ -12,11 +12,11 @@ from cc_sentiment.upload import UploadPool, UploadProgress, Uploader
 from tests.helpers import make_record
 
 
-def _make_pool(state: AppState, db_path: Path) -> UploadPool:
+async def _make_pool(state: AppState, db_path: Path) -> UploadPool:
     return UploadPool(
         uploader=Uploader(),
         state=state,
-        repo=Repository.open(db_path),
+        repo=await Repository.open(db_path),
         progress=UploadProgress(),
         on_progress_change=lambda _: None,
     )
@@ -24,7 +24,7 @@ def _make_pool(state: AppState, db_path: Path) -> UploadPool:
 
 async def test_upload_worker_retries_transient_network_errors(tmp_path: Path):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("u"), key_path=Path("/k")))
-    pool = _make_pool(state, tmp_path / "records.db")
+    pool = await _make_pool(state, tmp_path / "records.db")
 
     send, recv = anyio.create_memory_object_stream[list](float("inf"))
     send.send_nowait([make_record()])
@@ -50,7 +50,7 @@ async def test_upload_worker_retries_transient_network_errors(tmp_path: Path):
 
 async def test_upload_worker_records_partial_failure_after_retries_exhaust(tmp_path: Path):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("u"), key_path=Path("/k")))
-    pool = _make_pool(state, tmp_path / "records.db")
+    pool = await _make_pool(state, tmp_path / "records.db")
 
     send, recv = anyio.create_memory_object_stream[list](float("inf"))
     send.send_nowait([make_record(session_id="s1")])
@@ -71,7 +71,7 @@ async def test_upload_worker_records_partial_failure_after_retries_exhaust(tmp_p
 
 async def test_upload_worker_fatal_on_401_drops_subsequent_batches(tmp_path: Path):
     state = AppState(config=SSHConfig(contributor_id=ContributorId("u"), key_path=Path("/k")))
-    pool = _make_pool(state, tmp_path / "records.db")
+    pool = await _make_pool(state, tmp_path / "records.db")
 
     send, recv = anyio.create_memory_object_stream[list](float("inf"))
     send.send_nowait([make_record(session_id="s1")])

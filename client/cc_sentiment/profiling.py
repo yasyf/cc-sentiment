@@ -41,11 +41,10 @@ class Profiler:
 
     @staticmethod
     def collect_buckets(target: int) -> list[ConversationBucket]:
-        transcripts = TranscriptDiscovery.find_transcripts()
-        click.echo(f"  Found {len(transcripts)} transcripts; parsing until {target} buckets…")
-
         async def collect() -> list[ConversationBucket]:
-            paths = [(p, TranscriptDiscovery.stat_mtime(p) or 0.0) for p in transcripts]
+            transcripts = await TranscriptDiscovery.find_transcripts()
+            click.echo(f"  Found {len(transcripts)} transcripts; parsing until {target} buckets…")
+            paths = [(p, await TranscriptDiscovery.stat_mtime(p) or 0.0) for p in transcripts]
             buckets: list[ConversationBucket] = []
             async for parsed in TranscriptParser.stream_transcripts(paths):
                 buckets.extend(ConversationBucketer.bucket_messages(list(parsed.messages)))

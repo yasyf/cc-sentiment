@@ -91,7 +91,7 @@ class DashboardFlow:
         self._set_boot_status("Discovering transcripts...")
         assert self.scan_cache is not None
         scan = await self.scan_cache.get()
-        pending = await anyio.to_thread.run_sync(self.repo.pending_records)
+        pending = await self.repo.pending_records()
         self._debug(f"transcripts={len(scan.transcripts)} pending={len(pending)}")
 
         if (scan.transcripts or pending) and not await self._authenticate():
@@ -112,7 +112,7 @@ class DashboardFlow:
             else:
                 self._update_status(f"[dim]Found [b]{bucket_count:,}[/] moments.[/]")
 
-        pre_seed = await anyio.to_thread.run_sync(self.repo.pending_records)
+        pre_seed = await self.repo.pending_records()
         has_work = (scan.transcripts and bucket_count > 0) or bool(pre_seed)
         self._upload.reset()
         self._upload.preseed_count = len(pre_seed)
@@ -151,7 +151,7 @@ class DashboardFlow:
                     pool.queue_records(pre_seed)
                 if scan.transcripts and bucket_count > 0:
                     assert classifier is not None
-                    _, _, existing_files = await anyio.to_thread.run_sync(self.repo.stats)
+                    _, _, existing_files = await self.repo.stats()
                     self._begin_scoring(bucket_count, engine, existing_files + len(scan.transcripts))
                     moments = MomentsView(
                         app=self.app,
@@ -245,9 +245,7 @@ class DashboardFlow:
 
     async def _enter_idle(self, uploaded: bool) -> None:
         assert self.repo is not None
-        total_buckets, total_sessions, total_files = await anyio.to_thread.run_sync(
-            self.repo.stats
-        )
+        total_buckets, total_sessions, total_files = await self.repo.stats()
         if uploaded:
             self.stage = IdleAfterUpload(
                 total_buckets=total_buckets,
