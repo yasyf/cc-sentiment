@@ -6,7 +6,7 @@ import threading
 
 import anyio.to_thread
 
-from cc_transcript.sentiment import FilteredEngine
+from cc_transcript.domains.sentiment import FilteredEngine
 
 from cc_sentiment.engines.claude_cli import ClaudeCLIEngine, ClaudeReady, ClaudeStatus
 from cc_sentiment.engines.protocol import DEFAULT_MODEL, InferenceEngine

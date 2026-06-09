@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 
-from cc_transcript.sentiment import NOOP_PROGRESS, InferenceEngine
+from cc_transcript.domains.sentiment import NOOP_PROGRESS, InferenceEngine
 
 DEFAULT_MODEL = "unsloth/gemma-4-E2B-it-UD-MLX-4bit"
 

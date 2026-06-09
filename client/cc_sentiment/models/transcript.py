@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from cc_transcript.sentiment.messages import (
+from cc_transcript.messages import (
     AssistantMessage,
     BaseMessage,
     ToolCall,

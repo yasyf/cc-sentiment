@@ -102,7 +102,7 @@ dependencies = [
     { name = "aiosqlite" },
     { name = "anyio" },
     { name = "asyncstdlib" },
-    { name = "cc-transcript", extra = ["lexicon"] },
+    { name = "cc-transcript", extra = ["sentiment"] },
     { name = "httpx" },
     { name = "orjson" },
     { name = "psutil" },
@@ -130,7 +130,7 @@ requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
     { name = "anyio", specifier = ">=4.4" },
     { name = "asyncstdlib", specifier = ">=3.14.0" },
-    { name = "cc-transcript", extras = ["lexicon"], specifier = ">=0.5" },
+    { name = "cc-transcript", extras = ["sentiment"], editable = "../../cc-transcript-reorg" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "orjson", specifier = ">=3.10" },
     { name = "psutil", specifier = ">=6.0" },
@@ -155,25 +155,38 @@ dev = [
 
 [[package]]
 name = "cc-transcript"
-version = "0.5.0"
-source = { registry = "https://pypi.org/simple" }
+version = "0.6.0"
+source = { editable = "../../cc-transcript-reorg" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "anyio" },
     { name = "orjson" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bc/de/db4a84c8b1f4df590063e090706c834d97057f7b3f18c6cdf6886691e8e7/cc_transcript-0.5.0.tar.gz", hash = "sha256:36bad7e59b06404b799eda4c90e3b798b671e5f2e19b8959db37df3a5b2a039f", size = 62243, upload-time = "2026-06-09T06:20:48.293Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/63/ae/ae92ad0cc1e594f8aacd0bc31b45ec07db17d5b16e8ff21414622f2cc15b/cc_transcript-0.5.0-cp313-abi3-macosx_11_0_arm64.whl", hash = "sha256:1c4a294946b18f8ce5d5a29f2af42ff373e895ac85fd543c82f69847e4744816", size = 2085920, upload-time = "2026-06-09T06:20:41.559Z" },
-    { url = "https://files.pythonhosted.org/packages/2d/e3/e1f5686f884883a9d1bf66b2898a059a47dec7c4d5a2191107b9ee3187ae/cc_transcript-0.5.0-cp313-abi3-macosx_11_0_x86_64.whl", hash = "sha256:c74a0dc936b6bc9126a71318216f59953caf719ab6546ba6c7fe0ac0b4c2638d", size = 2229592, upload-time = "2026-06-09T06:20:43.435Z" },
-    { url = "https://files.pythonhosted.org/packages/5e/82/e74df6fee531373d443504e70c598609f519f25cbf85cd7a0012c427bf70/cc_transcript-0.5.0-cp313-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:d7cde2e4986e971c6725501ddf21f8e17575cf1b37893434b8b8db6b5e46acec", size = 2228704, upload-time = "2026-06-09T06:20:44.985Z" },
-    { url = "https://files.pythonhosted.org/packages/ed/60/72001114968e40f59d4972695cf3eb502feceb50bee17d8ce6c8b63b61ed/cc_transcript-0.5.0-cp313-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:03ae48d729fe6756e0daa896f91b3525796a76c6d635889dcd8ce15d683b53fd", size = 2360164, upload-time = "2026-06-09T06:20:46.476Z" },
-]
 
 [package.optional-dependencies]
-lexicon = [
+sentiment = [
     { name = "afinn" },
     { name = "spacy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "afinn", marker = "extra == 'sentiment'", specifier = ">=0.1" },
+    { name = "aiosqlite", specifier = ">=0.20" },
+    { name = "anyio", specifier = ">=4.4" },
+    { name = "cc-transcript", extras = ["sentiment"], marker = "extra == 'lexicon'" },
+    { name = "orjson", specifier = ">=3.10" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
+    { name = "spacy", marker = "extra == 'sentiment'", specifier = ">=3.8" },
+    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.44" },
+]
+provides-extras = ["dev", "sentiment", "lexicon"]
+
+[package.metadata.requires-dev]
+docs = [
+    { name = "great-docs", git = "https://github.com/posit-dev/great-docs?rev=main" },
+    { name = "griffelib", specifier = ">=2.0" },
 ]
 
 [[package]]
