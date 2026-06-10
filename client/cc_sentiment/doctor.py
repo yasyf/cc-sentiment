@@ -157,7 +157,7 @@ class Doctor:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr, rc = await engine._collect(proc)
+        stdout, stderr, rc = await engine.collect(proc)
         elapsed_ms = (time.monotonic() - start) * 1000
         rc_marker = "[green]✓[/]" if rc == 0 else "[red]✗[/]"
         table.add_row(

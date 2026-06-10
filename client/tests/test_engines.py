@@ -132,23 +132,23 @@ class TestClaudeCliStatus:
     def test_not_installed_with_brew(self) -> None:
         def which(name: str) -> str | None:
             return "/opt/homebrew/bin/brew" if name == "brew" else None
-        with patch("cc_sentiment.engines.claude_cli.shutil.which", side_effect=which):
+        with patch("spawnllm.backends.claude.shutil.which", side_effect=which):
             assert ClaudeCLIEngine.check_status() == ClaudeNotInstalled(brew_available=True)
 
     def test_not_installed_without_brew(self) -> None:
-        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value=None):
+        with patch("spawnllm.backends.claude.shutil.which", return_value=None):
             assert ClaudeCLIEngine.check_status() == ClaudeNotInstalled(brew_available=False)
 
     def test_ready_when_auth_status_zero(self) -> None:
         completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
-        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"), \
-             patch("cc_sentiment.engines.claude_cli.subprocess.run", return_value=completed):
+        with patch("spawnllm.backends.claude.shutil.which", return_value="/usr/bin/claude"), \
+             patch("spawnllm.backends.claude.subprocess.run", return_value=completed):
             assert ClaudeCLIEngine.check_status() == ClaudeReady()
 
     def test_not_authenticated_when_auth_status_nonzero(self) -> None:
         completed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="not logged in")
-        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"), \
-             patch("cc_sentiment.engines.claude_cli.subprocess.run", return_value=completed):
+        with patch("spawnllm.backends.claude.shutil.which", return_value="/usr/bin/claude"), \
+             patch("spawnllm.backends.claude.subprocess.run", return_value=completed):
             assert ClaudeCLIEngine.check_status() == ClaudeNotAuthenticated()
 
 
@@ -295,8 +295,7 @@ class TestClaudeCLIEngine:
         response = orjson.dumps({"type": "result", "is_error": False, "result": "4"})
         proc = fake_proc(stdout=response)
 
-        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"):
-            engine = ClaudeCLIEngine(model="claude-haiku-4-5")
+        engine = ClaudeCLIEngine(model="claude-haiku-4-5")
         with patch("cc_sentiment.engines.claude_cli.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
             scores = await engine.score([make_bucket("please help me fix this")])
 
@@ -305,8 +304,7 @@ class TestClaudeCLIEngine:
     async def test_score_raises_on_subprocess_failure(self) -> None:
         proc = fake_proc(stdout=b"", stderr=b"auth failed", rc=2)
 
-        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"):
-            engine = ClaudeCLIEngine(model="claude-haiku-4-5")
+        engine = ClaudeCLIEngine(model="claude-haiku-4-5")
         with patch("cc_sentiment.engines.claude_cli.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)), \
              pytest.raises(subprocess.CalledProcessError) as excinfo:
             await engine.score([make_bucket("please help me fix this")])
@@ -319,8 +317,7 @@ class TestClaudeCLIEngine:
         response = orjson.dumps({"type": "result", "is_error": True, "result": "rate limit"})
         proc = fake_proc(stdout=response, rc=0)
 
-        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"):
-            engine = ClaudeCLIEngine(model="claude-haiku-4-5")
+        engine = ClaudeCLIEngine(model="claude-haiku-4-5")
         with patch("cc_sentiment.engines.claude_cli.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)), \
              pytest.raises(subprocess.CalledProcessError) as excinfo:
             await engine.score([make_bucket("please help me fix this")])
@@ -329,9 +326,8 @@ class TestClaudeCLIEngine:
         assert cpe.output == response
 
     async def test_verbose_flag_added_when_constructor_sets_it(self) -> None:
-        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"):
-            quiet = ClaudeCLIEngine(model="claude-haiku-4-5")
-            loud = ClaudeCLIEngine(model="claude-haiku-4-5", verbose=True)
+        quiet = ClaudeCLIEngine(model="claude-haiku-4-5")
+        loud = ClaudeCLIEngine(model="claude-haiku-4-5", verbose=True)
         msg = [{"role": "user", "content": "hello"}]
         assert "--verbose" not in quiet.argv(msg)
         assert "--verbose" in loud.argv(msg)
@@ -340,8 +336,7 @@ class TestClaudeCLIEngine:
         response = orjson.dumps({"type": "result", "is_error": False, "result": "4"})
         proc = fake_proc(stdout=response)
 
-        with patch("cc_sentiment.engines.claude_cli.shutil.which", return_value="/usr/bin/claude"):
-            engine = ClaudeCLIEngine(model="claude-haiku-4-5")
+        engine = ClaudeCLIEngine(model="claude-haiku-4-5")
 
         calls: list[int] = []
         with patch("cc_sentiment.engines.claude_cli.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):

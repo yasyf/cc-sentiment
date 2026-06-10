@@ -180,14 +180,18 @@ class TestBuildBucketMessages:
 
 class TestScoreMessagesSorting:
     @staticmethod
-    def make_classifier_stub() -> "object":
+    def make_classifier(batch_size: int = 2):
+        from spawnllm.mlx import MlxEngine
+
         from cc_sentiment.sentiment import SentimentClassifier
 
         classifier = SentimentClassifier.__new__(SentimentClassifier)
+        classifier._engine = MlxEngine.__new__(MlxEngine)
+        classifier._engine._batch_size = batch_size
         return classifier
 
     async def test_score_messages_sorts_by_last_content_length(self) -> None:
-        from cc_sentiment.sentiment import SentimentClassifier
+        from spawnllm.mlx import MlxEngine
 
         message_lists = [
             [{"role": "user", "content": "longest" * 100}],   # idx 0, very long
@@ -203,10 +207,9 @@ class TestScoreMessagesSorting:
         async def fake_submit(self, fn, *args):
             return fn(*args)
 
-        classifier = SentimentClassifier.__new__(SentimentClassifier)
-        classifier.BATCH_SIZE = 2
-        with patch.object(SentimentClassifier, "_generate_chunk", fake_generate_chunk), \
-             patch.object(SentimentClassifier, "_submit", fake_submit):
+        classifier = self.make_classifier()
+        with patch.object(MlxEngine, "_generate_chunk", fake_generate_chunk), \
+             patch.object(MlxEngine, "submit", fake_submit):
             responses = await classifier.score_messages(message_lists, on_progress=lambda n: None)
 
         flat_seen = [c for chunk in seen_chunks for c in chunk]
@@ -214,7 +217,7 @@ class TestScoreMessagesSorting:
         assert responses == [str(len(m[-1]["content"])) for m in message_lists]
 
     async def test_score_messages_preserves_original_order(self) -> None:
-        from cc_sentiment.sentiment import SentimentClassifier
+        from spawnllm.mlx import MlxEngine
 
         message_lists = [
             [{"role": "user", "content": "x" * n}] for n in (50, 5, 200, 1, 30)
@@ -226,10 +229,9 @@ class TestScoreMessagesSorting:
         async def fake_submit(self, fn, *args):
             return fn(*args)
 
-        classifier = SentimentClassifier.__new__(SentimentClassifier)
-        classifier.BATCH_SIZE = 2
-        with patch.object(SentimentClassifier, "_generate_chunk", fake_generate_chunk), \
-             patch.object(SentimentClassifier, "_submit", fake_submit):
+        classifier = self.make_classifier()
+        with patch.object(MlxEngine, "_generate_chunk", fake_generate_chunk), \
+             patch.object(MlxEngine, "submit", fake_submit):
             responses = await classifier.score_messages(message_lists, on_progress=lambda n: None)
 
         assert responses == ["50", "5", "200", "1", "30"]
@@ -308,16 +310,12 @@ class TestSentimentClassifierThreadAffinity:
 
         from pathlib import Path
         with patch.dict(sys.modules, {"mlx_lm": mock_mlx_lm}), \
-             patch("cc_sentiment.sentiment.MLXPatches.apply"), \
-             patch("cc_sentiment.text.build_prefix_messages", return_value=[]), \
-             patch.object(
-                 SentimentClassifier, "_score_only_logit_processor",
-                 return_value=MagicMock(),
-             ):
+             patch("spawnllm.mlx.engine.MLXPatches.apply"), \
+             patch("cc_sentiment.sentiment.score_only_processor", lambda tokenizer: MagicMock()):
             classifier = SentimentClassifier(Path("/tmp/fake-fused-dir"))
             await classifier.ensure_loaded()
             for _ in range(3):
-                await classifier._submit(classifier._generate_chunk, [
+                await classifier._engine.submit(classifier._engine._generate_chunk, [
                     [{"role": "user", "content": "hi"}],
                 ])
 
@@ -329,6 +327,8 @@ class TestSentimentClassifierThreadAffinity:
 
 class TestClassifierIntegration:
     async def test_score_calls_batch_generate(self) -> None:
+        from spawnllm.mlx import MlxEngine
+
         from cc_sentiment.sentiment import SentimentClassifier
         from cc_sentiment.text import build_prefix_messages
 
@@ -345,14 +345,17 @@ class TestClassifierIntegration:
             return fn(*args)
 
         with patch.dict(sys.modules, {"mlx_lm": mock_mlx_lm}), \
-             patch.object(SentimentClassifier, "_submit", fake_submit):
+             patch.object(MlxEngine, "submit", fake_submit):
+            engine = MlxEngine.__new__(MlxEngine)
+            engine._batch_size = 2
+            engine.model = MagicMock()
+            engine.tokenizer = mock_tokenizer
+            engine.logit_processor = MagicMock()
+            engine.prefix_messages = build_prefix_messages()
+            engine.prefix_tokens = [1, 2]
+            engine.base_cache = [MagicMock()]
             classifier = SentimentClassifier.__new__(SentimentClassifier)
-            classifier.model = MagicMock()
-            classifier.tokenizer = mock_tokenizer
-            classifier.logit_processor = MagicMock()
-            classifier.prefix_messages = build_prefix_messages()
-            classifier.prefix_tokens = [1, 2]
-            classifier.base_cache = [MagicMock()]
+            classifier._engine = engine
 
             scores = await classifier.score([make_bucket([("user", "this works perfectly!")])])
 
