@@ -46,9 +46,6 @@ Homepage = "https://sentiments.cc"
 Repository = "https://github.com/yasyf/cc-sentiment"
 Issues = "https://github.com/yasyf/cc-sentiment/issues"
 
-[tool.uv.sources]
-cc-transcript = { path = "../../cc-transcript-reorg", editable = true }
-
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
