@@ -17,7 +17,7 @@ from cc_transcript import (
     drop_synthetic,
     keep_only,
 )
-from cc_transcript.domains.sentiment import (
+from cc_transcript.sentiment import (
     ScoreSpec,
     build_score_spec,
     clamp_positive,

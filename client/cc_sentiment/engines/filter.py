@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from cc_transcript.filterspec import FRUSTRATION_GROUPS, compile_groups
 
 if TYPE_CHECKING:
-    from cc_transcript.domains.sentiment import ConversationBucket
+    from cc_transcript.sentiment import ConversationBucket
 
 
 FRUSTRATION_PATTERN = compile_groups(FRUSTRATION_GROUPS, True)

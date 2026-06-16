@@ -4,7 +4,7 @@ from collections import Counter
 from typing import NewType
 
 from cc_transcript.models import SessionId
-from cc_transcript.domains.sentiment.buckets import BucketIndex, BucketKey, ConversationBucket, SentimentScore
+from cc_transcript.sentiment.buckets import BucketIndex, BucketKey, ConversationBucket, SentimentScore
 from pydantic import BaseModel
 
 from .transcript import AssistantMessage, TranscriptMessage, UserMessage

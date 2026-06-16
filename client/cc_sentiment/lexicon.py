@@ -1,3 +1,3 @@
 from __future__ import annotations
 
-from cc_transcript.domains.sentiment.lexicon import Lexicon
+from cc_transcript.sentiment.lexicon import Lexicon
