@@ -88,9 +88,9 @@ class Doctor:
         match ClaudeCLIEngine.check_status():
             case ClaudeReady():
                 status, swap_eligible = "ClaudeReady ✓", True
-            case ClaudeNotInstalled(brew_available=brew):
+            case ClaudeNotInstalled(install_hint=hint):
                 status, swap_eligible = (
-                    f"ClaudeNotInstalled (brew={'yes' if brew else 'no'})",
+                    f"ClaudeNotInstalled (install: {hint})",
                     False,
                 )
             case ClaudeNotAuthenticated():

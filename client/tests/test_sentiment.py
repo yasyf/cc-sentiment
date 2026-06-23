@@ -200,7 +200,7 @@ class TestScoreMessagesSorting:
         ]
         seen_chunks: list[list[str]] = []
 
-        def fake_generate_chunk(self, chunk):
+        def fake_generate_chunk(self, chunk, max_tokens):
             seen_chunks.append([m[-1]["content"] for m in chunk])
             return [str(len(m[-1]["content"])) for m in chunk]
 
@@ -223,7 +223,7 @@ class TestScoreMessagesSorting:
             [{"role": "user", "content": "x" * n}] for n in (50, 5, 200, 1, 30)
         ]
 
-        def fake_generate_chunk(self, chunk):
+        def fake_generate_chunk(self, chunk, max_tokens):
             return [str(len(m[-1]["content"])) for m in chunk]
 
         async def fake_submit(self, fn, *args):
@@ -317,7 +317,7 @@ class TestSentimentClassifierThreadAffinity:
             for _ in range(3):
                 await classifier._engine.submit(classifier._engine._generate_chunk, [
                     [{"role": "user", "content": "hi"}],
-                ])
+                ], 1)
 
         assert len(set(observed)) == 1, f"MLX work spread across threads: {observed}"
         assert observed[0] != threading.get_ident(), (

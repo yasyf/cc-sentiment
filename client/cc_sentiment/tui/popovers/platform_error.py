@@ -12,6 +12,7 @@ from cc_sentiment.engines import (
     ClaudeNotInstalled,
     ClaudeStatus,
 )
+from cc_sentiment.signing.discovery import KeyDiscovery
 
 from cc_sentiment.tui.popovers.dialog import Dialog
 from cc_sentiment.tui.widgets import CommandBox
@@ -47,14 +48,14 @@ class PlatformErrorScreen(Dialog[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog-box"):
             match self.status:
-                case ClaudeNotInstalled(brew_available=brew):
+                case ClaudeNotInstalled():
                     yield Label("Install Claude Code to continue", classes="title")
                     yield Label(
                         "Install and sign in to Claude Code, then come back. "
                         "Click a command to copy it.",
                         classes="detail",
                     )
-                    yield CommandBox(install_command(brew))
+                    yield CommandBox(install_command(KeyDiscovery.has_brew()))
                     yield CommandBox(AUTH_LOGIN)
                 case ClaudeNotAuthenticated():
                     yield Label("Sign in to Claude Code", classes="title")

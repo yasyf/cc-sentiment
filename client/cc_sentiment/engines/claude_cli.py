@@ -1,24 +1,31 @@
 from __future__ import annotations
 
-import asyncio
 import subprocess
 from collections.abc import Callable
 
+import anyio.to_thread
+
 from spawnllm import (
+    BackendNotAuthenticated,
+    BackendNotInstalled,
+    BackendReady,
+    BackendStatus,
     ClaudeCliBackend,
-    ClaudeNotAuthenticated,
-    ClaudeNotInstalled,
-    ClaudeReady,
-    collect_process,
+    ClaudeConfig,
+    RunSpec,
     map_concurrent,
+    parse_result_envelope,
+    run_sync,
 )
-from spawnllm import check_status as check_claude_status
 
 from cc_sentiment.debug_log import DebugLog
 from cc_sentiment.engines.base import BaseEngine
 from cc_sentiment.engines.protocol import SYSTEM_PROMPT
 
-ClaudeStatus = ClaudeReady | ClaudeNotInstalled | ClaudeNotAuthenticated
+ClaudeReady = BackendReady
+ClaudeNotInstalled = BackendNotInstalled
+ClaudeNotAuthenticated = BackendNotAuthenticated
+ClaudeStatus = BackendStatus
 
 
 class ClaudeCLIEngine(BaseEngine):
@@ -28,39 +35,42 @@ class ClaudeCLIEngine(BaseEngine):
     def __init__(self, model: str, *, verbose: bool = False) -> None:
         self.model = model
         self.verbose = verbose
-        self._backend = ClaudeCliBackend.cc_sentiment(system_prompt=SYSTEM_PROMPT, verbose=verbose)
+        self._backend = ClaudeCliBackend()
+        self._config = ClaudeConfig(
+            system_prompt=SYSTEM_PROMPT,
+            max_turns=1,
+            tools="",
+            disable_slash_commands=True,
+            output_format="json",
+            verbose=verbose,
+        )
 
     @staticmethod
     def check_status() -> ClaudeStatus:
-        return check_claude_status()
+        return ClaudeCliBackend().check_status()
 
     @staticmethod
     def _last_user_content(messages: list[dict[str, str]]) -> str:
         return next(m["content"] for m in reversed(messages) if m["role"] == "user")
 
-    def argv(self, messages: list[dict[str, str]]) -> list[str]:
-        return self._backend.build_argv(self._last_user_content(messages), model=self.model)
+    def _spec(self, content: str) -> RunSpec:
+        return RunSpec(prompt=content, model=self.model, provider_configs={"claude": self._config})
 
-    @staticmethod
-    async def collect(proc: asyncio.subprocess.Process) -> tuple[bytes, bytes, int]:
-        log = DebugLog.get()
-        return await collect_process(
-            proc, stderr_tee=lambda raw: log.append("claude", raw.decode(errors="replace"))
-        )
+    def argv(self, messages: list[dict[str, str]]) -> list[str]:
+        return self._backend.build_command(self._spec(self._last_user_content(messages)))
 
     async def _call(self, messages: list[dict[str, str]]) -> str:
-        argv = self.argv(messages)
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr, rc = await self.collect(proc)
-        if rc != 0:
+        spec = self._spec(self._last_user_content(messages))
+        rr = await anyio.to_thread.run_sync(lambda: run_sync(spec, backend=self._backend))
+        DebugLog.get().append("claude", rr.stderr)
+        if rr.returncode != 0:
             raise subprocess.CalledProcessError(
-                returncode=rc, cmd=argv, output=stdout, stderr=stderr,
+                returncode=rr.returncode,
+                cmd=self._backend.build_command(spec),
+                output=rr.stdout.encode(),
+                stderr=rr.stderr.encode(),
             )
-        return self._backend.parse_result_envelope(stdout, argv=argv, stderr=stderr)
+        return parse_result_envelope(rr.stdout.encode(), argv=[], stderr=rr.stderr.encode())
 
     async def score_messages(
         self,

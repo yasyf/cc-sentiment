@@ -6,9 +6,11 @@ import sys
 import orjson
 from datetime import datetime, timezone
 from importlib.util import find_spec
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+
+from spawnllm import ClaudeCliBackend, RunResult
 
 from cc_sentiment.engines import (
     ClaudeCLIEngine,
@@ -35,6 +37,7 @@ from cc_sentiment.models import (
 from cc_sentiment.transcripts.filterspec import SENTIMENT_SCORE_SPEC
 
 MLX_AVAILABLE: bool = find_spec("mlx_lm") is not None
+CLAUDE_INSTALL_HINT = "curl -fsSL https://claude.ai/install.sh | bash"
 
 
 def make_message(role: str, content: str) -> TranscriptMessage:
@@ -129,27 +132,23 @@ class TestFrustrationHelper:
 
 
 class TestClaudeCliStatus:
-    def test_not_installed_with_brew(self) -> None:
-        def which(name: str) -> str | None:
-            return "/opt/homebrew/bin/brew" if name == "brew" else None
-        with patch("spawnllm.backends.claude.shutil.which", side_effect=which):
-            assert ClaudeCLIEngine.check_status() == ClaudeNotInstalled(brew_available=True)
-
-    def test_not_installed_without_brew(self) -> None:
-        with patch("spawnllm.backends.claude.shutil.which", return_value=None):
-            assert ClaudeCLIEngine.check_status() == ClaudeNotInstalled(brew_available=False)
+    def test_not_installed(self) -> None:
+        with patch("spawnllm.backends.base.shutil.which", return_value=None):
+            assert ClaudeCLIEngine.check_status() == ClaudeNotInstalled(
+                binary="claude", install_hint=CLAUDE_INSTALL_HINT
+            )
 
     def test_ready_when_auth_status_zero(self) -> None:
         completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
-        with patch("spawnllm.backends.claude.shutil.which", return_value="/usr/bin/claude"), \
+        with patch("spawnllm.backends.base.shutil.which", return_value="/usr/bin/claude"), \
              patch("spawnllm.backends.claude.subprocess.run", return_value=completed):
-            assert ClaudeCLIEngine.check_status() == ClaudeReady()
+            assert ClaudeCLIEngine.check_status() == ClaudeReady(binary="claude")
 
     def test_not_authenticated_when_auth_status_nonzero(self) -> None:
         completed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="not logged in")
-        with patch("spawnllm.backends.claude.shutil.which", return_value="/usr/bin/claude"), \
+        with patch("spawnllm.backends.base.shutil.which", return_value="/usr/bin/claude"), \
              patch("spawnllm.backends.claude.subprocess.run", return_value=completed):
-            assert ClaudeCLIEngine.check_status() == ClaudeNotAuthenticated()
+            assert ClaudeCLIEngine.check_status() == ClaudeNotAuthenticated(binary="claude")
 
 
 class TestDefaultEngine:
@@ -226,32 +225,36 @@ print("ok")
             m.assert_not_called()
 
     def test_claude_ready_returns_engine(self) -> None:
-        with patch.object(ClaudeCLIEngine, "check_status", return_value=ClaudeReady()):
+        with patch.object(ClaudeCLIEngine, "check_status", return_value=ClaudeReady(binary="claude")):
             assert EngineFactory.resolve("claude") == "claude"
 
     def test_claude_not_installed_raises(self) -> None:
-        status = ClaudeNotInstalled(brew_available=True)
+        status = ClaudeNotInstalled(binary="claude", install_hint=CLAUDE_INSTALL_HINT)
         with patch.object(ClaudeCLIEngine, "check_status", return_value=status), \
              pytest.raises(ClaudeUnavailable) as exc_info:
             EngineFactory.resolve("claude")
         assert exc_info.value.status == status
 
     def test_claude_not_authenticated_raises(self) -> None:
-        with patch.object(ClaudeCLIEngine, "check_status", return_value=ClaudeNotAuthenticated()), \
+        with patch.object(ClaudeCLIEngine, "check_status", return_value=ClaudeNotAuthenticated(binary="claude")), \
              pytest.raises(ClaudeUnavailable) as exc_info:
             EngineFactory.resolve("claude")
-        assert exc_info.value.status == ClaudeNotAuthenticated()
+        assert exc_info.value.status == ClaudeNotAuthenticated(binary="claude")
 
     def test_default_swaps_to_claude_when_low_ram_and_claude_ready(self) -> None:
         with patch.object(EngineFactory, "default", return_value="mlx"), \
              patch("cc_sentiment.engines.factory.Hardware.read_free_memory_gb", return_value=2), \
-             patch.object(ClaudeCLIEngine, "check_status", return_value=ClaudeReady()):
+             patch.object(ClaudeCLIEngine, "check_status", return_value=ClaudeReady(binary="claude")):
             assert EngineFactory.resolve(None) == "claude"
 
     def test_default_keeps_mlx_when_low_ram_but_claude_unavailable(self) -> None:
         with patch.object(EngineFactory, "default", return_value="mlx"), \
              patch("cc_sentiment.engines.factory.Hardware.read_free_memory_gb", return_value=2), \
-             patch.object(ClaudeCLIEngine, "check_status", return_value=ClaudeNotInstalled(brew_available=True)):
+             patch.object(
+                 ClaudeCLIEngine,
+                 "check_status",
+                 return_value=ClaudeNotInstalled(binary="claude", install_hint=CLAUDE_INSTALL_HINT),
+             ):
             assert EngineFactory.resolve(None) == "mlx"
 
     def test_default_keeps_mlx_when_ram_above_threshold(self) -> None:
@@ -268,44 +271,25 @@ print("ok")
             check_status.assert_not_called()
 
 
-class FakeStderr:
-    def __init__(self, lines: list[bytes]) -> None:
-        self._lines = list(lines)
-
-    def __aiter__(self) -> "FakeStderr":
-        return self
-
-    async def __anext__(self) -> bytes:
-        if not self._lines:
-            raise StopAsyncIteration
-        return self._lines.pop(0)
-
-
-def fake_proc(stdout: bytes, stderr: bytes = b"", rc: int = 0) -> MagicMock:
+def fake_run(stdout: bytes, stderr: bytes = b"", rc: int = 0) -> MagicMock:
     return MagicMock(
-        returncode=rc,
-        stdout=MagicMock(read=AsyncMock(return_value=stdout)),
-        stderr=FakeStderr([stderr] if stderr else []),
-        wait=AsyncMock(return_value=rc),
+        return_value=RunResult(stdout=stdout.decode(), stderr=stderr.decode(), returncode=rc)
     )
 
 
 class TestClaudeCLIEngine:
     async def test_score_parses_json_response(self) -> None:
         response = orjson.dumps({"type": "result", "is_error": False, "result": "4"})
-        proc = fake_proc(stdout=response)
 
         engine = ClaudeCLIEngine(model="claude-haiku-4-5")
-        with patch("cc_sentiment.engines.claude_cli.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        with patch.object(ClaudeCliBackend, "execute", fake_run(stdout=response)):
             scores = await engine.score([make_bucket("please help me fix this")])
 
         assert scores == [SentimentScore(4)]
 
     async def test_score_raises_on_subprocess_failure(self) -> None:
-        proc = fake_proc(stdout=b"", stderr=b"auth failed", rc=2)
-
         engine = ClaudeCLIEngine(model="claude-haiku-4-5")
-        with patch("cc_sentiment.engines.claude_cli.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)), \
+        with patch.object(ClaudeCliBackend, "execute", fake_run(stdout=b"", stderr=b"auth failed", rc=2)), \
              pytest.raises(subprocess.CalledProcessError) as excinfo:
             await engine.score([make_bucket("please help me fix this")])
         cpe = excinfo.value
@@ -314,11 +298,10 @@ class TestClaudeCLIEngine:
         assert cpe.stderr == b"auth failed"
 
     async def test_score_raises_on_is_error_json(self) -> None:
-        response = orjson.dumps({"type": "result", "is_error": True, "result": "rate limit"})
-        proc = fake_proc(stdout=response, rc=0)
+        response = orjson.dumps({"type": "result", "is_error": True, "result": "bad request"})
 
         engine = ClaudeCLIEngine(model="claude-haiku-4-5")
-        with patch("cc_sentiment.engines.claude_cli.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)), \
+        with patch.object(ClaudeCliBackend, "execute", fake_run(stdout=response, rc=0)), \
              pytest.raises(subprocess.CalledProcessError) as excinfo:
             await engine.score([make_bucket("please help me fix this")])
         cpe = excinfo.value
@@ -334,11 +317,10 @@ class TestClaudeCLIEngine:
 
     async def test_score_fires_on_progress_for_inference_path(self) -> None:
         response = orjson.dumps({"type": "result", "is_error": False, "result": "4"})
-        proc = fake_proc(stdout=response)
 
         engine = ClaudeCLIEngine(model="claude-haiku-4-5")
 
         calls: list[int] = []
-        with patch("cc_sentiment.engines.claude_cli.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        with patch.object(ClaudeCliBackend, "execute", fake_run(stdout=response)):
             await engine.score([make_bucket("please help me")], on_progress=calls.append)
         assert calls == [1]

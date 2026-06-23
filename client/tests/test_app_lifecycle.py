@@ -17,7 +17,9 @@ async def test_ccsentiment_app_engine_failure_shows_error_and_exits(tmp_path: Pa
     db_path = tmp_path / "records.db"
     with patch(
         "cc_sentiment.tui.dashboard.lifecycle.EngineFactory.resolve",
-        side_effect=ClaudeUnavailable(ClaudeNotInstalled(brew_available=True)),
+        side_effect=ClaudeUnavailable(
+            ClaudeNotInstalled(binary="claude", install_hint="curl -fsSL https://claude.ai/install.sh | bash")
+        ),
     ), patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path)
         async with app.run_test() as pilot:
@@ -30,7 +32,9 @@ async def test_ccsentiment_app_debug_mode_composes(tmp_path: Path):
     db_path = tmp_path / "records.db"
     with patch(
         "cc_sentiment.tui.dashboard.lifecycle.EngineFactory.resolve",
-        side_effect=ClaudeUnavailable(ClaudeNotInstalled(brew_available=True)),
+        side_effect=ClaudeUnavailable(
+            ClaudeNotInstalled(binary="claude", install_hint="curl -fsSL https://claude.ai/install.sh | bash")
+        ),
     ), patch("cc_sentiment.pipeline.Pipeline.scan", AsyncMock(return_value=make_scan())):
         app = CCSentimentApp(state=state, db_path=db_path, debug=True)
         async with app.run_test() as pilot:
