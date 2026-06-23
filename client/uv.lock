@@ -6,9 +6,6 @@ resolution-markers = [
     "platform_machine != 'arm64' or sys_platform != 'darwin'",
 ]
 
-[options]
-exclude-newer = "2030-01-02T07:00:00Z"
-
 [[package]]
 name = "afinn"
 version = "0.1"
@@ -152,7 +149,7 @@ requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
     { name = "anyio", specifier = ">=4.4" },
     { name = "asyncstdlib", specifier = ">=3.14.0" },
-    { name = "cc-transcript", extras = ["sentiment"], specifier = ">=3.0,<4" },
+    { name = "cc-transcript", extras = ["sentiment"], specifier = ">=5,<6" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "orjson", specifier = ">=3.10" },
     { name = "psutil", specifier = ">=6.0" },
@@ -177,7 +174,7 @@ dev = [
 
 [[package]]
 name = "cc-transcript"
-version = "3.0.0"
+version = "5.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiosqlite" },
@@ -185,12 +182,12 @@ dependencies = [
     { name = "click" },
     { name = "orjson" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6c/3c/90cd4bad9c1930acd80c954f70eb2cf2570db7d548fdd2b376d161264678/cc_transcript-3.0.0.tar.gz", hash = "sha256:d4b25c05a7f9b72ab67e4af8d417163ca7960a241bcb1e9aa0a266963f5411d0", size = 120615, upload-time = "2026-06-16T03:00:37.69Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/41/1f/6dd2ae7edc13d802a9eabc400f38889a6945fb4ea8a3bfb8eeb46d5ab018/cc_transcript-5.0.0.tar.gz", hash = "sha256:d0ceaf9e1d35905c6c56d349d94164c0048b05954cfccab996d70d339b1ddf35", size = 132191, upload-time = "2026-06-23T06:13:39.485Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/53/f3/1f579544de5a1c7bd8f4f05996506607b84a6c39c5b2659dbd8ccbb250f9/cc_transcript-3.0.0-cp313-abi3-macosx_11_0_arm64.whl", hash = "sha256:89bf1ac3726976a20ca14c6a7dbc36887c9befee1e726aaf3907594eda8ddd60", size = 2147400, upload-time = "2026-06-16T03:00:31.679Z" },
-    { url = "https://files.pythonhosted.org/packages/09/98/4e1270b00088da3d03518005d01f009fe2ddcdbeeb69e4bdb21f1ca0adf8/cc_transcript-3.0.0-cp313-abi3-macosx_11_0_x86_64.whl", hash = "sha256:9feada020b87dc4d7edc2c1b6e0bb49968d7ed430e3013ef5455cc95c1904300", size = 2290991, upload-time = "2026-06-16T03:00:33.651Z" },
-    { url = "https://files.pythonhosted.org/packages/8a/b5/0ef735d7689be4c2cfab61e310c3257473e06e19f3baf726bbd145cfca9e/cc_transcript-3.0.0-cp313-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:7c98bece90318c5f7ae21beb3ff6fcfe94371298425d060276e855eabe3b7ba2", size = 2299517, upload-time = "2026-06-16T03:00:34.988Z" },
-    { url = "https://files.pythonhosted.org/packages/2a/6d/b5fbc1d444de38273f77bf92ff7143211df6db765470446cecad65bebf19/cc_transcript-3.0.0-cp313-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:c8d6b76f133f46e7d0386c1b8789c06da2baf1f1cdfe1a6bce0476672bebd9d7", size = 2428596, upload-time = "2026-06-16T03:00:36.394Z" },
+    { url = "https://files.pythonhosted.org/packages/f9/e9/0c6c4ad3e10a70c1d80900c08f7e7a3e61fd881a7d498ca37541ea66049f/cc_transcript-5.0.0-cp313-abi3-macosx_11_0_arm64.whl", hash = "sha256:3e96418accffb4afbdab65da70e0558859e6ae9ec64a9d958a87025a14f860a2", size = 2176324, upload-time = "2026-06-23T06:13:33.59Z" },
+    { url = "https://files.pythonhosted.org/packages/40/a2/672cc02e935ea7fc143ee56732aa6416b0c6cc54b64929a2c02221377d20/cc_transcript-5.0.0-cp313-abi3-macosx_11_0_x86_64.whl", hash = "sha256:f486e9190da892a3532412ccf35a3e83c990cffc0ac917f257efe1141360bb92", size = 2320873, upload-time = "2026-06-23T06:13:35.136Z" },
+    { url = "https://files.pythonhosted.org/packages/06/fd/3b2e013800a56e5500505725675da78fc962f32a8fcad3b070d05d7cb240/cc_transcript-5.0.0-cp313-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:1ef13163935dedab7bae423cdae3654391e28c29534d016668b2a2159bc0823e", size = 2325180, upload-time = "2026-06-23T06:13:36.519Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/40/0d24343964b1cb698d0aeaa75a28f9328f3b7263b12111f0dcac0a207146/cc_transcript-5.0.0-cp313-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:d524d8ff6fdb9bd349fcbe128db7ccec0dae5ab3f2b9ba1262dac90d4edac665", size = 2458558, upload-time = "2026-06-23T06:13:38.146Z" },
 ]
 
 [package.optional-dependencies]
