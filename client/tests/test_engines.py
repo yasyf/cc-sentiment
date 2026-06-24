@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from spawnllm import ClaudeCliBackend, RunResult
+from spawnllm.proc import RunResult
 
 from cc_sentiment.engines import (
     ClaudeCLIEngine,
@@ -282,31 +282,30 @@ class TestClaudeCLIEngine:
         response = orjson.dumps({"type": "result", "is_error": False, "result": "4"})
 
         engine = ClaudeCLIEngine(model="claude-haiku-4-5")
-        with patch.object(ClaudeCliBackend, "execute", fake_run(stdout=response)):
+        with patch("spawnllm.backends.base.capture_cli", fake_run(stdout=response)):
             scores = await engine.score([make_bucket("please help me fix this")])
 
         assert scores == [SentimentScore(4)]
 
     async def test_score_raises_on_subprocess_failure(self) -> None:
         engine = ClaudeCLIEngine(model="claude-haiku-4-5")
-        with patch.object(ClaudeCliBackend, "execute", fake_run(stdout=b"", stderr=b"auth failed", rc=2)), \
+        with patch("spawnllm.backends.base.capture_cli", fake_run(stdout=b"", stderr=b"auth failed", rc=2)), \
              pytest.raises(subprocess.CalledProcessError) as excinfo:
             await engine.score([make_bucket("please help me fix this")])
         cpe = excinfo.value
-        assert cpe.returncode == 2
         assert cpe.cmd[0] == "claude"
-        assert cpe.stderr == b"auth failed"
+        assert b"auth failed" in cpe.stderr
 
     async def test_score_raises_on_is_error_json(self) -> None:
         response = orjson.dumps({"type": "result", "is_error": True, "result": "bad request"})
 
         engine = ClaudeCLIEngine(model="claude-haiku-4-5")
-        with patch.object(ClaudeCliBackend, "execute", fake_run(stdout=response, rc=0)), \
+        with patch("spawnllm.backends.base.capture_cli", fake_run(stdout=response, rc=0)), \
              pytest.raises(subprocess.CalledProcessError) as excinfo:
             await engine.score([make_bucket("please help me fix this")])
         cpe = excinfo.value
-        assert cpe.returncode == 0
-        assert cpe.output == response
+        assert cpe.cmd[0] == "claude"
+        assert cpe.stderr == b"bad request"
 
     async def test_verbose_flag_added_when_constructor_sets_it(self) -> None:
         quiet = ClaudeCLIEngine(model="claude-haiku-4-5")
@@ -321,6 +320,6 @@ class TestClaudeCLIEngine:
         engine = ClaudeCLIEngine(model="claude-haiku-4-5")
 
         calls: list[int] = []
-        with patch.object(ClaudeCliBackend, "execute", fake_run(stdout=response)):
+        with patch("spawnllm.backends.base.capture_cli", fake_run(stdout=response)):
             await engine.score([make_bucket("please help me")], on_progress=calls.append)
         assert calls == [1]

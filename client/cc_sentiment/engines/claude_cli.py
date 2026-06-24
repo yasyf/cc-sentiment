@@ -13,10 +13,9 @@ from spawnllm import (
     ClaudeCliBackend,
     ClaudeConfig,
     RunSpec,
-    map_concurrent,
-    parse_result_envelope,
     run_sync,
 )
+from spawnllm.proc import map_concurrent
 
 from cc_sentiment.debug_log import DebugLog
 from cc_sentiment.engines.base import BaseEngine
@@ -61,16 +60,16 @@ class ClaudeCLIEngine(BaseEngine):
 
     async def _call(self, messages: list[dict[str, str]]) -> str:
         spec = self._spec(self._last_user_content(messages))
-        rr = await anyio.to_thread.run_sync(lambda: run_sync(spec, backend=self._backend))
-        DebugLog.get().append("claude", rr.stderr)
-        if rr.returncode != 0:
+        resp = await anyio.to_thread.run_sync(lambda: run_sync(spec, backend=self._backend))
+        if resp.error is not None:
+            DebugLog.get().append("claude", resp.error)
             raise subprocess.CalledProcessError(
-                returncode=rr.returncode,
+                returncode=1,
                 cmd=self._backend.build_command(spec),
-                output=rr.stdout.encode(),
-                stderr=rr.stderr.encode(),
+                output=(resp.result or "").encode(),
+                stderr=resp.error.encode(),
             )
-        return parse_result_envelope(rr.stdout.encode(), argv=[], stderr=rr.stderr.encode())
+        return resp.result
 
     async def score_messages(
         self,
