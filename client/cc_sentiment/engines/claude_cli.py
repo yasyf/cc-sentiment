@@ -62,14 +62,14 @@ class ClaudeCLIEngine(BaseEngine):
         spec = self._spec(self._last_user_content(messages))
         resp = await anyio.to_thread.run_sync(lambda: run_sync(spec, backend=self._backend))
         if resp.error is not None:
-            DebugLog.get().append("claude", resp.error)
+            DebugLog.get().append("claude", resp.error.msg)
             raise subprocess.CalledProcessError(
                 returncode=1,
                 cmd=self._backend.build_command(spec),
-                output=(resp.result or "").encode(),
-                stderr=resp.error.encode(),
+                output=resp.output.raw.encode(),
+                stderr=resp.error.msg.encode(),
             )
-        return resp.result
+        return resp.result.raw
 
     async def score_messages(
         self,
