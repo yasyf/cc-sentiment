@@ -1,5 +1,9 @@
 name: Release (PyPI)
 
+# Continuous deploy: every client/ change on main publishes v0.2.<run_number>.
+# Do NOT rename this file — the trusted publisher on PyPI is keyed to release-pypi.yml,
+# and github.run_number is keyed to the workflow path (a rename resets it to 1, which
+# would collide with versions already on PyPI).
 on:
   push:
     branches: [main]
@@ -11,86 +15,62 @@ concurrency:
   group: release-pypi
   cancel-in-progress: false
 
-permissions:
-  contents: write
-
-env:
-  VERSION: 0.2.${{ github.run_number }}
-
 jobs:
   build:
-    name: Build pure-Python sdist + wheel
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6.0.2
+    uses: yasyf/homebrew-tap/.github/workflows/release-pypi-build.yml@pypi-v1
+    secrets: inherit
+    with:
+      dist-name: cc-sentiment
+      python-version: "3.13"
+      version-strategy: auto-tag
+      auto-tag-version-base: "0.2"
+      package-subdir: client
+      pre-build: |
+        if [ -n "$SENTRY_DSN" ]; then
+          printf 'DSN = "%s"\n' "$SENTRY_DSN" > client/cc_sentiment/_sentry_dsn.py
+        fi
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.1.0
-        with:
-          python-version: "3.13"
-          cache-dependency-glob: client/uv.lock
-
-      - name: Patch version
-        run: |
-          uv run --no-project --with tomli-w python - <<'PY'
-          import os, tomllib, tomli_w
-          from pathlib import Path
-          path = Path("client/pyproject.toml")
-          data = tomllib.loads(path.read_text())
-          data["project"]["version"] = os.environ["VERSION"]
-          path.write_text(tomli_w.dumps(data))
-          PY
-
-      - name: Bake Sentry DSN into package
-        shell: bash
-        env:
-          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-        run: |
-          if [ -n "$SENTRY_DSN" ]; then
-            printf 'DSN = "%s"\n' "$SENTRY_DSN" > client/cc_sentiment/_sentry_dsn.py
-          fi
-
-      - name: Build sdist + wheel
-        working-directory: client
-        run: uv build
-
-      - uses: actions/upload-artifact@v7.0.1
-        with:
-          name: dist
-          path: client/dist/*
-          if-no-files-found: error
-
+  # PyPI Trusted Publishing must run in THIS repo's workflow — it authenticates via the OIDC
+  # job_workflow_ref claim, which inside a reusable workflow points at homebrew-tap, not here
+  # (and PyPI does not support reusable workflows for Trusted Publishing). Running publish here
+  # makes job_workflow_ref this repo's release-pypi.yml, matching the existing trusted publisher.
   publish:
-    needs: [build]
+    needs: build
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v8.0.1
+      - uses: actions/download-artifact@v8
         with:
-          name: dist
+          pattern: dist*
           path: dist
-
+          merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
 
-  github_release:
-    needs: [build]
+  github-release:
+    needs: [build, publish]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/download-artifact@v8.0.1
+      - uses: actions/download-artifact@v8
         with:
-          name: dist
+          pattern: dist*
           path: dist
-
-      - name: Create release
+          merge-multiple: true
+      - name: Create GitHub release
+        # Auto-tag mode: the tag does not exist yet — gh release create mints it, and
+        # --target pins it to the commit this run built (not main's HEAD at release time).
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create "v${VERSION}" \
-            --title "v${VERSION}" \
-            --target "${{ github.sha }}" \
-            --generate-notes \
-            --latest \
-            --repo "${{ github.repository }}" \
-            dist/*.whl dist/*.tar.gz
+          TAG: ${{ needs.build.outputs.tag }}
+          TARGET: ${{ github.sha }}
+        run: >
+          gh release create "$TAG"
+          --title "$TAG"
+          --target "$TARGET"
+          --generate-notes
+          --latest
+          --repo "${{ github.repository }}"
+          dist/*
