@@ -86,7 +86,7 @@ client/
     ├── highlight.py         # Highlighter — snippet styling (AFINN + profanity + negation)
     ├── tui/                 # split: stages, progress, status, format, widgets,
     │                        #        moments_view, view, app, screens/
-    ├── transcripts/         # facade over cc-transcript: parser, adapter, bucketer
+    ├── transcripts/         # facade over cc-transcript: parser, bucketer, filterspec
     └── patches/             # mlx-lm KV cache patch
 ```
 
@@ -98,14 +98,15 @@ is a thin façade:
 
 - `parser.py` — `TranscriptParser` classmethods (`stream_transcripts`,
   `scan_bucket_keys`, `backend_name`) delegating to `cc_transcript.TranscriptParser`
-  with `cc_transcript.SENTIMENT_SPEC` as the filter. Re-exports `CLAUDE_PROJECTS_DIR`
-  / `JUNK_USER_MESSAGE_RE` / `TranscriptDiscovery` from cc-transcript.
-- `adapter.py` — `to_messages`: maps filtered `cc_transcript` events onto
-  cc-sentiment `UserMessage`/`AssistantMessage`, reproducing the historical parser
-  exactly (user `.strip()`, assistant `[:1024]+"[...]"` truncation, `thinking_chars`,
-  `tool_calls`).
+  with `SENTIMENT_SPEC` (from `filterspec.py`) as the filter. Re-exports
+  `CLAUDE_PROJECTS_DIR` / `JUNK_USER_MESSAGE_RE` / `TranscriptDiscovery` from
+  cc-transcript. The filtered stream stays on the typed event spine: buckets hold
+  `UserEvent | AssistantEvent` (`ConversationEvent`) directly, with
+  `cc_transcript.models.tool_uses` / `thinking_chars` in place of any app-side
+  message adapter.
 - `bucketer.py` — `ConversationBucketer` + `extract_bucket_keys` (3-minute windows).
-- `backend.py` — the `ParsedTranscript` value type consumed by the pipeline.
+- `backend.py` — the `ParsedTranscript` value type consumed by the pipeline; its
+  `events` tuple carries the filtered conversational events.
 
 Backend selection (cc-transcript's Rust extension vs. its Python fallback) is
 controlled by `CC_TRANSCRIPT_DISABLE_RUST=1`; cc-transcript ships a prebuilt abi3
@@ -114,9 +115,9 @@ wheel, so no Rust toolchain is needed to install cc-sentiment. Call
 
 `tests/test_transcripts.py` parametrizes both backends via a `backend` fixture that
 toggles `CC_TRANSCRIPT_DISABLE_RUST` and resets `cc_transcript.TranscriptParser`'s
-cached backend. `tests/test_migration_parity.py` pins byte-for-byte parity of the
-façade against a vendored copy of the legacy parser over fixtures and the real
-corpus — the guarantee that the cc-transcript migration changed nothing.
+cached backend. Event fixtures come from `tests/helpers.py`
+(`make_user_event` / `make_assistant_event`), mirroring cc-transcript's own
+sentiment test fixtures.
 
 ## Transcript Discovery
 
