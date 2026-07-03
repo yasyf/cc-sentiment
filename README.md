@@ -70,7 +70,7 @@ The client records the following per 5-minute slice of each conversation.
 | Write:edit ratio | File rewrites vs. surgical edits |
 | Tool calls per turn | Tools invoked between user messages |
 | Subagent spawns | How often Claude delegates to a subagent |
-| Turn count | User → assistant exchanges |
+| Turn count | User-to-assistant exchanges |
 | Thinking present / chars | Whether and how much Claude wrote extended thinking |
 | Claude model | Which model produced the assistant turns |
 | `cc_version` | Claude Code CLI version |
