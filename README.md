@@ -1,26 +1,62 @@
-# cc-sentiment
+# ![cc-sentiment](https://github.com/yasyf/cc-sentiment/raw/main/docs/assets/readme-banner.webp)
 
-![cc-sentiment banner](https://github.com/yasyf/cc-sentiment/raw/main/docs/assets/readme-banner.webp)
+**Everyone swears Claude got lazier. Bring receipts.** cc-sentiment scores your Claude Code transcripts on-device and ships ten signed metrics per 5-minute slice to the shared dashboard at [sentiments.cc](https://sentiments.cc).
 
-[![PyPI](https://img.shields.io/pypi/v/cc-sentiment.svg)](https://pypi.org/project/cc-sentiment/)
-[![Python](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](client/LICENSE)
+[![Tests](https://github.com/yasyf/cc-sentiment/actions/workflows/tests-client.yml/badge.svg)](https://github.com/yasyf/cc-sentiment/actions/workflows/tests-client.yml)
+[![PyPI](https://img.shields.io/pypi/v/cc-sentiment)](https://pypi.org/project/cc-sentiment/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](client/LICENSE)
 
-An open experiment in Claude Code behavior. Contributors run a CLI that scores their own Claude Code transcripts locally, and uploads the numbers to a shared dashboard at [sentiments.cc](https://sentiments.cc). Aggregate stats only — uploads are signed by a public key you control so the server can verify the source without learning anything about your sessions.
-
-![Dashboard](docs/dashboard.png)
-
-## Why
-
-Claude Code threads like [anthropics/claude-code#42796](https://github.com/anthropics/claude-code/issues/42796) describe behavior that shifted in measurable ways: fewer reads before edits, more lazy patches, different tool patterns. Everyone sees their own slice. This pools the numbers so they can be looked at together.
-
-## Run it
+## Get started
 
 ```bash
 uvx cc-sentiment
 ```
 
-Needs [uv](https://docs.astral.sh/uv/). The first run sets up a verification key, scores any transcripts it finds in `~/.claude/projects/`, and uploads the numbers. Scoring is local when the local engine is available; otherwise the CLI asks before using the configured fallback engine.
+<img src="docs/dashboard.png" alt="Terminal running 'uvx cc-sentiment' — 42 transcripts scored to an average sentiment of 3.49, numbers uploaded to sentiments.cc" width="700">
+
+The first run links a signing key (GitHub or GPG), scores every transcript in `~/.claude/projects/`, and uploads the numbers; your slice joins the pooled charts at [sentiments.cc](https://sentiments.cc). Needs [uv](https://docs.astral.sh/uv/).
+
+Driving with an agent? Paste this:
+
+```text
+Run `uvx cc-sentiment` and finish the setup TUI — it links a GitHub or GPG signing key, scores my Claude Code transcripts locally, and uploads the numbers.
+Then run `cc-sentiment install` to schedule the daily background run.
+Verify my contribution shows up on the dashboard at https://sentiments.cc.
+```
+
+---
+
+## Use cases
+
+### Settle whether Claude Code behavior actually shifted
+
+Threads like [anthropics/claude-code#42796](https://github.com/anthropics/claude-code/issues/42796) describe the same drift — fewer reads before edits, lazier patches — but every report is one person's slice. Score yours and pool it:
+
+```bash
+uvx cc-sentiment
+```
+
+Each 5-minute slice becomes numbers — sentiment, read:edit ratio, edits without a prior read, tool calls per turn — and on the pooled charts a real shift shows up as a line bending, not a vibe.
+
+### Contribute your sessions without uploading a single prompt
+
+Your transcripts hold prompts, file paths, and diffs you'd never post publicly. The upload never contains them:
+
+```bash
+uvx cc-sentiment setup
+```
+
+Setup walks you through linking a GitHub or GPG signing key, with honest verified / pending / failed end-states. Scoring runs on-device (MLX on Apple Silicon; the CLI asks before touching the fallback Claude CLI engine), and each upload is the numbers plus a signature the server verifies without learning anything else about your sessions.
+
+### Compare behavior across Claude models and CLI versions
+
+Was it the new model, or the CLI release that shipped under you the same week? One contributor's sessions can't separate the two:
+
+```bash
+uvx cc-sentiment install
+```
+
+A daily launchd run keeps scoring new sessions, and every slice lands tagged with the Claude model and Claude Code version that produced it, so the dashboard breaks the trends down by model while the CLI version rides along in the data.
 
 ## What gets uploaded
 
@@ -39,11 +75,20 @@ The client records the following per 5-minute slice of each conversation.
 | Claude model | Which model produced the assistant turns |
 | `cc_version` | Claude Code CLI version |
 
-Plus a public verification handle (your GitHub username when GitHub/GPG lookup is used, otherwise your GPG fingerprint) used only to find a public key and verify signatures.
+Plus a public verification handle — your GitHub username or GPG fingerprint — used only to find a public key and verify signatures. Conversation text, file contents, file paths, prompts, tool inputs, and tool outputs never leave your machine.
 
-## What stays on your machine
+## Commands
 
-Conversation text, file contents, file paths, prompts, tool inputs, and tool outputs are not uploaded to sentiments.cc. Only the numbers above are uploaded.
+| Command | Description |
+|---------|-------------|
+| `cc-sentiment` | Interactive TUI. Sets up if needed, then scores and uploads. |
+| `cc-sentiment setup` | Re-run the setup wizard to pick, generate, or re-link a signing key. |
+| `cc-sentiment run` | Score new transcripts and upload. Non-interactive; safe for cron, SSH, and launchd. |
+| `cc-sentiment install` | Schedule a daily background run via launchd. |
+| `cc-sentiment uninstall` | Stop and remove the scheduled run. |
+| `cc-sentiment debug` | Print hardware, engine, Claude CLI, server, and Sentry probes. |
+
+Flags live in `cc-sentiment --help`.
 
 ## Architecture
 
@@ -55,20 +100,6 @@ Conversation text, file contents, file paths, prompts, tool inputs, and tool out
 └─────────────┘ upload  └─────────────┘         └─────────────┘
 ```
 
-## CLI commands
+Three components, one repo: the CLI you run, the API that verifies signatures and stores slices, and the dashboard that charts the pool.
 
-| Command | Description |
-|---------|-------------|
-| `cc-sentiment` | Interactive TUI. Sets up if needed, then scores and uploads. |
-| `cc-sentiment setup` | Re-run the setup wizard. Auto-detects and links an existing key when possible, otherwise walks through picking or generating a signing key with honest verified / pending / failed end-states. |
-| `cc-sentiment run` | Score new transcripts and upload. Non-interactive; safe for cron, SSH, and launchd. |
-| `cc-sentiment install` | Schedule a daily background run via launchd. |
-| `cc-sentiment uninstall` | Stop and remove the scheduled run. |
-
-## Development
-
-See `AGENTS.md` for conventions. Each component has its own: `server/AGENTS.md`, `app/AGENTS.md`, `client/AGENTS.md`.
-
-## License
-
-[MIT](client/LICENSE)
+Watch the experiment live at [sentiments.cc](https://sentiments.cc). Licensed under [MIT](client/LICENSE).
