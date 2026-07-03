@@ -76,6 +76,7 @@ dev = [
     "pytest-xdist>=3.6",
 ]
 
-# TODO: TEMPORARY override for the unreleased cc-transcript v8 — drop before release.
-[tool.uv.sources]
-cc-transcript = { path = "../../cc-transcript", editable = true }
+# cc-transcript is a Rust package with macOS/Linux wheels only (no Windows), so
+# scope lock resolution to the platforms it actually supports.
+[tool.uv]
+environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
