@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from .adapter import ASSISTANT_TRUNCATION
 from .backend import ParsedTranscript
 from .bucketer import BUCKET_MINUTES, MIN_USER_TURNS_PER_SESSION, ConversationBucketer
 from .parser import (

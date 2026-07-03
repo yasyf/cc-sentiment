@@ -26,52 +26,26 @@ from cc_sentiment.engines import (
 from cc_sentiment.engines.protocol import DEFAULT_MODEL
 from cc_sentiment.text import extract_score
 from cc_sentiment.models import (
-    AssistantMessage,
     BucketIndex,
     ConversationBucket,
     SentimentScore,
     SessionId,
-    TranscriptMessage,
-    UserMessage,
 )
 from cc_sentiment.transcripts.filterspec import SENTIMENT_SCORE_SPEC
+from tests.helpers import make_assistant_event, make_user_event
 
 MLX_AVAILABLE: bool = find_spec("mlx_lm") is not None
 CLAUDE_INSTALL_HINT = "curl -fsSL https://claude.ai/install.sh | bash"
 
-
-def make_message(role: str, content: str) -> TranscriptMessage:
-    match role:
-        case "user":
-            return UserMessage(
-                content=content,
-                timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
-                session_id=SessionId("test"),
-                uuid="u1",
-                tool_calls=(),
-                thinking_chars=0,
-                cc_version="2.1.92",
-            )
-        case "assistant":
-            return AssistantMessage(
-                content=content,
-                timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
-                session_id=SessionId("test"),
-                uuid="u1",
-                tool_calls=(),
-                thinking_chars=0,
-                claude_model="claude-sonnet-4-20250514",
-            )
-        case _:
-            raise ValueError(f"unknown role: {role}")
+BUCKET_START = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 def make_bucket(user_text: str) -> ConversationBucket:
     return ConversationBucket(
         session_id=SessionId("test"),
         bucket_index=BucketIndex(0),
-        bucket_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        messages=(make_message("user", user_text),),
+        bucket_start=BUCKET_START,
+        events=(make_user_event(user_text, session_id="test", timestamp=BUCKET_START),),
     )
 
 
@@ -109,11 +83,11 @@ class TestFrustrationHelper:
         bucket = ConversationBucket(
             session_id=SessionId("test"),
             bucket_index=BucketIndex(0),
-            bucket_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            messages=(
-                make_message("user", "commit that"),
-                make_message("user", "wtf is this fucking broken"),
-                make_message("user", "ok proceed"),
+            bucket_start=BUCKET_START,
+            events=(
+                make_user_event("commit that", session_id="test", timestamp=BUCKET_START),
+                make_user_event("wtf is this fucking broken", session_id="test", timestamp=BUCKET_START),
+                make_user_event("ok proceed", session_id="test", timestamp=BUCKET_START),
             ),
         )
         assert matched_user_message(bucket) == "wtf is this fucking broken"
@@ -125,8 +99,8 @@ class TestFrustrationHelper:
         bucket = ConversationBucket(
             session_id=SessionId("test"),
             bucket_index=BucketIndex(0),
-            bucket_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            messages=(make_message("assistant", "wtf fuck you"),),
+            bucket_start=BUCKET_START,
+            events=(make_assistant_event("wtf fuck you", session_id="test", timestamp=BUCKET_START),),
         )
         assert matched_user_message(bucket) is None
 

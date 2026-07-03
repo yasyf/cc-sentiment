@@ -9,6 +9,10 @@ from pathlib import Path
 import anyio
 import anyio.to_thread
 
+from cc_transcript.models import UserEvent, tool_uses
+from cc_transcript.sentiment.buckets import ConversationEvent
+from cc_transcript.tools import ReadCall, parse_tool_call
+
 from cc_sentiment.debug import BucketHash
 from cc_sentiment.engines import (
     NOOP_PROGRESS,
@@ -24,7 +28,6 @@ from cc_sentiment.models import (
     SentimentRecord,
     SentimentScore,
     SessionId,
-    TranscriptMessage,
 )
 from cc_sentiment.repo import Repository
 from cc_sentiment.transcripts import (
@@ -86,12 +89,12 @@ class Pipeline:
 
     @staticmethod
     def buckets_with_metrics(
-        messages: tuple[TranscriptMessage, ...],
+        events: tuple[ConversationEvent, ...],
         scored_buckets: frozenset[BucketKey],
     ) -> tuple[list[ConversationBucket], dict[BucketKey, BucketMetrics]]:
-        if not messages:
+        if not events:
             return [], {}
-        all_buckets = ConversationBucketer.bucket_messages(list(messages))
+        all_buckets = ConversationBucketer.bucket_events(events)
 
         by_session: dict[SessionId, list[ConversationBucket]] = {}
         for b in all_buckets:
@@ -102,17 +105,17 @@ class Pipeline:
             session_buckets.sort(key=lambda b: b.bucket_index)
             reads_so_far: set[str] = set()
             for bucket in session_buckets:
-                metrics = BucketMetrics.from_messages_with_history(
-                    bucket.messages, frozenset(reads_so_far)
+                metrics = BucketMetrics.from_events_with_history(
+                    bucket.events, frozenset(reads_so_far)
                 )
                 metrics_by_key[
                     BucketKey(session_id=bucket.session_id, bucket_index=bucket.bucket_index)
                 ] = metrics
                 reads_so_far.update(
-                    c.file_path
-                    for m in bucket.messages
-                    for c in m.tool_calls
-                    if c.name == "Read" and c.file_path
+                    call.file_path
+                    for e in bucket.events
+                    for block in tool_uses(e)
+                    if isinstance(call := parse_tool_call(block.name, block.input, on_error="other"), ReadCall)
                 )
 
         new_buckets = [
@@ -137,22 +140,22 @@ class Pipeline:
         if score == 1 and (matched := matched_user_message(bucket)) is not None:
             if cleaned := cls.clean_snippet(matched):
                 return cleaned
-        user_msgs = [m for m in bucket.messages if m.role == "user"]
-        if score in (1, 2, 4, 5) and user_msgs:
-            ranked = await anyio.to_thread.run_sync(cls.rank_user_messages, user_msgs, score)
+        user_events = [e for e in bucket.events if isinstance(e, UserEvent)]
+        if score in (1, 2, 4, 5) and user_events:
+            ranked = await anyio.to_thread.run_sync(cls.rank_user_events, user_events, score)
         else:
-            ranked = user_msgs
-        for msg in ranked:
-            if cleaned := cls.clean_snippet(msg.content):
+            ranked = user_events
+        for event in ranked:
+            if cleaned := cls.clean_snippet(event.text):
                 return cleaned
         return ""
 
     @staticmethod
-    def rank_user_messages(
-        user_msgs: Sequence[TranscriptMessage], score: int
-    ) -> list[TranscriptMessage]:
+    def rank_user_events(
+        user_events: Sequence[UserEvent], score: int
+    ) -> list[UserEvent]:
         direction = -1 if score >= 4 else 1
-        return sorted(user_msgs, key=lambda m: direction * Highlighter.message_polarity(m.content))
+        return sorted(user_events, key=lambda e: direction * Highlighter.message_polarity(e.text))
 
     @staticmethod
     def to_record(
@@ -187,7 +190,7 @@ class Pipeline:
         on_frustration: Callable[[list[str]], None] = lambda _: None,
     ) -> list[SentimentRecord]:
         new_buckets, metrics_by_key = cls.buckets_with_metrics(
-            parsed.messages, scored_buckets
+            parsed.events, scored_buckets
         )
         if not new_buckets:
             return []
@@ -201,9 +204,9 @@ class Pipeline:
                     await on_snippet(snippet, int(score), BucketHash.of_bucket(bucket))
                 if words := [
                     w
-                    for msg in bucket.messages
-                    if msg.role == "user"
-                    for w in Highlighter.profanity_tokens_in(msg.content)
+                    for e in bucket.events
+                    if isinstance(e, UserEvent)
+                    for w in Highlighter.profanity_tokens_in(e.text)
                 ]:
                     on_frustration(words)
             chunk_records = [

@@ -10,18 +10,16 @@ import pytest
 from datetime import datetime, timezone
 
 from cc_sentiment.models import (
-    AssistantMessage,
     BucketIndex,
     BucketKey,
     SentimentRecord,
     SentimentScore,
     SessionId,
-    UserMessage,
 )
 from cc_sentiment.pipeline import Pipeline, ScanCache, ScannedTranscript, ScanResult
 from cc_sentiment.repo import Repository
 from cc_sentiment.transcripts import ParsedTranscript, TranscriptParser
-from tests.helpers import make_parsed, make_record
+from tests.helpers import make_assistant_event, make_parsed, make_record, make_user_event
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "sample_transcript.jsonl"
 
@@ -94,8 +92,8 @@ def fixture_parsed() -> ParsedTranscript:
 
 
 class TestScoreTranscript:
-    def test_empty_messages_returns_empty(self) -> None:
-        parsed = ParsedTranscript(path=Path("/empty.jsonl"), mtime=0.0, bucket_keys=(), messages=())
+    def test_empty_events_returns_empty(self) -> None:
+        parsed = ParsedTranscript(path=Path("/empty.jsonl"), mtime=0.0, bucket_keys=(), events=())
         classifier = MagicMock()
         classifier.score = AsyncMock(return_value=[])
 
@@ -172,7 +170,7 @@ class TestCrossBucketReadHistory:
                 '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"open it"},"uuid":"u1","timestamp":"2026-04-10T07:36:00.000Z","sessionId":"session-cross","version":"2.1.92"}',
                 '{"parentUuid":"u1","message":{"model":"claude-sonnet-4-20250514","type":"message","role":"assistant","content":[{"type":"text","text":"reading"},{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/a.py"}}]},"type":"assistant","uuid":"a1","timestamp":"2026-04-10T07:36:30.000Z","sessionId":"session-cross"}',
                 '{"parentUuid":"a1","isSidechain":false,"type":"user","message":{"role":"user","content":"now edit it"},"uuid":"u2","timestamp":"2026-04-10T07:46:00.000Z","sessionId":"session-cross","version":"2.1.92"}',
-                '{"parentUuid":"u2","message":{"model":"claude-sonnet-4-20250514","type":"message","role":"assistant","content":[{"type":"text","text":"editing"},{"type":"tool_use","id":"t2","name":"Edit","input":{"file_path":"/a.py"}}]},"type":"assistant","uuid":"a2","timestamp":"2026-04-10T07:46:30.000Z","sessionId":"session-cross"}',
+                '{"parentUuid":"u2","message":{"model":"claude-sonnet-4-20250514","type":"message","role":"assistant","content":[{"type":"text","text":"editing"},{"type":"tool_use","id":"t2","name":"Edit","input":{"file_path":"/a.py","old_string":"x","new_string":"y"}}]},"type":"assistant","uuid":"a2","timestamp":"2026-04-10T07:46:30.000Z","sessionId":"session-cross"}',
             ])
         )
 
@@ -180,7 +178,7 @@ class TestCrossBucketReadHistory:
             return [p async for p in TranscriptParser.stream_transcripts([(path, 0.0)])]
 
         [parsed] = anyio.run(load)
-        new_buckets, metrics_by_key = Pipeline.buckets_with_metrics(parsed.messages, frozenset())
+        new_buckets, metrics_by_key = Pipeline.buckets_with_metrics(parsed.events, frozenset())
         assert len(new_buckets) == 2
         bucket_1_key = BucketKey(session_id=SessionId("session-cross"), bucket_index=BucketIndex(3))
         assert metrics_by_key[bucket_1_key].edits_without_prior_read_ratio == 0.0
@@ -190,7 +188,7 @@ class TestCrossBucketReadHistory:
         path.write_text(
             "\n".join([
                 '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"edit"},"uuid":"u1","timestamp":"2026-04-10T07:36:00.000Z","sessionId":"session-x","version":"2.1.92"}',
-                '{"parentUuid":"u1","message":{"model":"claude-sonnet-4-20250514","type":"message","role":"assistant","content":[{"type":"text","text":"k"},{"type":"tool_use","id":"t","name":"Edit","input":{"file_path":"/a.py"}}]},"type":"assistant","uuid":"a1","timestamp":"2026-04-10T07:36:30.000Z","sessionId":"session-x"}',
+                '{"parentUuid":"u1","message":{"model":"claude-sonnet-4-20250514","type":"message","role":"assistant","content":[{"type":"text","text":"k"},{"type":"tool_use","id":"t","name":"Edit","input":{"file_path":"/a.py","old_string":"x","new_string":"y"}}]},"type":"assistant","uuid":"a1","timestamp":"2026-04-10T07:36:30.000Z","sessionId":"session-x"}',
                 '{"parentUuid":"a1","isSidechain":false,"type":"user","message":{"role":"user","content":"thanks"},"uuid":"u2","timestamp":"2026-04-10T07:37:00.000Z","sessionId":"session-x","version":"2.1.92"}',
                 '{"parentUuid":"u2","message":{"model":"claude-sonnet-4-20250514","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}]},"type":"assistant","uuid":"a2","timestamp":"2026-04-10T07:37:30.000Z","sessionId":"session-x"}',
             ])
@@ -200,7 +198,7 @@ class TestCrossBucketReadHistory:
             return [p async for p in TranscriptParser.stream_transcripts([(path, 0.0)])]
 
         [parsed] = anyio.run(load)
-        _, metrics_by_key = Pipeline.buckets_with_metrics(parsed.messages, frozenset())
+        _, metrics_by_key = Pipeline.buckets_with_metrics(parsed.events, frozenset())
         bucket_key = BucketKey(session_id=SessionId("session-x"), bucket_index=BucketIndex(0))
         assert metrics_by_key[bucket_key].edits_without_prior_read_ratio == 1.0
 
@@ -253,24 +251,10 @@ class TestOnFrustration:
     def make_pair(user_text: str) -> list:
         ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
         return [
-            UserMessage(
-                content=user_text, timestamp=ts, session_id=SessionId("s1"),
-                uuid="u1", tool_calls=(), thinking_chars=0, cc_version="2.1.92",
-            ),
-            AssistantMessage(
-                content="ack", timestamp=ts, session_id=SessionId("s1"),
-                uuid="a1", tool_calls=(), thinking_chars=0,
-                claude_model="claude-sonnet-4-20250514",
-            ),
-            UserMessage(
-                content="ok thanks", timestamp=ts, session_id=SessionId("s1"),
-                uuid="u2", tool_calls=(), thinking_chars=0, cc_version="2.1.92",
-            ),
-            AssistantMessage(
-                content="np", timestamp=ts, session_id=SessionId("s1"),
-                uuid="a2", tool_calls=(), thinking_chars=0,
-                claude_model="claude-sonnet-4-20250514",
-            ),
+            make_user_event(user_text, uuid="u1", session_id="s1", timestamp=ts),
+            make_assistant_event("ack", uuid="a1", session_id="s1", timestamp=ts),
+            make_user_event("ok thanks", uuid="u2", session_id="s1", timestamp=ts),
+            make_assistant_event("np", uuid="a2", session_id="s1", timestamp=ts),
         ]
 
     @pytest.mark.parametrize("score", [SentimentScore(s) for s in (1, 2, 3, 4, 5)])

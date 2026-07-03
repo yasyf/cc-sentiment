@@ -16,42 +16,31 @@ from cc_sentiment.text import (
     extract_score,
     format_conversation,
 )
+from cc_transcript.sentiment.buckets import ConversationEvent
+
 from cc_sentiment.models import (
-    AssistantMessage,
     BucketIndex,
     ConversationBucket,
     SentimentScore,
     SessionId,
-    TranscriptMessage,
-    UserMessage,
 )
+from tests.helpers import make_assistant_event, make_user_event
 
 MLX_AVAILABLE: bool = (
     find_spec("mlx_lm") is not None and sys.platform == "darwin"
 )
 
 
-def _make_message(role: str, content: str, i: int) -> TranscriptMessage:
+def _make_event(role: str, content: str, i: int) -> ConversationEvent:
+    timestamp = datetime(2026, 4, 10, 7, 35, i, tzinfo=timezone.utc)
     match role:
         case "user":
-            return UserMessage(
-                content=content,
-                timestamp=datetime(2026, 4, 10, 7, 35, i, tzinfo=timezone.utc),
-                session_id=SessionId("test-session"),
-                uuid=f"uuid-{i}",
-                tool_calls=(),
-                thinking_chars=0,
-                cc_version="2.1.92",
+            return make_user_event(
+                content, uuid=f"uuid-{i}", session_id="test-session", timestamp=timestamp
             )
         case "assistant":
-            return AssistantMessage(
-                content=content,
-                timestamp=datetime(2026, 4, 10, 7, 35, i, tzinfo=timezone.utc),
-                session_id=SessionId("test-session"),
-                uuid=f"uuid-{i}",
-                tool_calls=(),
-                thinking_chars=0,
-                claude_model="claude-sonnet-4-20250514",
+            return make_assistant_event(
+                content, uuid=f"uuid-{i}", session_id="test-session", timestamp=timestamp
             )
         case _:
             raise ValueError(f"unknown role: {role}")
@@ -65,8 +54,8 @@ def make_bucket(
         session_id=SessionId("test-session"),
         bucket_index=BucketIndex(0),
         bucket_start=datetime(2026, 4, 10, 7, 35, 0, tzinfo=timezone.utc),
-        messages=tuple(
-            _make_message(role, content, i) for i, (role, content) in enumerate(msgs)
+        events=tuple(
+            _make_event(role, content, i) for i, (role, content) in enumerate(msgs)
         ),
     )
 
@@ -260,7 +249,7 @@ async def test_score_meets_calibrated_throughput_floor() -> None:
     paths = [(p, TranscriptDiscovery.stat_mtime(p) or 0.0) for p in transcripts]
     buckets: list[ConversationBucket] = []
     async for parsed in TranscriptParser.stream_transcripts(paths):
-        buckets.extend(ConversationBucketer.bucket_messages(list(parsed.messages)))
+        buckets.extend(ConversationBucketer.bucket_events(parsed.events))
         if len(buckets) >= 50:
             break
     buckets = buckets[:50]

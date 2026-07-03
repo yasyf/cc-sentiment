@@ -51,7 +51,7 @@ class BenchmarkRunner:
             buckets: list[ConversationBucket] = []
             with click.progressbar(length=len(paths), label="Parsing transcripts") as bar:
                 async for parsed in TranscriptParser.stream_transcripts(paths):
-                    buckets.extend(ConversationBucketer.bucket_messages(list(parsed.messages)))
+                    buckets.extend(ConversationBucketer.bucket_events(parsed.events))
                     bar.update(1)
             return buckets
 

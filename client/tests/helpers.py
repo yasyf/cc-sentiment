@@ -4,16 +4,86 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
+from cc_transcript.models import (
+    AssistantEvent,
+    CcVersion,
+    ContentBlock,
+    EntryMeta,
+    EventUuid,
+    UserEvent,
+)
+from cc_transcript.sentiment.buckets import ConversationEvent
+
 from cc_sentiment.models import (
     BucketIndex,
     BucketKey,
     SentimentRecord,
     SentimentScore,
     SessionId,
-    TranscriptMessage,
 )
 from cc_sentiment.pipeline import ScannedTranscript, ScanResult
 from cc_sentiment.transcripts import ConversationBucketer, ParsedTranscript
+
+DEFAULT_TIMESTAMP = datetime(2026, 4, 10, 7, 35, 0, tzinfo=timezone.utc)
+
+
+def make_meta(
+    uuid: str = "u",
+    *,
+    session_id: str = "s",
+    timestamp: datetime | None = None,
+    cc_version: str | None = "2.1.92",
+) -> EntryMeta:
+    return EntryMeta(
+        uuid=EventUuid(uuid),
+        parent_uuid=None,
+        session_id=SessionId(session_id),
+        timestamp=timestamp or DEFAULT_TIMESTAMP,
+        cwd=None,
+        git_branch=None,
+        cc_version=CcVersion(cc_version) if cc_version else None,
+        is_sidechain=False,
+        is_meta=False,
+        entrypoint="cli",
+        is_compact_summary=False,
+        is_visible_in_transcript_only=False,
+    )
+
+
+def make_user_event(
+    text: str,
+    *,
+    uuid: str = "u1",
+    session_id: str = "s",
+    timestamp: datetime | None = None,
+    cc_version: str | None = "2.1.92",
+    blocks: tuple[ContentBlock, ...] = (),
+) -> UserEvent:
+    return UserEvent(
+        meta=make_meta(uuid, session_id=session_id, timestamp=timestamp, cc_version=cc_version),
+        text=text,
+        blocks=blocks,
+        interrupted=False,
+    )
+
+
+def make_assistant_event(
+    text: str,
+    *,
+    uuid: str = "a1",
+    session_id: str = "s",
+    timestamp: datetime | None = None,
+    model: str = "claude-sonnet-4-20250514",
+    blocks: tuple[ContentBlock, ...] = (),
+) -> AssistantEvent:
+    return AssistantEvent(
+        meta=make_meta(uuid, session_id=session_id, timestamp=timestamp, cc_version=None),
+        model=model,
+        text=text,
+        blocks=blocks,
+        stop_reason=None,
+        usage=None,
+    )
 
 
 def make_record(
@@ -43,10 +113,10 @@ def make_record(
 
 def make_parsed(
     path: Path,
-    messages: Sequence[TranscriptMessage],
+    events: Sequence[ConversationEvent],
     mtime: float = 0.0,
 ) -> ParsedTranscript:
-    buckets = ConversationBucketer.bucket_messages(list(messages))
+    buckets = ConversationBucketer.bucket_events(events)
     return ParsedTranscript(
         path=path,
         mtime=mtime,
@@ -54,7 +124,7 @@ def make_parsed(
             BucketKey(session_id=b.session_id, bucket_index=b.bucket_index)
             for b in buckets
         ),
-        messages=tuple(messages),
+        events=tuple(events),
     )
 
 

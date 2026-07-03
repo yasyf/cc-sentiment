@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+from cc_transcript.models import UserEvent
+
 from cc_sentiment.models import ConversationBucket, SentimentScore
 
 MAX_CONVERSATION_CHARS = 8192
@@ -10,8 +12,8 @@ SCORE_RX = re.compile(r"[1-5]")
 
 def format_conversation(bucket: ConversationBucket) -> str:
     full = "\n".join(
-        f"{'DEVELOPER' if msg.role == 'user' else 'AI'}: {msg.content}"
-        for msg in bucket.messages
+        f"{'DEVELOPER' if isinstance(e, UserEvent) else 'AI'}: {e.text}"
+        for e in bucket.events
     )
     return (
         full[:MAX_CONVERSATION_CHARS] + "\n[... truncated]"

@@ -16,8 +16,8 @@ from cc_sentiment.models import (
     BucketIndex,
     ConversationBucket,
     SessionId,
-    UserMessage,
 )
+from tests.helpers import make_user_event
 
 FIXTURES: Path = Path(__file__).parent / "fixtures"
 F32_SAMPLE: Path = FIXTURES / "adapter_f32_sample.safetensors"
@@ -116,11 +116,10 @@ class TestSmokeEvalAccuracy:
                 session_id=SessionId(f"smoke-{i}"),
                 bucket_index=BucketIndex(0),
                 bucket_start=ts,
-                messages=(
-                    UserMessage(
-                        content=s["text"], timestamp=ts,
-                        session_id=SessionId(f"smoke-{i}"), uuid=f"u-{i}",
-                        tool_calls=(), thinking_chars=0, cc_version="2.1.117",
+                events=(
+                    make_user_event(
+                        s["text"], uuid=f"u-{i}", session_id=f"smoke-{i}",
+                        timestamp=ts, cc_version="2.1.117",
                     ),
                 ),
             )

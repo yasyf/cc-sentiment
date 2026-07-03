@@ -47,7 +47,7 @@ class Profiler:
             paths = [(p, await TranscriptDiscovery.stat_mtime(p) or 0.0) for p in transcripts]
             buckets: list[ConversationBucket] = []
             async for parsed in TranscriptParser.stream_transcripts(paths):
-                buckets.extend(ConversationBucketer.bucket_messages(list(parsed.messages)))
+                buckets.extend(ConversationBucketer.bucket_events(parsed.events))
                 if len(buckets) >= target:
                     break
             return buckets[:target]

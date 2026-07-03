@@ -8,8 +8,8 @@ from cc_transcript import (
     TranscriptDiscovery,
 )
 from cc_transcript import TranscriptParser as CcTranscriptParser
+from cc_transcript.models import AssistantEvent, UserEvent
 
-from cc_sentiment.transcripts.adapter import ASSISTANT_TRUNCATION, to_messages
 from cc_sentiment.transcripts.filterspec import SENTIMENT_SPEC
 from cc_sentiment.transcripts.backend import ParsedTranscript
 from cc_sentiment.transcripts.bucketer import (
@@ -30,7 +30,7 @@ EPHEMERAL_ENTRYPOINTS: frozenset[str] = frozenset({"sdk-cli"})
 
 class TranscriptParser:
     """Parses transcripts into cc-sentiment buckets via the shared cc-transcript
-    backend, filtered by ``SENTIMENT_SPEC`` and adapted to ``TranscriptMessage``."""
+    backend, filtered by ``SENTIMENT_SPEC`` down to the conversational event spine."""
 
     PREFETCH: ClassVar[int] = 8
 
@@ -68,10 +68,10 @@ class TranscriptParser:
         async for parsed in CcTranscriptParser.stream_transcripts(
             paths, prefetch=prefetch if prefetch is not None else cls.PREFETCH, spec=SENTIMENT_SPEC
         ):
-            messages = to_messages(parsed.events)
+            events = tuple(e for e in parsed.events if isinstance(e, UserEvent | AssistantEvent))
             yield ParsedTranscript(
                 path=parsed.path,
                 mtime=parsed.mtime,
-                bucket_keys=tuple(extract_bucket_keys(list(messages))),
-                messages=messages,
+                bucket_keys=tuple(extract_bucket_keys(events)),
+                events=events,
             )

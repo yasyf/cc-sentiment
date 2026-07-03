@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from cc_transcript.filterspec import FRUSTRATION_GROUPS, compile_groups
+from cc_transcript.models import UserEvent
 
 if TYPE_CHECKING:
     from cc_transcript.sentiment import ConversationBucket
@@ -23,4 +24,4 @@ def matches_frustration(text: str) -> bool:
 
 
 def matched_user_message(bucket: ConversationBucket) -> str | None:
-    return next((m.content for m in bucket.messages if m.role == "user" and matches_frustration(m.content)), None)
+    return next((e.text for e in bucket.events if isinstance(e, UserEvent) and matches_frustration(e.text)), None)

@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock
 import orjson
 import pytest
 
+from cc_transcript.models import UserEvent
+
 from cc_sentiment.debug import BucketHash, BucketLookup, BucketLookupResult
 from cc_sentiment.models import (
     BucketIndex,
@@ -16,6 +18,7 @@ from cc_sentiment.models import (
     SessionId,
 )
 from cc_sentiment.repo import Repository
+from tests.helpers import make_assistant_event, make_user_event
 
 
 def make_record(session_id: str, bucket_index: int, score: int) -> SentimentRecord:
@@ -146,7 +149,7 @@ class TestBucketLookup:
         assert isinstance(result, BucketLookupResult)
         assert result.record.conversation_id == session_id
         assert result.transcript_path == jsonl
-        assert any(m.role == "user" for m in result.bucket.messages)
+        assert any(isinstance(e, UserEvent) for e in result.bucket.events)
 
     async def test_distinguishes_long_prefix_among_collisions(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -178,34 +181,17 @@ class TestBucketLookup:
 
 class TestBucketLookupFormat:
     def test_format_includes_score_and_path(self, tmp_path: Path) -> None:
-        from cc_sentiment.models import (
-            AssistantMessage,
-            ConversationBucket,
-            UserMessage,
-        )
+        from cc_sentiment.models import ConversationBucket
+
         rec = make_record("session-fmt", 0, 4)
         bucket = ConversationBucket(
             session_id=rec.conversation_id,
             bucket_index=rec.bucket_index,
             bucket_start=rec.time,
-            messages=(
-                UserMessage(
-                    content="hi",
-                    timestamp=rec.time,
-                    session_id=rec.conversation_id,
-                    uuid="u1",
-                    tool_calls=(),
-                    thinking_chars=0,
-                    cc_version="2.1.92",
-                ),
-                AssistantMessage(
-                    content="ok",
-                    timestamp=rec.time,
-                    session_id=rec.conversation_id,
-                    uuid="u2",
-                    tool_calls=(),
-                    thinking_chars=0,
-                    claude_model="m",
+            events=(
+                make_user_event("hi", session_id=rec.conversation_id, timestamp=rec.time),
+                make_assistant_event(
+                    "ok", uuid="u2", session_id=rec.conversation_id, timestamp=rec.time, model="m"
                 ),
             ),
         )

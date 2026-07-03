@@ -3,11 +3,16 @@ from __future__ import annotations
 from collections import Counter
 from typing import NewType
 
-from cc_transcript.models import SessionId
-from cc_transcript.sentiment.buckets import BucketIndex, BucketKey, ConversationBucket, SentimentScore
+from cc_transcript.models import AssistantEvent, SessionId, UserEvent, thinking_chars, tool_uses
+from cc_transcript.sentiment.buckets import (
+    BucketIndex,
+    BucketKey,
+    ConversationBucket,
+    ConversationEvent,
+    SentimentScore,
+)
+from cc_transcript.tools import EditCall, ReadCall, WriteCall, parse_tool_call
 from pydantic import BaseModel
-
-from .transcript import AssistantMessage, TranscriptMessage, UserMessage
 
 PromptVersion = NewType("PromptVersion", str)
 
@@ -28,36 +33,36 @@ class BucketMetrics(BaseModel, frozen=True):
     claude_model: str
 
     @staticmethod
-    def from_messages(messages: tuple[TranscriptMessage, ...]) -> BucketMetrics:
-        return BucketMetrics.from_messages_with_history(messages, frozenset())
+    def from_events(events: tuple[ConversationEvent, ...]) -> BucketMetrics:
+        return BucketMetrics.from_events_with_history(events, frozenset())
 
     @staticmethod
-    def from_messages_with_history(
-        messages: tuple[TranscriptMessage, ...],
+    def from_events_with_history(
+        events: tuple[ConversationEvent, ...],
         prior_reads: frozenset[str] | set[str],
     ) -> BucketMetrics:
-        users = tuple(m for m in messages if isinstance(m, UserMessage))
-        assistants = tuple(m for m in messages if isinstance(m, AssistantMessage))
+        users = tuple(e for e in events if isinstance(e, UserEvent))
+        assistants = tuple(e for e in events if isinstance(e, AssistantEvent))
         if not users or not assistants:
-            raise ValueError("bucket must have both user and assistant messages")
+            raise ValueError("bucket must have both user and assistant events")
 
-        all_calls = tuple(c for m in messages for c in m.tool_calls)
-        tool_counts = Counter(c.name for c in all_calls)
+        all_calls = tuple(block for e in events for block in tool_uses(e))
+        tool_counts = Counter(block.name for block in all_calls)
         read_ops = sum(tool_counts[t] for t in ("Read", "Grep", "Glob"))
         write_ops = sum(tool_counts[t] for t in ("Edit", "Write"))
-        thinking = sum(m.thinking_chars for m in messages)
+        thinking = sum(thinking_chars(e) for e in events)
 
         reads_seen = set(prior_reads)
         edits_count = 0
         edits_without_read = 0
-        for msg in messages:
-            for call in msg.tool_calls:
-                match call.name:
-                    case "Read" if call.file_path:
-                        reads_seen.add(call.file_path)
-                    case "Edit" | "Write" if call.file_path:
+        for event in events:
+            for block in tool_uses(event):
+                match parse_tool_call(block.name, block.input, on_error="other"):
+                    case ReadCall(file_path=path):
+                        reads_seen.add(path)
+                    case EditCall(file_path=path) | WriteCall(file_path=path):
                         edits_count += 1
-                        if call.file_path not in reads_seen:
+                        if path not in reads_seen:
                             edits_without_read += 1
 
         writes_only = tool_counts.get("Write", 0)
@@ -74,6 +79,6 @@ class BucketMetrics(BaseModel, frozen=True):
             turn_count=len(users),
             thinking_present=thinking > 0,
             thinking_chars=thinking,
-            cc_version=users[-1].cc_version,
-            claude_model=assistants[-1].claude_model,
+            cc_version=users[-1].meta.cc_version or "",
+            claude_model=assistants[-1].model,
         )

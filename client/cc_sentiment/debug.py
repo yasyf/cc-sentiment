@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
+from cc_transcript.models import UserEvent
+from cc_transcript.sentiment.buckets import ConversationEvent
+
 from cc_sentiment.models import (
     BucketIndex,
     ConversationBucket,
@@ -12,7 +15,7 @@ from cc_sentiment.models import (
     SessionId,
 )
 from cc_sentiment.repo import Repository
-from cc_sentiment.transcripts import TranscriptDiscovery, TranscriptParser
+from cc_sentiment.transcripts import ConversationBucketer, TranscriptDiscovery, TranscriptParser
 
 
 class BucketHash:
@@ -56,7 +59,7 @@ class BucketLookup:
         for path in await TranscriptDiscovery.find_transcripts():
             mtime = await TranscriptDiscovery.transcript_mtime(path)
             async for parsed in TranscriptParser.stream_transcripts([(path, mtime)]):
-                bucket = cls.locate_bucket(parsed.messages, target_session, target_idx)
+                bucket = cls.locate_bucket(parsed.events, target_session, target_idx)
                 if bucket is not None:
                     return BucketLookupResult(
                         record=match,
@@ -67,13 +70,12 @@ class BucketLookup:
 
     @staticmethod
     def locate_bucket(
-        messages: tuple, target_session: SessionId, target_idx: BucketIndex
+        events: tuple[ConversationEvent, ...], target_session: SessionId, target_idx: BucketIndex
     ) -> ConversationBucket | None:
-        from cc_sentiment.transcripts import ConversationBucketer
         return next(
             (
                 b
-                for b in ConversationBucketer.bucket_messages(list(messages))
+                for b in ConversationBucketer.bucket_events(events)
                 if b.session_id == target_session and b.bucket_index == target_idx
             ),
             None,
@@ -89,9 +91,9 @@ class BucketLookup:
             f"  cc_version={result.record.cc_version}  client_version={result.record.client_version}",
             "",
         ]
-        for msg in result.bucket.messages:
-            tag = "USER" if msg.role == "user" else "AI  "
-            ts = msg.timestamp.strftime("%H:%M:%S")
-            content = msg.content.replace("\n", " ⏎ ")
+        for event in result.bucket.events:
+            tag = "USER" if isinstance(event, UserEvent) else "AI  "
+            ts = event.meta.timestamp.strftime("%H:%M:%S")
+            content = event.text.replace("\n", " ⏎ ")
             lines.append(f"  [{ts}] {tag}: {content}")
         return "\n".join(lines)
