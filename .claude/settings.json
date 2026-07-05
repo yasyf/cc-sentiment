@@ -100,5 +100,16 @@
         ]
       }
     ]
+  },
+  "extraKnownMarketplaces": {
+    "cc-notes": {
+      "source": {
+        "source": "github",
+        "repo": "yasyf/cc-notes"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "cc-notes@cc-notes": true
   }
 }
