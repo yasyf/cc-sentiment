@@ -11,7 +11,7 @@ trap 'rm -rf "$tmpdir"' EXIT
 out="$tmpdir/demo.ansi"
 
 printf '$ uvx cc-sentiment --help\n' >"$out"
-FORCE_COLOR=1 CC_SENTIMENT_NO_TELEMETRY=1 uvx cc-sentiment --help >>"$out"
+env -u UV_EXCLUDE_NEWER FORCE_COLOR=1 CC_SENTIMENT_NO_TELEMETRY=1 uvx cc-sentiment --help >>"$out"
 
 freeze "$out" \
   --language ansi \
