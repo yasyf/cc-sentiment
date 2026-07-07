@@ -16,11 +16,10 @@ Needs [uv](https://docs.astral.sh/uv/). Local scoring uses MLX on Apple Silicon 
 
 The client uploads only numbers and timestamps for each 5-minute bucket of a conversation.
 
-- Sentiment score on a 1–5 scale
-- Read:edit ratio, edits-without-prior-read %, write:edit ratio, tool calls per turn, subagent spawn rate
-- Turn count, thinking present/chars
+- Sentiment score on a 1 to 5 scale
+- Read-to-edit ratio, edits-without-prior-read %, write-to-edit ratio, tool calls per turn, subagent spawn rate, turn count, and thinking present/chars
 - Claude model and Claude Code version
-- A public verification handle (GitHub username or GPG fingerprint) used only to find a public key and verify signatures
+- A public verification handle, your GitHub username or GPG fingerprint, used only to find a public key and verify signatures
 
 Your conversation text, file contents, file paths, prompts, tool inputs, and tool outputs are not uploaded to sentiments.cc.
 
@@ -28,13 +27,12 @@ Your conversation text, file contents, file paths, prompts, tool inputs, and too
 
 | Command | Description |
 |---------|-------------|
-| `cc-sentiment` | Run the whole flow. Sets up if needed, then scans and uploads. |
-| `cc-sentiment setup` | Set up a verification key (GitHub or GPG) so uploads can be signed |
-| `cc-sentiment scan --upload` | Score new transcripts and upload |
-| `cc-sentiment scan` | Score transcripts without uploading |
-| `cc-sentiment upload` | Upload previously scored results |
-| `cc-sentiment rescan` | Clear state and re-score everything |
-| `cc-sentiment debug` | Print hardware, engine, Claude CLI, server, and Sentry probes for diagnostics |
+| `cc-sentiment` | Interactive TUI. Sets up if needed, then scores and uploads. |
+| `cc-sentiment setup` | Re-run the setup wizard to pick, generate, or re-link a signing key. |
+| `cc-sentiment run` | Score new transcripts and upload. Non-interactive; safe for cron, SSH, and launchd. |
+| `cc-sentiment install` | Schedule a daily background run via launchd. |
+| `cc-sentiment uninstall` | Stop and remove the scheduled run. |
+| `cc-sentiment debug` | Print hardware, engine, Claude CLI, server, and Sentry probes. |
 
 ## Links
 

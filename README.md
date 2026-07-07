@@ -4,7 +4,7 @@
 
 [![Tests](https://github.com/yasyf/cc-sentiment/actions/workflows/tests-client.yml/badge.svg)](https://github.com/yasyf/cc-sentiment/actions/workflows/tests-client.yml)
 [![PyPI](https://img.shields.io/pypi/v/cc-sentiment)](https://pypi.org/project/cc-sentiment/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](client/LICENSE)
+[![MIT license](https://img.shields.io/badge/license-MIT-blue)](client/LICENSE)
 
 ## Get started
 
@@ -12,7 +12,7 @@
 uvx cc-sentiment
 ```
 
-<img src="docs/dashboard.png" alt="Terminal running 'uvx cc-sentiment' — 42 transcripts scored to an average sentiment of 3.49, numbers uploaded to sentiments.cc" width="700">
+<img src="https://github.com/yasyf/cc-sentiment/raw/main/docs/assets/demo.png" alt="Terminal running 'uvx cc-sentiment --help' — options plus the setup, install, run, and debug commands" width="700">
 
 The first run links a signing key (GitHub or GPG), scores every transcript in `~/.claude/projects/`, and uploads the numbers; your slice joins the pooled charts at [sentiments.cc](https://sentiments.cc). Needs [uv](https://docs.astral.sh/uv/).
 
@@ -30,13 +30,15 @@ Verify my contribution shows up on the dashboard at https://sentiments.cc.
 
 ### Settle whether Claude Code behavior actually shifted
 
-Threads like [anthropics/claude-code#42796](https://github.com/anthropics/claude-code/issues/42796) describe the same drift — fewer reads before edits, lazier patches — but every report is one person's slice. Score yours and pool it:
+Threads like [anthropics/claude-code#42796](https://github.com/anthropics/claude-code/issues/42796) describe the same drift of fewer reads before edits and lazier patches, but every report is one person's slice. Score yours and pool it:
 
 ```bash
 uvx cc-sentiment
 ```
 
-Each 5-minute slice becomes numbers — sentiment, read:edit ratio, edits without a prior read, tool calls per turn — and on the pooled charts a real shift shows up as a line bending, not a vibe.
+<img src="https://github.com/yasyf/cc-sentiment/raw/main/docs/assets/dashboard.png" alt="Terminal running 'uvx cc-sentiment' — 42 transcripts scored to an average sentiment of 3.49, numbers uploaded to sentiments.cc" width="700">
+
+Each 5-minute slice becomes numbers such as sentiment, read-to-edit ratio, edits without a prior read, and tool calls per turn. On the pooled charts a real shift shows up as a line bending, not a vibe.
 
 ### Contribute your sessions without uploading a single prompt
 
@@ -46,7 +48,7 @@ Your transcripts hold prompts, file paths, and diffs you'd never post publicly. 
 uvx cc-sentiment setup
 ```
 
-Setup walks you through linking a GitHub or GPG signing key, with honest verified / pending / failed end-states. Scoring runs on-device (MLX on Apple Silicon; the CLI asks before touching the fallback Claude CLI engine), and each upload is the numbers plus a signature the server verifies without learning anything else about your sessions.
+Setup walks you through linking a GitHub or GPG signing key, with honest verified / pending / failed end-states. Scoring runs on-device with MLX on Apple Silicon, and the CLI asks before touching the fallback Claude CLI engine. Each upload is the numbers plus a signature the server verifies without learning anything else about your sessions.
 
 ### Compare behavior across Claude models and CLI versions
 
@@ -64,10 +66,10 @@ The client records the following per 5-minute slice of each conversation.
 
 | Metric | What it captures |
 |---|---|
-| Sentiment score | 1–5, scored locally |
-| Read:edit ratio | Files Claude reads before editing |
+| Sentiment score | 1 to 5, scored locally |
+| Read-to-edit ratio | Files Claude reads before editing |
 | Edits without prior read % | Edits to files Claude hadn't read this session |
-| Write:edit ratio | File rewrites vs. surgical edits |
+| Write-to-edit ratio | File rewrites vs. surgical edits |
 | Tool calls per turn | Tools invoked between user messages |
 | Subagent spawns | How often Claude delegates to a subagent |
 | Turn count | User-to-assistant exchanges |
@@ -75,7 +77,7 @@ The client records the following per 5-minute slice of each conversation.
 | Claude model | Which model produced the assistant turns |
 | `cc_version` | Claude Code CLI version |
 
-Plus a public verification handle — your GitHub username or GPG fingerprint — used only to find a public key and verify signatures. Conversation text, file contents, file paths, prompts, tool inputs, and tool outputs never leave your machine.
+Plus a public verification handle, your GitHub username or GPG fingerprint, used only to find a public key and verify signatures. Conversation text, file contents, file paths, prompts, tool inputs, and tool outputs never leave your machine.
 
 ## Commands
 
@@ -88,7 +90,7 @@ Plus a public verification handle — your GitHub username or GPG fingerprint �
 | `cc-sentiment uninstall` | Stop and remove the scheduled run. |
 | `cc-sentiment debug` | Print hardware, engine, Claude CLI, server, and Sentry probes. |
 
-Flags live in `cc-sentiment --help`.
+The full flag list lives in `cc-sentiment --help`.
 
 ## Architecture
 
@@ -100,6 +102,6 @@ Flags live in `cc-sentiment --help`.
 └─────────────┘ upload  └─────────────┘         └─────────────┘
 ```
 
-Three components, one repo: the CLI you run, the API that verifies signatures and stores slices, and the dashboard that charts the pool.
+The CLI you run, the API that verifies signatures and stores slices, and the dashboard that charts the pool all live in one repo.
 
 Watch the experiment live at [sentiments.cc](https://sentiments.cc). Licensed under [MIT](client/LICENSE).
