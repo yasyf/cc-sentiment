@@ -107,9 +107,17 @@
         "source": "github",
         "repo": "yasyf/cc-notes"
       }
+    },
+    "skills": {
+      "source": {
+        "source": "github",
+        "repo": "yasyf/cc-skills"
+      },
+      "autoUpdate": true
     }
   },
   "enabledPlugins": {
-    "cc-notes@cc-notes": true
+    "cc-notes@cc-notes": true,
+    "cc-context@skills": true
   }
 }
