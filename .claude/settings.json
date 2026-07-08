@@ -108,6 +108,12 @@
         "repo": "yasyf/cc-notes"
       }
     },
+    "cc-context": {
+      "source": {
+        "source": "github",
+        "repo": "yasyf/cc-context"
+      }
+    },
     "skills": {
       "source": {
         "source": "github",
@@ -118,6 +124,6 @@
   },
   "enabledPlugins": {
     "cc-notes@cc-notes": true,
-    "cc-context@skills": true
+    "cc-context@cc-context": true
   }
 }
