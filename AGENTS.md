@@ -1,3 +1,4 @@
+<!-- cc-guides 0.1.2 src=AGENTS.src.md | GENERATED — do not edit: change AGENTS.src.md and run 'cc-guides render'. Everything below is in force. -->
 # cc-sentiment Development Guide
 
 Monorepo with three components: `server/` (Modal API), `app/` (Svelte dashboard), and `client/` (cross-platform CLI).
@@ -15,7 +16,6 @@ cc-sentiment/
 
 Training and eval live in a sibling repo at `~/Code/cc-sentiments-local/` (note the `-local` suffix and the plural). Dataset build, LoRA training, DSPy/SIMBA prompt optimization, swarm dispatcher (`harness/run_swarm.py`), leaderboard, and pre-ship regression gates are there. The shipped adapter at `client/cc_sentiment/adapter/adapters.safetensors.zst` is the output of that repo's ship recipe — see its `README.md`.
 
-<!-- canonical: cc-skills/plugins/repo-bootstrap/_partials/ccx.md@db49875b4fcd1827f02cdeea691c1538a8deed2c -->
 ## Compact Context (ccx)
 
 `cc-context` — the `ccx` CLI and the `cc-context` MCP (its `mcp__cc-context__*` tools mirror the query surface — read, search, symbol, outline, diff, edit — plus `ccx_exec`/`ccx_exec_tools` for multi-call composition and `BashFormat` for JSON re-encoding) — is the DEFAULT for reading code, finding symbols, searching, and reviewing diffs. It returns token-bounded output (signatures + line numbers, explicit overflow, never silent truncation) instead of raw dumps, and the capt-hook `ccx` guard pack BLOCKS the token-heavy primitives — so reach for ccx first.
