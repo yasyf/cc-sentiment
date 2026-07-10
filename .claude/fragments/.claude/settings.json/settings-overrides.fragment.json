@@ -1,0 +1,11 @@
+{
+  "env": {
+    "CLAUDE_CODE_EFFORT_LEVEL": "max"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(.claude/skills/**/*.sh)",
+      "Bash(~/.bun/bin/codex:*)"
+    ]
+  }
+}
