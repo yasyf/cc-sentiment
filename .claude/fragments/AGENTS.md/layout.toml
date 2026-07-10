@@ -1,0 +1,5 @@
+fragments = [
+  "cc-sentiment-development-guide",
+  "cc-skills:ccx",
+  "python-style-server-and-client",
+]
