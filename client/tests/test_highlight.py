@@ -1,38 +1,32 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import pytest
-from afinn import Afinn
+from cc_transcript.sentiment.lexicon import tokenize
 
-from cc_sentiment.highlight import Highlighter, HighlightSpan, WindowedSlice
-
-
-@dataclass
-class FakeToken:
-    idx: int
-    text: str
-    pos_: str
-    lemma_: str
+from cc_sentiment.highlight import (
+    Highlighter,
+    HighlightSpan,
+    WindowedSlice,
+    tokenize_spans,
+)
 
 
-@pytest.fixture
-def real_nlp(monkeypatch):
-    spacy = pytest.importorskip("spacy")
-    try:
-        model = spacy.load("en_core_web_sm", disable=["parser"])
-    except OSError:
-        pytest.skip("spaCy en_core_web_sm not available")
-    monkeypatch.setattr("cc_sentiment.nlp.NLP.model", model)
-    return model
-
-
-@pytest.fixture
-def real_lexicon(monkeypatch):
-    monkeypatch.setattr(
-        "cc_sentiment.lexicon.Lexicon.afinn",
-        Afinn(language="en", emoticons=False),
-    )
+@pytest.mark.parametrize(
+    "text",
+    [
+        "STOP GUESSING",
+        "this seems incorrect for tqdm",
+        "strict=True))",
+        "wtf this is broken and shitty",
+        "LOST losing can't",
+        "Grüße ÜBER die straße",
+        "café Ελλάς 你好 world",
+    ],
+)
+def test_tokenize_spans_matches_upstream_tokenize(text):
+    spans = tokenize_spans(text)
+    assert [tok.lower for tok in spans] == tokenize(text)
+    assert all(text[tok.start : tok.end].lower() == tok.lower for tok in spans)
 
 
 def test_profanity_tokens_in_finds_inflections():
@@ -111,85 +105,50 @@ def test_apply_styles_skips_empty_color():
     assert not list(text.spans)
 
 
-def test_collect_candidates_tags_profanity_and_lemmas(real_lexicon):
+def test_collect_candidates_tags_profanity_and_lemmas():
     full = "this is perfect but the bug is broken"
-    tokens = [
-        FakeToken(idx=0, text="this", pos_="PRON", lemma_="this"),
-        FakeToken(idx=5, text="is", pos_="AUX", lemma_="be"),
-        FakeToken(idx=8, text="perfect", pos_="ADJ", lemma_="perfect"),
-        FakeToken(idx=16, text="but", pos_="CCONJ", lemma_="but"),
-        FakeToken(idx=20, text="the", pos_="DET", lemma_="the"),
-        FakeToken(idx=24, text="bug", pos_="NOUN", lemma_="bug"),
-        FakeToken(idx=28, text="is", pos_="AUX", lemma_="be"),
-        FakeToken(idx=31, text="broken", pos_="ADJ", lemma_="broken"),
-    ]
-    candidates = Highlighter.collect_candidates(full, tokens, score=3)
+    candidates = Highlighter.collect_candidates(full, score=3)
     colors = {(c.start, c.color) for c in candidates}
     assert (8, "green") in colors
     assert (24, "red") in colors
     assert (31, "red") in colors
 
 
-def test_collect_candidates_tone_gates_positive_words_in_negative_messages(real_lexicon):
+def test_collect_candidates_tone_gates_positive_words_in_negative_messages():
     full = "fix it perfect"
-    tokens = [
-        FakeToken(idx=0, text="fix", pos_="VERB", lemma_="fix"),
-        FakeToken(idx=4, text="it", pos_="PRON", lemma_="it"),
-        FakeToken(idx=7, text="perfect", pos_="ADJ", lemma_="perfect"),
-    ]
-    candidates = Highlighter.collect_candidates(full, tokens, score=1)
+    candidates = Highlighter.collect_candidates(full, score=1)
     colors = {(c.start, c.color) for c in candidates}
     assert (0, "green") not in colors
     assert (7, "green") not in colors
 
 
-def test_collect_candidates_promotes_strong_negative_nouns(real_lexicon):
+def test_collect_candidates_tags_strong_negative_red():
     full = "you are an idiot"
-    tokens = [
-        FakeToken(idx=0, text="you", pos_="PRON", lemma_="you"),
-        FakeToken(idx=4, text="are", pos_="AUX", lemma_="be"),
-        FakeToken(idx=8, text="an", pos_="DET", lemma_="an"),
-        FakeToken(idx=11, text="idiot", pos_="NOUN", lemma_="idiot"),
-    ]
-    candidates = Highlighter.collect_candidates(full, tokens, score=1)
+    candidates = Highlighter.collect_candidates(full, score=1)
     colors = {(c.start, c.color) for c in candidates}
     assert (11, "red") in colors
 
 
-def test_message_polarity_counts_strong_negative_nouns(real_nlp, real_lexicon):
+def test_message_polarity_counts_strong_negative():
     assert Highlighter.message_polarity("you are an idiot") <= -3
 
 
 def test_collect_candidates_catches_frustration_pattern_for_low_scores():
     full = "wtf is happening here, completely useless"
-    candidates = Highlighter.collect_candidates(full, [], score=1)
+    candidates = Highlighter.collect_candidates(full, score=1)
     assert any(c.priority == 3 and c.color == "red" for c in candidates)
 
 
-def test_collect_candidates_tags_expanded_profanity(real_lexicon):
+def test_collect_candidates_tags_expanded_profanity():
     full = "this is fucking broken and shitty"
-    tokens = [
-        FakeToken(idx=0, text="this", pos_="PRON", lemma_="this"),
-        FakeToken(idx=5, text="is", pos_="AUX", lemma_="be"),
-        FakeToken(idx=8, text="fucking", pos_="ADJ", lemma_="fucking"),
-        FakeToken(idx=16, text="broken", pos_="ADJ", lemma_="broken"),
-        FakeToken(idx=23, text="and", pos_="CCONJ", lemma_="and"),
-        FakeToken(idx=27, text="shitty", pos_="ADJ", lemma_="shitty"),
-    ]
-    candidates = Highlighter.collect_candidates(full, tokens, score=2)
+    candidates = Highlighter.collect_candidates(full, score=2)
     profanity_starts = {c.start for c in candidates if c.priority == 3}
     assert 8 in profanity_starts
     assert 27 in profanity_starts
 
 
 def test_fallback_anchor_picks_longest_content_word():
-    tokens = [
-        FakeToken(idx=0, text="keep", pos_="VERB", lemma_="keep"),
-        FakeToken(idx=5, text="monitoring", pos_="VERB", lemma_="monitor"),
-        FakeToken(idx=16, text="it", pos_="PRON", lemma_="it"),
-        FakeToken(idx=19, text="goes", pos_="VERB", lemma_="go"),
-    ]
-    anchor = Highlighter.fallback_anchor(tokens)
+    anchor = Highlighter.fallback_anchor("keep monitoring it goes")
     assert anchor is not None
     assert (anchor.start, anchor.end) == (5, 15)
     assert anchor.color == ""
@@ -197,22 +156,16 @@ def test_fallback_anchor_picks_longest_content_word():
 
 
 def test_fallback_anchor_never_colors_by_score():
-    tokens = [FakeToken(idx=0, text="thing", pos_="NOUN", lemma_="thing")]
-    anchor = Highlighter.fallback_anchor(tokens)
+    anchor = Highlighter.fallback_anchor("thing")
     assert anchor is not None
     assert anchor.color == ""
 
 
 def test_fallback_anchor_returns_none_when_no_eligible_token():
-    tokens = [
-        FakeToken(idx=0, text="is", pos_="VERB", lemma_="be"),
-        FakeToken(idx=3, text="a", pos_="DET", lemma_="a"),
-        FakeToken(idx=5, text="42", pos_="NUM", lemma_="42"),
-    ]
-    assert Highlighter.fallback_anchor(tokens) is None
+    assert Highlighter.fallback_anchor("is a 42") is None
 
 
-def test_windowed_highlight_prefix_fallback_applies_frustration_regex():
+def test_windowed_highlight_applies_frustration_regex():
     text = Highlighter.windowed_highlight("wtf this is broken", score=2)
     assert any(
         str(s.style) == "red" and s.start == 0 and s.end == 3
@@ -220,14 +173,14 @@ def test_windowed_highlight_prefix_fallback_applies_frustration_regex():
     )
 
 
-def test_windowed_highlight_prefix_fallback_truncates_when_no_nlp():
+def test_windowed_highlight_truncates_long_neutral_text():
     long = "x" * 200
     text = Highlighter.windowed_highlight(long, score=4)
     assert len(text.plain) == Highlighter.MAX_SNIPPET_CHARS
     assert text.plain.endswith("…")
 
 
-def test_windowed_highlight_anchors_on_profanity_past_prefix(real_nlp, real_lexicon):
+def test_windowed_highlight_anchors_on_profanity_past_prefix():
     prefix = (
         "neutral filler text that says nothing special just padding "
         "here too here still more filler going on and on and on "
@@ -239,7 +192,7 @@ def test_windowed_highlight_anchors_on_profanity_past_prefix(real_nlp, real_lexi
     assert any(str(s.style) == "red" for s in text.spans)
 
 
-def test_windowed_highlight_leaves_neutral_message_uncolored(real_nlp, real_lexicon):
+def test_windowed_highlight_leaves_neutral_message_uncolored():
     full = (
         "keep monitoring it as it goes and give me an updated ETA for "
         "the server deployment so we can plan the rest of the launch"
@@ -249,14 +202,14 @@ def test_windowed_highlight_leaves_neutral_message_uncolored(real_nlp, real_lexi
         assert not list(text.spans), f"score={score} produced spans {list(text.spans)}"
 
 
-def test_windowed_highlight_colors_stop_red_even_in_positive_bucket(real_nlp, real_lexicon):
-    text = Highlighter.windowed_highlight("STOP GUESSING", score=4)
+def test_windowed_highlight_colors_stop_red():
+    text = Highlighter.windowed_highlight("STOP GUESSING", score=3)
     assert any(str(s.style) == "red" for s in text.spans)
     assert not any(str(s.style) == "green" for s in text.spans)
 
 
-def test_windowed_highlight_colors_continue_green_even_in_negative_bucket(real_nlp, real_lexicon):
-    text = Highlighter.windowed_highlight("Continue from where you left off.", score=2)
+def test_windowed_highlight_colors_continue_green():
+    text = Highlighter.windowed_highlight("Continue from where you left off.", score=3)
     assert any(str(s.style) == "green" for s in text.spans)
     assert not any(str(s.style) == "red" for s in text.spans)
 
@@ -292,84 +245,46 @@ def test_slice_window_keeps_char_cut_when_no_whitespace_nearby():
     assert len(slice_.body) == 20
 
 
-def test_collect_candidates_skips_generic_afinn_noun(real_lexicon):
+def test_collect_candidates_highlights_afinn_words_without_pos():
     full = "the progress is tracked at the top"
-    tokens = [
-        FakeToken(idx=0, text="the", pos_="DET", lemma_="the"),
-        FakeToken(idx=4, text="progress", pos_="NOUN", lemma_="progress"),
-        FakeToken(idx=13, text="is", pos_="AUX", lemma_="be"),
-        FakeToken(idx=16, text="tracked", pos_="VERB", lemma_="track"),
-        FakeToken(idx=24, text="at", pos_="ADP", lemma_="at"),
-        FakeToken(idx=27, text="the", pos_="DET", lemma_="the"),
-        FakeToken(idx=31, text="top", pos_="NOUN", lemma_="top"),
-    ]
-    candidates = Highlighter.collect_candidates(full, tokens, score=4)
-    assert not any(c.start == 4 for c in candidates)
-    assert not any(c.start == 31 for c in candidates)
+    candidates = Highlighter.collect_candidates(full, score=4)
+    colors = {(c.start, c.color) for c in candidates}
+    assert (4, "green") in colors
+    assert (31, "green") in colors
 
 
-def test_collect_candidates_keeps_curated_noun(real_lexicon):
+def test_collect_candidates_tags_curated_domain_words():
     full = "this bug is a nightmare"
-    tokens = [
-        FakeToken(idx=0, text="this", pos_="PRON", lemma_="this"),
-        FakeToken(idx=5, text="bug", pos_="NOUN", lemma_="bug"),
-        FakeToken(idx=9, text="is", pos_="AUX", lemma_="be"),
-        FakeToken(idx=12, text="a", pos_="DET", lemma_="a"),
-        FakeToken(idx=14, text="nightmare", pos_="NOUN", lemma_="nightmare"),
-    ]
-    candidates = Highlighter.collect_candidates(full, tokens, score=2)
+    candidates = Highlighter.collect_candidates(full, score=2)
     starts = {c.start for c in candidates if c.color == "red"}
     assert 5 in starts
     assert 14 in starts
 
 
-def test_windowed_highlight_colors_incorrect_red(real_nlp, real_lexicon):
-    text = Highlighter.windowed_highlight("this seems incorrect for tqdm", score=4)
+def test_windowed_highlight_colors_incorrect_red():
+    text = Highlighter.windowed_highlight("this seems incorrect for tqdm", score=3)
     assert any(str(s.style) == "red" for s in text.spans)
 
 
-def test_collect_candidates_skips_python_literal_true(real_lexicon):
+def test_collect_candidates_skips_python_literal_true():
     full = "strict=True))"
-    tokens = [
-        FakeToken(idx=0, text="strict", pos_="NOUN", lemma_="strict"),
-        FakeToken(idx=6, text="=", pos_="PUNCT", lemma_="="),
-        FakeToken(idx=7, text="True", pos_="ADJ", lemma_="true"),
-    ]
-    candidates = Highlighter.collect_candidates(full, tokens, score=2)
+    candidates = Highlighter.collect_candidates(full, score=2)
     assert not any(c.start == 7 for c in candidates)
 
 
-def test_collect_candidates_skips_kwarg_value_after_equals(real_lexicon):
+def test_collect_candidates_skips_kwarg_value_after_equals():
     full = "verbose=working"
-    tokens = [
-        FakeToken(idx=0, text="verbose", pos_="ADJ", lemma_="verbose"),
-        FakeToken(idx=7, text="=", pos_="PUNCT", lemma_="="),
-        FakeToken(idx=8, text="working", pos_="VERB", lemma_="work"),
-    ]
-    candidates = Highlighter.collect_candidates(full, tokens, score=4)
+    candidates = Highlighter.collect_candidates(full, score=4)
     assert not any(c.start == 8 for c in candidates)
 
 
-def test_collect_candidates_keeps_lowercase_true_as_word(real_lexicon):
+def test_collect_candidates_keeps_lowercase_true_as_word():
     full = "this is true love"
-    tokens = [
-        FakeToken(idx=0, text="this", pos_="PRON", lemma_="this"),
-        FakeToken(idx=5, text="is", pos_="AUX", lemma_="be"),
-        FakeToken(idx=8, text="true", pos_="ADJ", lemma_="true"),
-        FakeToken(idx=13, text="love", pos_="NOUN", lemma_="love"),
-    ]
-    candidates = Highlighter.collect_candidates(full, tokens, score=4)
+    candidates = Highlighter.collect_candidates(full, score=4)
     assert any(c.start == 8 and c.color == "green" for c in candidates)
 
 
-def test_collect_candidates_tags_incorrect_red_from_override(real_lexicon):
+def test_collect_candidates_tags_incorrect_red_from_override():
     full = "this seems incorrect for tqdm"
-    tokens = [
-        FakeToken(idx=0, text="this", pos_="PRON", lemma_="this"),
-        FakeToken(idx=5, text="seems", pos_="VERB", lemma_="seem"),
-        FakeToken(idx=11, text="incorrect", pos_="ADJ", lemma_="incorrect"),
-        FakeToken(idx=21, text="for", pos_="ADP", lemma_="for"),
-        FakeToken(idx=25, text="tqdm", pos_="NOUN", lemma_="tqdm"),
-    ]
-    candidates = Highlighter.collect_candidates(full, tokens, score=3)
+    candidates = Highlighter.collect_candidates(full, score=3)
     assert any(c.start == 11 and c.color == "red" for c in candidates)

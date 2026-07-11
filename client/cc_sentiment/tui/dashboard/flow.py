@@ -18,9 +18,7 @@ from cc_sentiment.engines import (
 )
 from cc_sentiment.transcripts.filterspec import SENTIMENT_SCORE_SPEC
 from cc_sentiment.hardware import Hardware
-from cc_sentiment.lexicon import Lexicon
 from cc_sentiment.models import SentimentRecord
-from cc_sentiment.nlp import NLP
 from cc_sentiment.pipeline import Pipeline
 from cc_sentiment.transcripts import TranscriptParser
 from cc_sentiment.upload import (
@@ -159,8 +157,6 @@ class DashboardFlow:
                         log=self.query_one("#moments-log", Static),
                         debug=self.debug_mode,
                     )
-                    await NLP.ensure_ready()
-                    await Lexicon.ensure_ready()
                     moments.show()
                     try:
                         await Pipeline.run(

@@ -8,8 +8,6 @@ from dataclasses import dataclass, field, fields
 @dataclass
 class DebugState:
     engine_name: str = "—"
-    nlp_state: str = "—"
-    nlp_output: str | None = None
     prewarm_model: str = "—"
     card_last_status: str = "idle"
     card_elapsed: float = 0.0

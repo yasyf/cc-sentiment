@@ -27,8 +27,6 @@ class DebugSection(Card):
         stopped = f"  stopped={s.card_stopped}" if s.card_stopped else ""
         lines = [
             f"engine:   [b]{s.engine_name}[/]",
-            f"nlp:      {s.nlp_state}",
-            *([f"nlp out:  {s.nlp_output}"] if s.nlp_output else []),
             f"prewarm:  model={s.prewarm_model}",
             f"card:     status=[b]{s.card_last_status}[/]  elapsed={s.card_elapsed:.0f}s{stopped}",
             f"share:    {s.share_state}",

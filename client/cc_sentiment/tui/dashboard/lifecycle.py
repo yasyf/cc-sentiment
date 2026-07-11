@@ -12,9 +12,7 @@ from cc_sentiment.daemon import LaunchAgent
 from cc_sentiment.debug_log import DebugLog
 from cc_sentiment.engines import ClaudeStatus, ClaudeUnavailable, EngineFactory
 from cc_sentiment.engines.protocol import DEFAULT_MODEL
-from cc_sentiment.lexicon import Lexicon
 from cc_sentiment.model_cache import ModelLoadProgress
-from cc_sentiment.nlp import NLP
 from cc_sentiment.pipeline import ScanCache
 from cc_sentiment.repo import Repository
 
@@ -28,8 +26,6 @@ from cc_sentiment.tui.popovers import PlatformErrorScreen
 class DashboardLifecycle:
     async def on_mount(self) -> None:
         self.view = ProcessingView(self)
-        self._set_debug(nlp_state="loading")
-        self.run_worker(self._load_nlp(), name="spacy-load", group="spacy-load", exclusive=True, exit_on_error=False)
         self._boot_screen = BootingScreen()
         await self.app.push_screen(self._boot_screen)
         self._boot_screen.status = "Loading your local data..."
@@ -89,14 +85,6 @@ class DashboardLifecycle:
             return
         if self._scoring.start_time > 0 and self.scored < self.total:
             self.view.update_progress_label(self._scoring, self.scored, self.total)
-
-    async def _load_nlp(self) -> None:
-        await NLP.ensure_ready()
-        await Lexicon.ensure_ready()
-        if NLP.failed:
-            self._set_debug(nlp_state="failed", nlp_output=NLP.last_download_output)
-            return
-        self._set_debug(nlp_state="ready")
 
     async def _dismiss_boot_screen(self) -> None:
         if self._boot_screen is None:

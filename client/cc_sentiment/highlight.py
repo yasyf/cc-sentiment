@@ -2,18 +2,32 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar
+from itertools import groupby
+from typing import ClassVar, NamedTuple
 
 from rich.text import Text
 
 from cc_sentiment.engines.filter import FRUSTRATION_PATTERN
 from cc_sentiment.lexicon import Lexicon
-from cc_sentiment.nlp import NLP
-
-if TYPE_CHECKING:
-    import spacy.tokens
 
 WORD_BOUNDARY_PATTERN = re.compile(r"\b[a-zA-Z]+\b")
+
+
+class Token(NamedTuple):
+    lower: str
+    start: int
+    end: int
+
+
+def tokenize_spans(text: str) -> list[Token]:
+    spans: list[Token] = []
+    pos = 0
+    for alpha, group in groupby(text, str.isalpha):
+        run = "".join(group)
+        if alpha:
+            spans.append(Token(run.lower(), pos, pos + len(run)))
+        pos += len(run)
+    return spans
 
 
 @dataclass(frozen=True)
@@ -36,7 +50,6 @@ class Highlighter:
     MAX_SNIPPET_CHARS: ClassVar[int] = 60
     MAX_SNAP_DISTANCE: ClassVar[int] = 15
     FALLBACK_MIN_LEN: ClassVar[int] = 3
-    STRONG_NEGATIVE_THRESHOLD: ClassVar[int] = -3
     NEGATIVE_TONE_MAX: ClassVar[int] = 2
     POSITIVE_TONE_MIN: ClassVar[int] = 4
     PYTHON_LITERALS: ClassVar[frozenset[str]] = frozenset({"True", "False", "None"})
@@ -66,12 +79,8 @@ class Highlighter:
         }
     )
     NEGATION_TOKENS: ClassVar[frozenset[str]] = frozenset(
-        {"not", "no", "never", "nothing", "hardly", "barely"}
+        {"not", "no", "never", "nothing", "hardly", "barely", "cannot"}
     )
-    SENTIMENT_POS: ClassVar[frozenset[str]] = frozenset(
-        {"ADJ", "ADV", "VERB", "INTJ", "NOUN", "PROPN"}
-    )
-    NOUN_LIKE_POS: ClassVar[frozenset[str]] = frozenset({"NOUN", "PROPN"})
 
     @classmethod
     def profanity_tokens_in(cls, text: str) -> list[str]:
@@ -80,45 +89,39 @@ class Highlighter:
             if word in cls.PROFANITY_TOKENS
         ]
 
+    @staticmethod
+    def after_equals(text: str, start: int) -> bool:
+        j = start - 1
+        while j >= 0 and text[j] in " \t":
+            j -= 1
+        return j >= 0 and text[j] == "="
+
     @classmethod
     def message_polarity(cls, text: str) -> int:
-        if (nlp := NLP.get()) is None:
-            return 0
+        tokens = tokenize_spans(text)
         polarity = 0
-        tokens = list(nlp(text))
         for i, tok in enumerate(tokens):
-            lemma = tok.lemma_.lower()
-            if lemma in cls.PROFANITY_TOKENS:
+            if tok.lower in cls.PROFANITY_TOKENS:
                 polarity -= 3
                 continue
-            if tok.text in cls.PYTHON_LITERALS:
+            if text[tok.start : tok.end] in cls.PYTHON_LITERALS:
                 continue
-            if i > 0 and tokens[i - 1].text == "=":
+            if cls.after_equals(text, tok.start):
                 continue
-            if tok.pos_ not in cls.SENTIMENT_POS:
-                continue
-            score = Lexicon.polarity(lemma)
+            score = Lexicon.polarity(tok.lower)
             if score == 0:
-                continue
-            if (tok.pos_ in cls.NOUN_LIKE_POS
-                and lemma not in Lexicon.DOMAIN_OVERRIDES
-                and score > cls.STRONG_NEGATIVE_THRESHOLD):
                 continue
             if cls.is_negated(tokens, i):
                 score = -score
             polarity += score
-        polarity -= 3 * len(FRUSTRATION_PATTERN.findall(text))
-        return polarity
+        return polarity - 3 * len(FRUSTRATION_PATTERN.findall(text))
 
     @classmethod
     def windowed_highlight(cls, full: str, score: int) -> Text:
         width = cls.MAX_SNIPPET_CHARS
-        if (nlp := NLP.get()) is None:
-            return cls.prefix_highlight(full, width, score)
-        tokens = list(nlp(full))
-        candidates = cls.collect_candidates(full, tokens, score)
+        candidates = cls.collect_candidates(full, score)
         if (anchor := cls.pick_anchor(candidates)) is None:
-            if (anchor := cls.fallback_anchor(tokens)) is None:
+            if (anchor := cls.fallback_anchor(full)) is None:
                 return cls.prefix_highlight(full, width, score)
         return cls.apply_styles(cls.slice_window(full, anchor, width), candidates)
 
@@ -132,36 +135,24 @@ class Highlighter:
         return text
 
     @classmethod
-    def collect_candidates(
-        cls,
-        full: str,
-        tokens: list[spacy.tokens.Token],
-        score: int,
-    ) -> list[HighlightSpan]:
+    def collect_candidates(cls, full: str, score: int) -> list[HighlightSpan]:
         spans: list[HighlightSpan] = []
         if score <= cls.NEGATIVE_TONE_MAX:
             spans.extend(
                 HighlightSpan(m.start(), m.end(), "red", priority=3)
                 for m in FRUSTRATION_PATTERN.finditer(full)
             )
+        tokens = tokenize_spans(full)
         for i, tok in enumerate(tokens):
-            lemma = tok.lemma_.lower()
-            start, end = tok.idx, tok.idx + len(tok.text)
-            if lemma in cls.PROFANITY_TOKENS:
-                spans.append(HighlightSpan(start, end, "red", priority=3))
+            if tok.lower in cls.PROFANITY_TOKENS:
+                spans.append(HighlightSpan(tok.start, tok.end, "red", priority=3))
                 continue
-            if tok.text in cls.PYTHON_LITERALS:
+            if full[tok.start : tok.end] in cls.PYTHON_LITERALS:
                 continue
-            if i > 0 and tokens[i - 1].text == "=":
+            if cls.after_equals(full, tok.start):
                 continue
-            if tok.pos_ not in cls.SENTIMENT_POS:
-                continue
-            polarity = Lexicon.polarity(lemma)
+            polarity = Lexicon.polarity(tok.lower)
             if polarity == 0:
-                continue
-            if (tok.pos_ in cls.NOUN_LIKE_POS
-                and lemma not in Lexicon.DOMAIN_OVERRIDES
-                and polarity > cls.STRONG_NEGATIVE_THRESHOLD):
                 continue
             color = "green" if polarity > 0 else "red"
             if cls.is_negated(tokens, i):
@@ -170,7 +161,7 @@ class Highlighter:
                 continue
             if score >= cls.POSITIVE_TONE_MIN and color == "red":
                 continue
-            spans.append(HighlightSpan(start, end, color, priority=2))
+            spans.append(HighlightSpan(tok.start, tok.end, color, priority=2))
         return spans
 
     @classmethod
@@ -178,21 +169,15 @@ class Highlighter:
         return min(candidates, key=lambda s: (-s.priority, s.start), default=None)
 
     @classmethod
-    def fallback_anchor(
-        cls,
-        tokens: list[spacy.tokens.Token],
-    ) -> HighlightSpan | None:
+    def fallback_anchor(cls, full: str) -> HighlightSpan | None:
         eligible = [
-            t
-            for t in tokens
-            if t.pos_ in cls.SENTIMENT_POS
-            and len(t.text) >= cls.FALLBACK_MIN_LEN
-            and t.text.isalpha()
+            tok for tok in tokenize_spans(full)
+            if tok.end - tok.start >= cls.FALLBACK_MIN_LEN
         ]
         if not eligible:
             return None
-        tok = max(eligible, key=lambda t: len(t.text))
-        return HighlightSpan(tok.idx, tok.idx + len(tok.text), "", priority=1)
+        tok = max(eligible, key=lambda t: t.end - t.start)
+        return HighlightSpan(tok.start, tok.end, "", priority=1)
 
     @classmethod
     def snap_start_forward(cls, full: str, start: int, anchor_start: int) -> int:
@@ -285,11 +270,8 @@ class Highlighter:
         return text
 
     @classmethod
-    def is_negated(cls, tokens: list[spacy.tokens.Token], idx: int) -> bool:
-        preceding: list[spacy.tokens.Token] = []
-        j = idx - 1
-        while j >= 0 and len(preceding) < 2:
-            if tokens[j].pos_ not in ("PUNCT", "SPACE"):
-                preceding.append(tokens[j])
-            j -= 1
-        return any(t.lemma_.lower() in cls.NEGATION_TOKENS for t in preceding)
+    def is_negated(cls, tokens: list[Token], idx: int) -> bool:
+        return any(
+            tokens[j].lower in cls.NEGATION_TOKENS
+            for j in range(max(0, idx - 2), idx)
+        )
