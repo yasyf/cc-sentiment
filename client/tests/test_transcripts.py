@@ -42,21 +42,6 @@ def parse_single_line(tmp_path: Path, line: str) -> ConversationEvent | None:
     return events[0] if events else None
 
 
-@pytest.fixture(params=["python", "rust"])
-def backend(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
-    import cc_transcript.parser as ctp
-
-    if request.param == "rust":
-        if ctp.load_rust_backend() is None:
-            pytest.skip("rust extension not built")
-        monkeypatch.delenv("CC_TRANSCRIPT_DISABLE_RUST", raising=False)
-    else:
-        monkeypatch.setenv("CC_TRANSCRIPT_DISABLE_RUST", "1")
-    monkeypatch.setattr(ctp.TranscriptParser, "backend_instance", None)
-    return request.param
-
-
-@pytest.mark.usefixtures("backend")
 class TestStreamTranscripts:
     def test_skips_queue_operations(self) -> None:
         events = parse_file(FIXTURE_PATH)
@@ -396,7 +381,6 @@ class TestStreamTranscripts:
         assert set(parsed.bucket_keys) == expected_keys
 
 
-@pytest.mark.usefixtures("backend")
 class TestScanBucketKeys:
     async def test_scan_bucket_keys_matches_full_parse(self, tmp_path: Path) -> None:
         f = tmp_path / "t.jsonl"
@@ -418,7 +402,6 @@ class TestScanBucketKeys:
         assert set(keys) == expected
 
 
-@pytest.mark.usefixtures("backend")
 class TestConversationBucketer:
     def test_bucket_count(self) -> None:
         events = parse_file(FIXTURE_PATH)

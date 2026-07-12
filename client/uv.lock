@@ -114,7 +114,7 @@ requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
     { name = "anyio", specifier = ">=4.4" },
     { name = "asyncstdlib", specifier = ">=3.14.0" },
-    { name = "cc-transcript", specifier = ">=12,<13" },
+    { name = "cc-transcript", editable = "../../cc-transcript" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "orjson", specifier = ">=3.10" },
     { name = "psutil", specifier = ">=6.0" },
@@ -140,7 +140,7 @@ dev = [
 [[package]]
 name = "cc-transcript"
 version = "12.0.0"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "../../cc-transcript" }
 dependencies = [
     { name = "aiosqlite", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "anyio", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -149,12 +149,29 @@ dependencies = [
     { name = "tree-sitter", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "tree-sitter-bash", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f5/9a/ab8d725160d1a31dd948654ef57434b626c91cc38b65aabedb2121d7850a/cc_transcript-12.0.0.tar.gz", hash = "sha256:b56af30ed14afcb2fbaef47dd3e6cd8a49a76d1dd75bf23c77713f027e041878", size = 212804, upload-time = "2026-07-11T22:43:51.732Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a9/82/2578e9f239ec0f64d87ff0e4382ab35593e1ce3296da3668f4509d91adf1/cc_transcript-12.0.0-cp313-abi3-macosx_11_0_arm64.whl", hash = "sha256:818f65c726d50ea696a3fb41892f99ef96b19f00ecf877bd6370e16cf92087db", size = 1500935, upload-time = "2026-07-11T22:43:44.666Z" },
-    { url = "https://files.pythonhosted.org/packages/5b/66/f728299f55c3b1a7d5c1c046625df1cf7ec7f019f58c3f654cec80c33092/cc_transcript-12.0.0-cp313-abi3-macosx_11_0_x86_64.whl", hash = "sha256:19c323edbd3aeb1255536504d888362e8e6f9f546016598ca4c6823fd00fbfe9", size = 1565960, upload-time = "2026-07-11T22:43:46.697Z" },
-    { url = "https://files.pythonhosted.org/packages/3a/be/149e94bc7777b579424f54165d71e5472d583cee91f14ca2e9e3c75c1e32/cc_transcript-12.0.0-cp313-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:a4e2f459744085274f177f5689d8a82c1563dc0eef8c776256b4b7263105d623", size = 1561051, upload-time = "2026-07-11T22:43:48.433Z" },
-    { url = "https://files.pythonhosted.org/packages/8e/8b/4a41e4ece3cf210ffaf72418144579eafee05dce5815e936b4fc93344433/cc_transcript-12.0.0-cp313-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:cf9aa95079d21c7048e044572326d126e9eeb3a1f8a3850e6170d4142d38e748", size = 1644269, upload-time = "2026-07-11T22:43:50.158Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "aiosqlite", specifier = ">=0.20" },
+    { name = "anyio", specifier = ">=4.4" },
+    { name = "click", specifier = ">=8.1" },
+    { name = "model2vec", marker = "extra == 'judge'", specifier = ">=0.8.2" },
+    { name = "numpy", marker = "extra == 'judge'", specifier = ">=1.26" },
+    { name = "orjson", specifier = ">=3.10" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
+    { name = "spawnllm", marker = "extra == 'llm'", specifier = ">=0.5.4,<0.6" },
+    { name = "sqlite-vec", marker = "extra == 'judge'", specifier = ">=0.1.9" },
+    { name = "tree-sitter", specifier = ">=0.26" },
+    { name = "tree-sitter-bash", specifier = ">=0.25" },
+    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.44" },
+]
+provides-extras = ["dev", "llm", "judge"]
+
+[package.metadata.requires-dev]
+docs = [
+    { name = "great-docs", specifier = ">=0.14" },
+    { name = "griffelib", specifier = ">=2.0" },
 ]
 
 [[package]]

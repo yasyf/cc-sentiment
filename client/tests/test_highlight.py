@@ -1,32 +1,10 @@
 from __future__ import annotations
 
-import pytest
-from cc_transcript.sentiment.lexicon import tokenize
-
 from cc_sentiment.highlight import (
     Highlighter,
     HighlightSpan,
     WindowedSlice,
-    tokenize_spans,
 )
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "STOP GUESSING",
-        "this seems incorrect for tqdm",
-        "strict=True))",
-        "wtf this is broken and shitty",
-        "LOST losing can't",
-        "Grüße ÜBER die straße",
-        "café Ελλάς 你好 world",
-    ],
-)
-def test_tokenize_spans_matches_upstream_tokenize(text):
-    spans = tokenize_spans(text)
-    assert [tok.lower for tok in spans] == tokenize(text)
-    assert all(text[tok.start : tok.end].lower() == tok.lower for tok in spans)
 
 
 def test_profanity_tokens_in_finds_inflections():
@@ -203,13 +181,13 @@ def test_windowed_highlight_leaves_neutral_message_uncolored():
 
 
 def test_windowed_highlight_colors_stop_red():
-    text = Highlighter.windowed_highlight("STOP GUESSING", score=3)
+    text = Highlighter.windowed_highlight("STOP GUESSING", score=4)
     assert any(str(s.style) == "red" for s in text.spans)
     assert not any(str(s.style) == "green" for s in text.spans)
 
 
 def test_windowed_highlight_colors_continue_green():
-    text = Highlighter.windowed_highlight("Continue from where you left off.", score=3)
+    text = Highlighter.windowed_highlight("Continue from where you left off.", score=2)
     assert any(str(s.style) == "green" for s in text.spans)
     assert not any(str(s.style) == "red" for s in text.spans)
 
@@ -245,12 +223,11 @@ def test_slice_window_keeps_char_cut_when_no_whitespace_nearby():
     assert len(slice_.body) == 20
 
 
-def test_collect_candidates_highlights_afinn_words_without_pos():
+def test_collect_candidates_skips_generic_afinn_noun():
     full = "the progress is tracked at the top"
     candidates = Highlighter.collect_candidates(full, score=4)
-    colors = {(c.start, c.color) for c in candidates}
-    assert (4, "green") in colors
-    assert (31, "green") in colors
+    assert not any(c.start == 4 for c in candidates)
+    assert not any(c.start == 31 for c in candidates)
 
 
 def test_collect_candidates_tags_curated_domain_words():
@@ -262,7 +239,7 @@ def test_collect_candidates_tags_curated_domain_words():
 
 
 def test_windowed_highlight_colors_incorrect_red():
-    text = Highlighter.windowed_highlight("this seems incorrect for tqdm", score=3)
+    text = Highlighter.windowed_highlight("this seems incorrect for tqdm", score=4)
     assert any(str(s.style) == "red" for s in text.spans)
 
 

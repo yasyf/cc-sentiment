@@ -108,16 +108,13 @@ is a thin façade:
 - `backend.py` — the `ParsedTranscript` value type consumed by the pipeline; its
   `events` tuple carries the filtered conversational events.
 
-Backend selection (cc-transcript's Rust extension vs. its Python fallback) is
-controlled by `CC_TRANSCRIPT_DISABLE_RUST=1`; cc-transcript ships a prebuilt abi3
-wheel, so no Rust toolchain is needed to install cc-sentiment. Call
-`TranscriptParser.backend_name()` to see which is live.
+Parsing runs entirely in cc-transcript's Rust extension — the sole backend, and a
+hard requirement. cc-transcript ships a prebuilt abi3 wheel, so no Rust toolchain is
+needed to install cc-sentiment.
 
-`tests/test_transcripts.py` parametrizes both backends via a `backend` fixture that
-toggles `CC_TRANSCRIPT_DISABLE_RUST` and resets `cc_transcript.TranscriptParser`'s
-cached backend. Event fixtures come from `tests/helpers.py`
-(`make_user_event` / `make_assistant_event`), mirroring cc-transcript's own
-sentiment test fixtures.
+`tests/test_transcripts.py` runs against that Rust backend. Event fixtures come from
+`tests/helpers.py` (`make_user_event` / `make_assistant_event`), mirroring
+cc-transcript's own sentiment test fixtures.
 
 ## Transcript Discovery
 
