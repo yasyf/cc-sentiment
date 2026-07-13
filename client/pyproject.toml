@@ -80,6 +80,3 @@ dev = [
 # scope lock resolution to the platforms it actually supports.
 [tool.uv]
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
-
-[tool.uv.sources]
-cc-transcript = { path = "../../cc-transcript", editable = true }
