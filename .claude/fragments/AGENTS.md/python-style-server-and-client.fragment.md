@@ -33,5 +33,3 @@ Target Python 3.14 for server, 3.12+ for client. Both use `uv` for dependency ma
 **Mechanical linting.** Do not run `ruff`, `black`, `isort`, `prettier`, `eslint` manually. These are handled by pre-commit hooks or CI. Only fix issues requiring human judgment.
 
 **Testing.** Tests live next to the code they test. Strict assertions. Mock external dependencies, not the code under test.
-
-**Git.** Commits should be atomic and scoped. One logical change per commit.

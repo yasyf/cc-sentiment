@@ -1,7 +1,12 @@
 fragments = [
   "cc-sentiment-development-guide",
+  "cc-skills:ask-before-assuming",
+  "cc-skills:code-review-response",
+  "cc-skills:parallelize",
+  "cc-skills:writing-plans",
   "cc-skills:ccx",
   "python-style-server-and-client",
+  "cc-skills:version-control",
 ]
 
 [sources.cc-skills]
