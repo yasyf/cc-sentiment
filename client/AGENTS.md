@@ -18,9 +18,7 @@ Root `AGENTS.md` rules apply unless overridden here. The client follows a functi
    - `cc_sentiment/lexicon.py` — AFINN + domain-overrides (`Lexicon` classmethods; async `ensure_ready` + sync `polarity`)
    - `cc_sentiment/highlight.py` — snippet styling (`Highlighter` classmethods + `HighlightSpan`/`WindowedSlice` dataclasses)
    - `cc_sentiment/debug.py` — bucket hash + lookup (`BucketHash`/`BucketLookup` classmethods + `BucketLookupResult` dataclass)
-   - `cc_sentiment/transcripts/parser.py` — carve-out: hosts `Backend`-implementing class plus picklable parsing helpers (`build_message`, `python_parse_chunk`, etc.) that must stay module-level for `anyio.to_process.run_sync`
    - `cc_sentiment/patches/__init__.py` — `apply_kv_cache_patch`
-   - `cc_sentiment/_transcripts_rs.pyi` — `.pyi` stub; free `def` is required syntax
    New utility modules require justification. Typer-decorated commands in `cli.py` are framework convention and stay free.
 
 5. **Match statements for type dispatch.** `match (sys.platform, platform.machine())`, `match kind:` in `EngineFactory.build`. `if/elif` only for boolean flags or non-type-discriminated branching.
@@ -68,7 +66,6 @@ client/
 ├── pyproject.toml
 └── cc_sentiment/
     ├── __init__.py
-    ├── _transcripts_rs.pyi  # PyO3 stub
     ├── benchmark.py         # BenchmarkRunner (perf + scaling tests)
     ├── cli.py               # Typer commands — thin
     ├── daemon.py            # background daemon entry
@@ -109,11 +106,11 @@ is a thin façade:
 - `backend.py` — the `ParsedTranscript` value type consumed by the pipeline; its
   `events` tuple carries the filtered conversational events.
 
-Parsing runs entirely in cc-transcript's Rust extension — the sole backend, and a
-hard requirement. cc-transcript ships a prebuilt abi3 wheel, so no Rust toolchain is
-needed to install cc-sentiment.
+Parsing runs in cc-transcript's native engine behind its synchronous v14 API —
+there is no backend concept and no Python fallback. cc-transcript ships a prebuilt
+abi3 wheel, so no Rust toolchain is needed to install cc-sentiment.
 
-`tests/test_transcripts.py` runs against that Rust backend. Event fixtures come from
+`tests/test_transcripts.py` exercises that façade directly. Event fixtures come from
 `tests/helpers.py` (`make_user_event` / `make_assistant_event`), which synthesize
 raw transcript-line dicts and lift them through `cc_transcript.parse_event` — v14
 events are native views and cannot be constructed from Python.
