@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import orjson
 import pytest
@@ -113,10 +112,7 @@ class TestBucketLookup:
         assert result is None
 
     async def test_strips_leading_hash(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from cc_sentiment.debug import TranscriptDiscovery
-        monkeypatch.setattr(
-            TranscriptDiscovery, "find_transcripts", staticmethod(AsyncMock(return_value=[]))
-        )
+        monkeypatch.setattr("cc_sentiment.debug.discover", lambda: [])
 
         async with await Repository.open(tmp_path / "records.db") as repo:
             rec = make_record("session-x", 0, 4)
@@ -128,18 +124,12 @@ class TestBucketLookup:
     async def test_resolves_known_record_via_real_transcript(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from cc_sentiment.debug import TranscriptDiscovery
-
         session_id = "session-resolve"
         jsonl = tmp_path / "transcripts" / f"{session_id}.jsonl"
         jsonl.parent.mkdir(parents=True)
         write_jsonl(jsonl, make_jsonl_payload(session_id, base_minute=36))
 
-        monkeypatch.setattr(
-            TranscriptDiscovery,
-            "find_transcripts",
-            staticmethod(AsyncMock(return_value=[jsonl])),
-        )
+        monkeypatch.setattr("cc_sentiment.debug.discover", lambda: [jsonl])
 
         async with await Repository.open(tmp_path / "records.db") as repo:
             rec = make_record(session_id, 0, 4)
@@ -154,8 +144,6 @@ class TestBucketLookup:
     async def test_distinguishes_long_prefix_among_collisions(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from cc_sentiment.debug import TranscriptDiscovery
-
         sessions = ["alpha-session", "beta-session"]
         jsonls: list[Path] = []
         for sid in sessions:
@@ -163,11 +151,7 @@ class TestBucketLookup:
             p.parent.mkdir(parents=True, exist_ok=True)
             write_jsonl(p, make_jsonl_payload(sid, base_minute=36))
             jsonls.append(p)
-        monkeypatch.setattr(
-            TranscriptDiscovery,
-            "find_transcripts",
-            staticmethod(AsyncMock(return_value=list(jsonls))),
-        )
+        monkeypatch.setattr("cc_sentiment.debug.discover", lambda: list(jsonls))
 
         async with await Repository.open(tmp_path / "records.db") as repo:
             recs = [make_record(sid, 0, 4) for sid in sessions]

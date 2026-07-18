@@ -97,11 +97,12 @@ dependency). cc-sentiment is pure-Python; the `cc_sentiment.transcripts/` packag
 is a thin façade:
 
 - `parser.py` — `TranscriptParser` classmethods (`stream_transcripts`,
-  `scan_bucket_keys`, `backend_name`) delegating to `cc_transcript.TranscriptParser`
-  with `SENTIMENT_SPEC` (from `filterspec.py`) as the filter. Re-exports
-  `CLAUDE_PROJECTS_DIR` / `JUNK_USER_MESSAGE_RE` / `TranscriptDiscovery` from
-  cc-transcript. The filtered stream stays on the typed event spine: buckets hold
-  `UserEvent | AssistantEvent` (`ConversationEvent`) directly, with
+  `scan_bucket_keys`) bridging cc-transcript's synchronous v14 engine
+  (`stream` / `find_in`) onto the app's async surface via `anyio.to_thread`,
+  with `SENTIMENT_SPEC` (from `filterspec.py`) as the parse-time `drop` filter.
+  Re-exports `CLAUDE_PROJECTS_DIR` / `JUNK_USER_MESSAGE_RE`; the package root
+  re-exports `discover`. The filtered stream stays on the typed event spine:
+  buckets hold `UserEvent | AssistantEvent` (`ConversationEvent`) directly, with
   `cc_transcript.models.tool_uses` / `thinking_chars` in place of any app-side
   message adapter.
 - `bucketer.py` — `ConversationBucketer` + `extract_bucket_keys` (3-minute windows).
@@ -113,8 +114,9 @@ hard requirement. cc-transcript ships a prebuilt abi3 wheel, so no Rust toolchai
 needed to install cc-sentiment.
 
 `tests/test_transcripts.py` runs against that Rust backend. Event fixtures come from
-`tests/helpers.py` (`make_user_event` / `make_assistant_event`), mirroring
-cc-transcript's own sentiment test fixtures.
+`tests/helpers.py` (`make_user_event` / `make_assistant_event`), which synthesize
+raw transcript-line dicts and lift them through `cc_transcript.parse_event` — v14
+events are native views and cannot be constructed from Python.
 
 ## Transcript Discovery
 

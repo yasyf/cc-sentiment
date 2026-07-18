@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
+import anyio.to_thread
+
 from cc_transcript.models import UserEvent
 from cc_transcript.sentiment.buckets import ConversationEvent
 
@@ -15,7 +17,7 @@ from cc_sentiment.models import (
     SessionId,
 )
 from cc_sentiment.repo import Repository
-from cc_sentiment.transcripts import ConversationBucketer, TranscriptDiscovery, TranscriptParser
+from cc_sentiment.transcripts import ConversationBucketer, TranscriptParser, discover
 
 
 class BucketHash:
@@ -56,9 +58,8 @@ class BucketLookup:
             return None
         target_session = match.conversation_id
         target_idx = match.bucket_index
-        for path in await TranscriptDiscovery.find_transcripts():
-            mtime = await TranscriptDiscovery.transcript_mtime(path)
-            async for parsed in TranscriptParser.stream_transcripts([(path, mtime)]):
+        for path in await anyio.to_thread.run_sync(discover):
+            async for parsed in TranscriptParser.stream_transcripts([path]):
                 bucket = cls.locate_bucket(parsed.events, target_session, target_idx)
                 if bucket is not None:
                     return BucketLookupResult(

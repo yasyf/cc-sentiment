@@ -7,7 +7,7 @@ import anyio
 import orjson
 import pytest
 
-from cc_transcript.models import AssistantEvent, ToolUseBlock, ToolUseId, UserEvent
+from cc_transcript.models import AssistantEvent, UserEvent
 from cc_transcript.sentiment.buckets import ConversationEvent
 
 from cc_sentiment.models import BucketKey, BucketMetrics, SessionId
@@ -22,7 +22,7 @@ from tests.helpers import make_assistant_event, make_user_event
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "sample_transcript.jsonl"
 
 
-def parse_paths(paths: list[tuple[Path, float]]) -> list[ParsedTranscript]:
+def parse_paths(paths: list[Path]) -> list[ParsedTranscript]:
     async def run() -> list[ParsedTranscript]:
         return [p async for p in TranscriptParser.stream_transcripts(paths)]
 
@@ -30,7 +30,7 @@ def parse_paths(paths: list[tuple[Path, float]]) -> list[ParsedTranscript]:
 
 
 def parse_file(path: Path) -> list[ConversationEvent]:
-    results = parse_paths([(path, 0.0)])
+    results = parse_paths([path])
     assert len(results) == 1
     return list(results[0].events)
 
@@ -326,7 +326,7 @@ class TestStreamTranscripts:
         ]
         f = tmp_path / "t.jsonl"
         f.write_text("\n".join(lines) + "\n")
-        [parsed] = parse_paths([(f, 0.0)])
+        [parsed] = parse_paths([f])
         indices = sorted(k.bucket_index for k in parsed.bucket_keys)
         assert indices == [0, 2]
 
@@ -359,7 +359,7 @@ class TestStreamTranscripts:
         ]
         f = tmp_path / "t.jsonl"
         f.write_text("\n".join(lines) + "\n")
-        [parsed] = parse_paths([(f, 0.0)])
+        [parsed] = parse_paths([f])
         indices = sorted(k.bucket_index for k in parsed.bucket_keys)
         assert indices == [1]
 
@@ -369,11 +369,11 @@ class TestStreamTranscripts:
 
         async def collect() -> list[ParsedTranscript]:
             return [
-                p async for p in TranscriptParser.stream_transcripts([(f, 123.0)])
+                p async for p in TranscriptParser.stream_transcripts([f])
             ]
 
         [parsed] = anyio.run(collect)
-        assert parsed.mtime == 123.0
+        assert parsed.mtime == f.stat().st_mtime
         expected_keys = {
             BucketKey(session_id=b.session_id, bucket_index=b.bucket_index)
             for b in ConversationBucketer.bucket_events(parsed.events)
@@ -392,7 +392,7 @@ class TestScanBucketKeys:
 
         full_events = [
             e
-            async for p in TranscriptParser.stream_transcripts([(f, 0.0)])
+            async for p in TranscriptParser.stream_transcripts([f])
             for e in p.events
         ]
         expected = {
@@ -487,7 +487,7 @@ class TestBucketMetrics:
             timestamp=datetime(2026, 4, 10, 7, 36, 30, tzinfo=timezone.utc),
             model=claude_model,
             blocks=tuple(
-                ToolUseBlock(id=ToolUseId(f"t{i}"), name=name, input=cls._input(name, file_path))
+                {"type": "tool_use", "id": f"t{i}", "name": name, "input": cls._input(name, file_path)}
                 for i, (name, file_path) in enumerate(tool_uses)
             ),
         )
@@ -581,7 +581,7 @@ class TestBucketMetrics:
                 uuid="a",
                 timestamp=datetime(2026, 4, 10, 7, 36, 30, tzinfo=timezone.utc),
                 blocks=(
-                    ToolUseBlock(id=ToolUseId("t0"), name="Edit", input={"file_path": "/a.py"}),
+                    {"type": "tool_use", "id": "t0", "name": "Edit", "input": {"file_path": "/a.py"}},
                 ),
             ),
         ))

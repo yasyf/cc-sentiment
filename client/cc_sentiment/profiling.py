@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 import anyio
+import anyio.to_thread
 import click
 
 from cc_sentiment.models import ConversationBucket
@@ -14,8 +15,8 @@ from cc_sentiment.sentiment import AdapterFuser, SentimentClassifier
 from cc_sentiment.text import build_bucket_messages
 from cc_sentiment.transcripts import (
     ConversationBucketer,
-    TranscriptDiscovery,
     TranscriptParser,
+    discover,
 )
 
 
@@ -42,11 +43,10 @@ class Profiler:
     @staticmethod
     def collect_buckets(target: int) -> list[ConversationBucket]:
         async def collect() -> list[ConversationBucket]:
-            transcripts = await TranscriptDiscovery.find_transcripts()
+            transcripts = await anyio.to_thread.run_sync(discover)
             click.echo(f"  Found {len(transcripts)} transcripts; parsing until {target} buckets…")
-            paths = [(p, await TranscriptDiscovery.stat_mtime(p) or 0.0) for p in transcripts]
             buckets: list[ConversationBucket] = []
-            async for parsed in TranscriptParser.stream_transcripts(paths):
+            async for parsed in TranscriptParser.stream_transcripts(transcripts):
                 buckets.extend(ConversationBucketer.bucket_events(parsed.events))
                 if len(buckets) >= target:
                     break

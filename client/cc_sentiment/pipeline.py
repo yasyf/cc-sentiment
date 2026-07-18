@@ -61,8 +61,8 @@ class ScanResult:
         return sum(len(t.new_bucket_keys) for t in self.transcripts)
 
     @cached_property
-    def paths(self) -> list[tuple[Path, float]]:
-        return [(t.path, t.mtime) for t in self.transcripts]
+    def paths(self) -> list[Path]:
+        return [t.path for t in self.transcripts]
 
 
 class Pipeline:

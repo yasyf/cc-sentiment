@@ -26,7 +26,7 @@ FIXTURE_PATH = Path(__file__).parent / "fixtures" / "sample_transcript.jsonl"
 
 def parse_fixture() -> ParsedTranscript:
     async def run() -> list[ParsedTranscript]:
-        return [p async for p in TranscriptParser.stream_transcripts([(FIXTURE_PATH, 1.0)])]
+        return [p async for p in TranscriptParser.stream_transcripts([FIXTURE_PATH])]
 
     [parsed] = anyio.run(run)
     return parsed
@@ -175,7 +175,7 @@ class TestCrossBucketReadHistory:
         )
 
         async def load() -> list[ParsedTranscript]:
-            return [p async for p in TranscriptParser.stream_transcripts([(path, 0.0)])]
+            return [p async for p in TranscriptParser.stream_transcripts([path])]
 
         [parsed] = anyio.run(load)
         new_buckets, metrics_by_key = Pipeline.buckets_with_metrics(parsed.events, frozenset())
@@ -195,7 +195,7 @@ class TestCrossBucketReadHistory:
         )
 
         async def load() -> list[ParsedTranscript]:
-            return [p async for p in TranscriptParser.stream_transcripts([(path, 0.0)])]
+            return [p async for p in TranscriptParser.stream_transcripts([path])]
 
         [parsed] = anyio.run(load)
         _, metrics_by_key = Pipeline.buckets_with_metrics(parsed.events, frozenset())

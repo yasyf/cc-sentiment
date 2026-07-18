@@ -1,17 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
-from cc_transcript.models import (
-    AssistantEvent,
-    CcVersion,
-    ContentBlock,
-    EntryMeta,
-    EventUuid,
-    UserEvent,
-)
+from cc_transcript import parse_event
+from cc_transcript.models import AssistantEvent, UserEvent
 from cc_transcript.sentiment.buckets import ConversationEvent
 
 from cc_sentiment.models import (
@@ -27,29 +22,6 @@ from cc_sentiment.transcripts import ConversationBucketer, ParsedTranscript
 DEFAULT_TIMESTAMP = datetime(2026, 4, 10, 7, 35, 0, tzinfo=timezone.utc)
 
 
-def make_meta(
-    uuid: str = "u",
-    *,
-    session_id: str = "s",
-    timestamp: datetime | None = None,
-    cc_version: str | None = "2.1.92",
-) -> EntryMeta:
-    return EntryMeta(
-        uuid=EventUuid(uuid),
-        parent_uuid=None,
-        session_id=SessionId(session_id),
-        timestamp=timestamp or DEFAULT_TIMESTAMP,
-        cwd=None,
-        git_branch=None,
-        cc_version=CcVersion(cc_version) if cc_version else None,
-        is_sidechain=False,
-        is_meta=False,
-        entrypoint="cli",
-        is_compact_summary=False,
-        is_visible_in_transcript_only=False,
-    )
-
-
 def make_user_event(
     text: str,
     *,
@@ -57,14 +29,20 @@ def make_user_event(
     session_id: str = "s",
     timestamp: datetime | None = None,
     cc_version: str | None = "2.1.92",
-    blocks: tuple[ContentBlock, ...] = (),
 ) -> UserEvent:
-    return UserEvent(
-        meta=make_meta(uuid, session_id=session_id, timestamp=timestamp, cc_version=cc_version),
-        text=text,
-        blocks=blocks,
-        interrupted=False,
+    event = parse_event(
+        {
+            "type": "user",
+            "uuid": uuid,
+            "parentUuid": None,
+            "sessionId": session_id,
+            "timestamp": (timestamp or DEFAULT_TIMESTAMP).isoformat(),
+            "message": {"role": "user", "content": text},
+        }
+        | ({"version": cc_version} if cc_version else {})
     )
+    assert isinstance(event, UserEvent)
+    return event
 
 
 def make_assistant_event(
@@ -74,16 +52,24 @@ def make_assistant_event(
     session_id: str = "s",
     timestamp: datetime | None = None,
     model: str = "claude-sonnet-4-20250514",
-    blocks: tuple[ContentBlock, ...] = (),
+    blocks: Sequence[Mapping[str, Any]] = (),
 ) -> AssistantEvent:
-    return AssistantEvent(
-        meta=make_meta(uuid, session_id=session_id, timestamp=timestamp, cc_version=None),
-        model=model,
-        text=text,
-        blocks=blocks,
-        stop_reason=None,
-        usage=None,
+    event = parse_event(
+        {
+            "type": "assistant",
+            "uuid": uuid,
+            "parentUuid": None,
+            "sessionId": session_id,
+            "timestamp": (timestamp or DEFAULT_TIMESTAMP).isoformat(),
+            "message": {
+                "role": "assistant",
+                "model": model,
+                "content": [{"type": "text", "text": text}, *blocks],
+            },
+        }
     )
+    assert isinstance(event, AssistantEvent)
+    return event
 
 
 def make_record(

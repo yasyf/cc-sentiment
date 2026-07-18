@@ -2,18 +2,18 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from statistics import mean, median, stdev
 
 import anyio
+import anyio.to_thread
 import click
 
 from cc_sentiment.engines import DEFAULT_MODEL, EngineFactory, InferenceEngine
 from cc_sentiment.models import ConversationBucket, SentimentScore
 from cc_sentiment.transcripts import (
     ConversationBucketer,
-    TranscriptDiscovery,
     TranscriptParser,
+    discover,
 )
 
 SCORE_COLORS: dict[int, str] = {1: "red", 2: "red", 3: "yellow", 4: "green", 5: "green"}
@@ -44,13 +44,10 @@ class BenchmarkRunner:
     @staticmethod
     def collect_buckets(max_transcripts: int) -> list[ConversationBucket]:
         async def collect() -> list[ConversationBucket]:
-            transcripts = (await TranscriptDiscovery.find_transcripts())[:max_transcripts]
-            paths: list[tuple[Path, float]] = [
-                (p, await TranscriptDiscovery.stat_mtime(p) or 0.0) for p in transcripts
-            ]
+            transcripts = (await anyio.to_thread.run_sync(discover))[:max_transcripts]
             buckets: list[ConversationBucket] = []
-            with click.progressbar(length=len(paths), label="Parsing transcripts") as bar:
-                async for parsed in TranscriptParser.stream_transcripts(paths):
+            with click.progressbar(length=len(transcripts), label="Parsing transcripts") as bar:
+                async for parsed in TranscriptParser.stream_transcripts(transcripts):
                     buckets.extend(ConversationBucketer.bucket_events(parsed.events))
                     bar.update(1)
             return buckets

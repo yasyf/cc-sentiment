@@ -234,21 +234,20 @@ async def test_score_meets_calibrated_throughput_floor() -> None:
     from cc_sentiment.hardware import Hardware
     from cc_sentiment.transcripts import (
         ConversationBucketer,
-        TranscriptDiscovery,
         TranscriptParser,
+        discover,
     )
 
     predicted = Hardware.estimate_buckets_per_sec("mlx")
     if predicted is None:
         pytest.skip("hardware below minimum spec")
 
-    transcripts = TranscriptDiscovery.find_transcripts()
+    transcripts = discover()
     if not transcripts:
         pytest.skip("no transcripts available; run cc-sentiment first")
 
-    paths = [(p, TranscriptDiscovery.stat_mtime(p) or 0.0) for p in transcripts]
     buckets: list[ConversationBucket] = []
-    async for parsed in TranscriptParser.stream_transcripts(paths):
+    async for parsed in TranscriptParser.stream_transcripts(transcripts):
         buckets.extend(ConversationBucketer.bucket_events(parsed.events))
         if len(buckets) >= 50:
             break

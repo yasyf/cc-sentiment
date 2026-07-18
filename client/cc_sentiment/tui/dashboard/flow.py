@@ -20,7 +20,6 @@ from cc_sentiment.transcripts.filterspec import SENTIMENT_SCORE_SPEC
 from cc_sentiment.hardware import Hardware
 from cc_sentiment.models import SentimentRecord
 from cc_sentiment.pipeline import Pipeline
-from cc_sentiment.transcripts import TranscriptParser
 from cc_sentiment.upload import (
     UPLOAD_POOL_TIMEOUT_SECONDS,
     AuthOk,
@@ -82,7 +81,6 @@ class DashboardFlow:
         assert self.view is not None
         assert self.engine is not None
         engine = self.engine
-        self._debug(f"transcript-backend: {TranscriptParser.backend_name()}")
 
         classifier: InferenceEngine | None = None
         self.stage = Discovering()
