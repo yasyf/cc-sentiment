@@ -11,7 +11,15 @@ from cc_transcript.sentiment.buckets import (
     ConversationEvent,
     SentimentScore,
 )
-from cc_transcript.tools import EditCall, ReadCall, WriteCall, parse_tool_call
+from cc_transcript.tools import (
+    EditCall,
+    GlobCall,
+    GrepCall,
+    ReadCall,
+    TaskCall,
+    WriteCall,
+    parse_tool_call,
+)
 from pydantic import BaseModel
 
 PromptVersion = NewType("PromptVersion", str)
@@ -46,36 +54,38 @@ class BucketMetrics(BaseModel, frozen=True):
         if not users or not assistants:
             raise ValueError("bucket must have both user and assistant events")
 
-        all_calls = tuple(block for e in events for block in tool_uses(e))
-        tool_counts = Counter(block.name for block in all_calls)
-        read_ops = sum(tool_counts[t] for t in ("Read", "Grep", "Glob"))
-        write_ops = sum(tool_counts[t] for t in ("Edit", "Write"))
+        all_blocks = tuple(block for e in events for block in tool_uses(e))
         thinking = sum(thinking_chars(e) for e in events)
 
         reads_seen = set(prior_reads)
-        edits_count = 0
-        edits_without_read = 0
-        for event in events:
-            for block in tool_uses(event):
-                match parse_tool_call(block.name, block.input, on_error="other"):
-                    case ReadCall(file_path=path):
-                        reads_seen.add(path)
-                    case EditCall(file_path=path) | WriteCall(file_path=path):
-                        edits_count += 1
-                        if path not in reads_seen:
-                            edits_without_read += 1
+        read_ops = writes_only = edits_only = edits_without_read = subagent_count = 0
+        for block in all_blocks:
+            match parse_tool_call(block.name, block.input, on_error="other"):
+                case ReadCall(file_path=path):
+                    read_ops += 1
+                    reads_seen.add(path)
+                case GrepCall() | GlobCall():
+                    read_ops += 1
+                case TaskCall():
+                    subagent_count += 1
+                case WriteCall(file_path=path):
+                    writes_only += 1
+                    if path not in reads_seen:
+                        edits_without_read += 1
+                case EditCall(file_path=path):
+                    edits_only += 1
+                    if path not in reads_seen:
+                        edits_without_read += 1
 
-        writes_only = tool_counts.get("Write", 0)
-        edits_only = tool_counts.get("Edit", 0)
-        write_edit_total = writes_only + edits_only
+        edit_ops = writes_only + edits_only
 
         return BucketMetrics(
-            tool_counts=dict(tool_counts),
-            read_edit_ratio=read_ops / write_ops if write_ops else None,
-            edits_without_prior_read_ratio=(edits_without_read / edits_count if edits_count else None),
-            write_edit_ratio=(writes_only / write_edit_total if write_edit_total else None),
-            tool_calls_per_turn=len(all_calls) / len(users),
-            subagent_count=tool_counts.get("Agent", 0),
+            tool_counts=dict(Counter(block.name for block in all_blocks)),
+            read_edit_ratio=read_ops / edit_ops if edit_ops else None,
+            edits_without_prior_read_ratio=(edits_without_read / edit_ops if edit_ops else None),
+            write_edit_ratio=(writes_only / edit_ops if edit_ops else None),
+            tool_calls_per_turn=len(all_blocks) / len(users),
+            subagent_count=subagent_count,
             turn_count=len(users),
             thinking_present=thinking > 0,
             thinking_chars=thinking,

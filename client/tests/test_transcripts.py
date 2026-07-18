@@ -466,6 +466,8 @@ class TestBucketMetrics:
     @staticmethod
     def _input(name: str, file_path: str | None) -> dict[str, str]:
         match (name, file_path):
+            case ("Agent", None):
+                return {"prompt": "spawn a subagent"}
             case (_, None):
                 return {}
             case ("Edit", path):
