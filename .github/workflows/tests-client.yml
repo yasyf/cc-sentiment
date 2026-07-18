@@ -16,8 +16,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  tests-rust:
-    name: Tests (cc-transcript rust backend)
+  tests:
+    name: Tests
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -32,7 +32,7 @@ jobs:
         working-directory: client
         run: uv sync
 
-      - name: Run tests (cc-transcript rust backend)
+      - name: Run tests
         working-directory: client
         run: uv run pytest -n auto -q
 
