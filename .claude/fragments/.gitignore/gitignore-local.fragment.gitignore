@@ -1,0 +1,39 @@
+# macOS
+._*
+
+# Python
+*.egg
+.Python
+
+# Node / Bun
+.svelte-kit/
+bun.lockb
+
+# MLX model artifacts
+*.safetensors
+!client/tests/fixtures/*.safetensors
+*.gguf
+*.bin
+*.npz
+/models/
+mlx_models/
+.mlx_cache/
+
+# Modal
+.modal/
+
+# IDE
+*.swo
+
+# Project
+.serena/
+client/cc_sentiment/_sentry_dsn.py
+
+# Experiments — training/eval harness lives at ~/Code/cc-sentiments-local/
+experiments
+
+# Misc
+.claude/scheduled_tasks.lock
+.vercel
+app/.playwright-cli
+.claude/worktrees
