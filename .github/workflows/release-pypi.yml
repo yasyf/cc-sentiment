@@ -1,15 +1,9 @@
 name: Release (PyPI)
 
-# Continuous deploy: every client/ change on main publishes v0.2.<run_number>.
-# Do NOT rename this file — the trusted publisher on PyPI is keyed to release-pypi.yml,
-# and github.run_number is keyed to the workflow path (a rename resets it to 1, which
-# would collide with versions already on PyPI).
+# PyPI's trusted publisher is keyed to this workflow path.
 on:
   push:
-    branches: [main]
-    paths:
-      - client/**
-      - .github/workflows/release-pypi.yml
+    tags: ["v*"]
 
 concurrency:
   group: release-pypi
@@ -17,13 +11,11 @@ concurrency:
 
 jobs:
   build:
-    uses: yasyf/homebrew-tap/.github/workflows/release-pypi-build.yml@8f422c652d836c40f9cc5a9d893d4120b26bc681
+    uses: yasyf/homebrew-tap/.github/workflows/release-pypi-build.yml@7cc8a6c981cbec10fcb7f19bd75b36e9ee65ea7e
     secrets: inherit
     with:
       dist-name: cc-sentiment
       python-version: "3.13"
-      version-strategy: auto-tag
-      auto-tag-version-base: "0.2"
       package-subdir: client
       pre-build: |
         if [ -n "$SENTRY_DSN" ]; then
@@ -60,16 +52,12 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Create GitHub release
-        # Auto-tag mode: the tag does not exist yet — gh release create mints it, and
-        # --target pins it to the commit this run built (not main's HEAD at release time).
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.build.outputs.tag }}
-          TARGET: ${{ github.sha }}
         run: >
           gh release create "$TAG"
           --title "$TAG"
-          --target "$TARGET"
           --generate-notes
           --latest
           --repo "${{ github.repository }}"
