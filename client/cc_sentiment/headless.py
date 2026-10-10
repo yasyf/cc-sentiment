@@ -84,6 +84,20 @@ class HeadlessRunner:
             case _:
                 return f"couldn't reach server: {error}"
 
+    @staticmethod
+    def summary(outcome: HeadlessOutcome) -> str:
+        match outcome:
+            case HeadlessOk(scored=s, uploaded=u):
+                return f"Scored {s}, uploaded {u}."
+            case HeadlessNothingToDo():
+                return "Nothing new to score."
+            case HeadlessNotConfigured():
+                return "Not configured yet. Run `cc-sentiment setup` first."
+            case HeadlessClaudeEngineBlocked():
+                return "Claude scoring needs confirmation. Run `cc-sentiment` instead."
+            case HeadlessAuthError(detail=d) | HeadlessUploadError(detail=d):
+                return d
+
     @classmethod
     async def run(cls, state: AppState, repo: Repository, debug: bool = False) -> HeadlessOutcome:
         if state.config is None:

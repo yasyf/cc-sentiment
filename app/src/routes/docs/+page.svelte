@@ -34,12 +34,12 @@
 				</p>
 				<pre class="mt-3 overflow-x-auto rounded border border-border bg-bg-code px-4 py-3 font-mono text-sm text-text-secondary"><code>uvx cc-sentiment</code></pre>
 				<p class="mt-2 text-sm text-text-dim">
-					On macOS, set it up on a launchd schedule:
+					On macOS, run it as a launchd daemon:
 				</p>
 				<pre class="mt-2 overflow-x-auto rounded border border-border bg-bg-code px-4 py-3 font-mono text-sm text-text-secondary"><code>uv tool install cc-sentiment
 cc-sentiment install</code></pre>
 				<p class="mt-2 text-sm text-text-dim">
-					Runs once a day in the background on macOS. On Linux or Windows, use cron or your platform's scheduler to run <code class="rounded bg-bg-code px-1 py-0.5 font-mono text-xs">cc-sentiment run</code>. Undo the macOS schedule any time with <code class="rounded bg-bg-code px-1 py-0.5 font-mono text-xs">cc-sentiment uninstall</code>.
+					Stays running in the background on macOS and scores each session a few minutes after it goes quiet. On Linux or Windows, use cron or your platform's scheduler to run <code class="rounded bg-bg-code px-1 py-0.5 font-mono text-xs">cc-sentiment run</code>. Stop the macOS daemon any time with <code class="rounded bg-bg-code px-1 py-0.5 font-mono text-xs">cc-sentiment uninstall</code>.
 				</p>
 				<p class="mt-3 text-sm text-text-muted">
 					The wizard sets up a verification key, scores your sessions with the best available engine,

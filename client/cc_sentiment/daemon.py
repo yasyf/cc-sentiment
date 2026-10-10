@@ -5,11 +5,53 @@ import plistlib
 import shutil
 import subprocess
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
+from typing import ClassVar
+
+import anyio
+import anyio.to_thread
+
+from cc_sentiment.headless import HeadlessNothingToDo, HeadlessOutcome, HeadlessRunner
+from cc_sentiment.models import AppState
+from cc_sentiment.repo import Repository
+from cc_sentiment.updater import SelfUpdater
 
 LABEL = "cc.sentiments.agent"
-RUN_INTERVAL_SECONDS = 86400
-PATH_ENV = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+SYSTEM_PATH = ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin")
+
+
+class Daemon:
+    CYCLE_SECONDS: ClassVar[int] = 300
+    UPGRADE_INTERVAL_SECONDS: ClassVar[int] = 86400
+
+    @staticmethod
+    async def cycle(debug: bool) -> HeadlessOutcome:
+        async with await Repository.open(Repository.default_path()) as repo:
+            return await HeadlessRunner.run(AppState.load(), repo, debug)
+
+    @staticmethod
+    def log(outcome: HeadlessOutcome) -> None:
+        print(
+            f"{datetime.now().astimezone().isoformat(timespec='seconds')} {HeadlessRunner.summary(outcome)}",
+            flush=True,
+        )
+
+    @classmethod
+    async def serve(cls, debug: bool) -> None:
+        upgrade_due = time.monotonic() + cls.UPGRADE_INTERVAL_SECONDS
+        while not SelfUpdater.is_stale():
+            match await cls.cycle(debug):
+                case HeadlessNothingToDo():
+                    pass
+                case outcome:
+                    cls.log(outcome)
+            if time.monotonic() < upgrade_due:
+                await anyio.sleep(cls.CYCLE_SECONDS)
+                continue
+            await anyio.to_thread.run_sync(SelfUpdater.upgrade)
+            upgrade_due = time.monotonic() + cls.UPGRADE_INTERVAL_SECONDS
 
 
 class LaunchAgent:
@@ -47,15 +89,24 @@ class LaunchAgent:
     def is_installed(cls) -> bool:
         return cls.plist_path().exists()
 
+    @staticmethod
+    def path_env(binary: Path) -> str:
+        tools = [binary, *(Path(uv) for uv in [shutil.which("uv")] if uv is not None)]
+        return ":".join(dict.fromkeys([*(str(tool.parent) for tool in tools), *SYSTEM_PATH]))
+
     @classmethod
     def render_plist(cls, binary: Path) -> bytes:
         return plistlib.dumps({
             "Label": LABEL,
-            "ProgramArguments": [str(binary), "run"],
-            "StartInterval": RUN_INTERVAL_SECONDS,
+            "ProgramArguments": [str(binary), "daemon"],
+            "RunAtLoad": True,
+            "KeepAlive": True,
+            "ThrottleInterval": Daemon.CYCLE_SECONDS,
+            "ProcessType": "Background",
+            "LowPriorityIO": True,
             "StandardOutPath": str(cls.stdout_log()),
             "StandardErrorPath": str(cls.stderr_log()),
-            "EnvironmentVariables": {"PATH": PATH_ENV},
+            "EnvironmentVariables": {"PATH": cls.path_env(binary)},
         })
 
     @classmethod

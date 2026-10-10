@@ -43,7 +43,7 @@ async def test_cta_shows_schedule_when_daemon_not_installed(tmp_path: Path, auth
             section = pilot.app.dashboard.query_one("#cta-section")
             assert "inactive" not in section.classes
             button = pilot.app.dashboard.query_one("#cta-action", Button)
-            assert str(button.label) == "Run daily"
+            assert str(button.label) == "Run in background"
 
 
 async def test_cta_hides_when_daemon_installed_and_no_tweet(tmp_path: Path, auth_ok, no_stat_share):
@@ -74,7 +74,7 @@ async def test_cta_rotates_between_tweet_and_schedule(tmp_path: Path, auth_ok, n
             await pilot.pause()
             assert app.dashboard.view.cta.showing == "schedule"
             button = pilot.app.dashboard.query_one("#cta-action", Button)
-            assert str(button.label) == "Run daily"
+            assert str(button.label) == "Run in background"
 
             app.dashboard.view.rotate_cta()
             await pilot.pause()

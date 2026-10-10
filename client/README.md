@@ -30,8 +30,8 @@ Your conversation text, file contents, file paths, prompts, tool inputs, and too
 | `cc-sentiment` | Interactive TUI. Sets up if needed, then scores and uploads. |
 | `cc-sentiment setup` | Re-run the setup wizard to pick, generate, or re-link a signing key. |
 | `cc-sentiment run` | Score new transcripts and upload. Non-interactive; safe for cron, SSH, and launchd. |
-| `cc-sentiment install` | Schedule a daily background run via launchd. |
-| `cc-sentiment uninstall` | Stop and remove the scheduled run. |
+| `cc-sentiment install` | Start a background daemon under launchd that scores sessions as they finish. |
+| `cc-sentiment uninstall` | Stop and remove the background daemon. |
 | `cc-sentiment debug` | Print hardware, engine, Claude CLI, server, and Sentry probes. |
 
 ## Links

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -84,6 +85,19 @@ class TestScan:
             result = await Pipeline.scan(repo)
         assert len(result.transcripts) == 1
         assert result.transcripts[0].new_bucket_keys == (new_key,)
+
+    async def test_skips_transcripts_still_being_written(self, repo: Repository) -> None:
+        key = BucketKey(session_id=SessionId("s1"), bucket_index=BucketIndex(0))
+        with patch(
+            "cc_sentiment.pipeline.TranscriptParser.scan_bucket_keys",
+            new_callable=AsyncMock,
+            return_value=[
+                ("/fake/live.jsonl", time.time(), [key]),
+                ("/fake/settled.jsonl", time.time() - 3600, [key]),
+            ],
+        ):
+            result = await Pipeline.scan(repo)
+        assert [t.path for t in result.transcripts] == [Path("/fake/settled.jsonl")]
 
 
 @pytest.fixture
