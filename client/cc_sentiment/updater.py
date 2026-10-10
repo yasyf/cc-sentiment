@@ -3,6 +3,9 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+from importlib.metadata import version
+
+from cc_sentiment.models import CLIENT_VERSION
 
 
 class SelfUpdater:
@@ -14,15 +17,36 @@ class SelfUpdater:
         return cls.UV_TOOL_PATH_MARKER in sys.executable
 
     @classmethod
-    def maybe_upgrade(cls) -> None:
+    def upgrade_command(cls) -> list[str] | None:
         if not cls.is_uv_tool_installed():
-            return
+            return None
         if (uv := shutil.which("uv")) is None:
+            return None
+        return [uv, "tool", "upgrade", cls.PACKAGE_NAME]
+
+    @classmethod
+    def maybe_upgrade(cls) -> None:
+        if (command := cls.upgrade_command()) is None:
             return
         subprocess.Popen(
-            [uv, "tool", "upgrade", cls.PACKAGE_NAME],
+            command,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
+
+    @classmethod
+    def upgrade(cls) -> None:
+        if (command := cls.upgrade_command()) is None:
+            return
+        subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    @classmethod
+    def is_stale(cls) -> bool:
+        return version(cls.PACKAGE_NAME) != CLIENT_VERSION

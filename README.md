@@ -20,7 +20,7 @@ Driving with an agent? Paste this:
 
 ```text
 Run `uvx cc-sentiment` and finish the setup TUI — it links a GitHub or GPG signing key, scores my Claude Code transcripts locally, and uploads the numbers.
-Then run `cc-sentiment install` to schedule the daily background run.
+Then run `cc-sentiment install` to keep it running in the background.
 Verify my contribution shows up on the dashboard at https://sentiments.cc.
 ```
 
@@ -58,7 +58,7 @@ Was it the new model, or the CLI release that shipped under you the same week? O
 uvx cc-sentiment install
 ```
 
-A daily launchd run keeps scoring new sessions, and every slice lands tagged with the Claude model and Claude Code version that produced it, so the dashboard breaks the trends down by model while the CLI version rides along in the data.
+A launchd-supervised daemon scores each session a few minutes after it goes quiet, and every slice lands tagged with the Claude model and Claude Code version that produced it, so the dashboard breaks the trends down by model while the CLI version rides along in the data.
 
 ## What gets uploaded
 
@@ -86,8 +86,8 @@ Plus a public verification handle, your GitHub username or GPG fingerprint, used
 | `cc-sentiment` | Interactive TUI. Sets up if needed, then scores and uploads. |
 | `cc-sentiment setup` | Re-run the setup wizard to pick, generate, or re-link a signing key. |
 | `cc-sentiment run` | Score new transcripts and upload. Non-interactive; safe for cron, SSH, and launchd. |
-| `cc-sentiment install` | Schedule a daily background run via launchd. |
-| `cc-sentiment uninstall` | Stop and remove the scheduled run. |
+| `cc-sentiment install` | Start a background daemon under launchd that scores sessions as they finish. |
+| `cc-sentiment uninstall` | Stop and remove the background daemon. |
 | `cc-sentiment debug` | Print hardware, engine, Claude CLI, server, and Sentry probes. |
 
 The full flag list lives in `cc-sentiment --help`.

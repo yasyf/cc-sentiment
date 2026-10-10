@@ -38,7 +38,7 @@ class ClaudeCLIEngine(BaseEngine):
         self._config = ClaudeConfig(
             system_prompt=SYSTEM_PROMPT,
             max_turns=1,
-            tools="",
+            tools=(),
             disable_slash_commands=True,
             output_format="json",
             verbose=verbose,
@@ -53,7 +53,9 @@ class ClaudeCLIEngine(BaseEngine):
         return next(m["content"] for m in reversed(messages) if m["role"] == "user")
 
     def _spec(self, content: str) -> RunSpec:
-        return RunSpec(prompt=content, model=self.model, provider_configs={"claude": self._config})
+        return RunSpec(
+            prompt=content, model=self.model, provider_configs={"claude": self._config}, api_auth=True,
+        )
 
     def argv(self, messages: list[dict[str, str]]) -> list[str]:
         return self._backend.build_command(self._spec(self._last_user_content(messages)))

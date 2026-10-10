@@ -88,11 +88,14 @@ def install() -> None:
     from cc_sentiment.daemon import LaunchAgent
     from cc_sentiment.upload import Uploader
 
+    if AppState.load().config is None:
+        typer.echo("Not configured yet. Run `cc-sentiment setup` first.", err=True)
+        raise typer.Exit(2)
     LaunchAgent.install()
     with contextlib.suppress(*DAEMON_PING_ERRORS):
         anyio.run(Uploader.ping_daemon_event, "install")
     typer.echo(
-        "Scheduled daily. Your transcripts will be scored and uploaded in the background. "
+        "Running in the background. New sessions are scored and uploaded as they finish. "
         "Undo with `cc-sentiment uninstall`."
     )
 
@@ -103,57 +106,49 @@ def uninstall() -> None:
     from cc_sentiment.upload import Uploader
 
     if not LaunchAgent.is_installed():
-        typer.echo("Not scheduled — nothing to remove.")
+        typer.echo("Not running in the background — nothing to remove.")
         return
     LaunchAgent.uninstall()
     with contextlib.suppress(*DAEMON_PING_ERRORS):
         anyio.run(Uploader.ping_daemon_event, "uninstall")
-    typer.echo("Removed the daily schedule.")
+    typer.echo("Stopped the background daemon.")
 
 
 @app.command()
 def run(ctx: typer.Context) -> None:
+    from cc_sentiment.daemon import Daemon
     from cc_sentiment.headless import (
         HeadlessAuthError,
         HeadlessClaudeEngineBlocked,
         HeadlessNotConfigured,
         HeadlessNothingToDo,
         HeadlessOk,
-        HeadlessOutcome,
         HeadlessRunner,
         HeadlessUploadError,
     )
-    from cc_sentiment.repo import Repository
 
-    debug = ctx.obj["debug"]
-    state = AppState.load()
-
-    async def _run() -> HeadlessOutcome:
-        async with await Repository.open(Repository.default_path()) as repo:
-            return await HeadlessRunner.run(state, repo, debug)
-
-    outcome = anyio.run(_run)
+    outcome = anyio.run(Daemon.cycle, ctx.obj["debug"])
+    summary = HeadlessRunner.summary(outcome)
 
     match outcome:
-        case HeadlessOk(scored=s, uploaded=u):
-            typer.echo(f"Scored {s}, uploaded {u}.")
-        case HeadlessNothingToDo():
-            typer.echo("Nothing new to score.")
-        case HeadlessNotConfigured():
-            typer.echo("Not configured yet. Run `cc-sentiment setup` first.", err=True)
+        case HeadlessOk() | HeadlessNothingToDo():
+            typer.echo(summary)
+        case HeadlessNotConfigured() | HeadlessClaudeEngineBlocked():
+            typer.echo(summary, err=True)
             raise typer.Exit(2)
-        case HeadlessClaudeEngineBlocked():
-            typer.echo(
-                "Claude scoring needs confirmation. Run `cc-sentiment` instead.",
-                err=True,
-            )
-            raise typer.Exit(2)
-        case HeadlessAuthError(detail=d):
-            typer.echo(d, err=True)
+        case HeadlessAuthError():
+            typer.echo(summary, err=True)
             raise typer.Exit(3)
-        case HeadlessUploadError(detail=d):
-            typer.echo(d, err=True)
+        case HeadlessUploadError():
+            typer.echo(summary, err=True)
             raise typer.Exit(4)
+
+
+@app.command(hidden=True)
+def daemon(ctx: typer.Context) -> None:
+    from cc_sentiment.daemon import Daemon
+
+    anyio.run(Daemon.serve, ctx.obj["debug"])
 
 
 @app.command()

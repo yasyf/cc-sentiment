@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -31,6 +32,7 @@ from cc_sentiment.models import (
 )
 from cc_sentiment.repo import Repository
 from cc_sentiment.transcripts import (
+    BUCKET_MINUTES,
     CLAUDE_PROJECTS_DIR,
     ConversationBucketer,
     ParsedTranscript,
@@ -71,6 +73,7 @@ class Pipeline:
         known = await repo.file_mtimes()
         scored_by_path = await repo.scored_buckets_for_all()
         raw = await TranscriptParser.scan_bucket_keys(CLAUDE_PROJECTS_DIR, known_mtimes=known)
+        settled_before = time.time() - BUCKET_MINUTES * 60
         return ScanResult(
             transcripts=tuple(
                 ScannedTranscript(
@@ -79,7 +82,8 @@ class Pipeline:
                     new_bucket_keys=tuple(new_keys),
                 )
                 for path, mtime, keys in raw
-                if (new_keys := [
+                if mtime <= settled_before
+                and (new_keys := [
                     k for k in keys
                     if k not in scored_by_path.get(str(path), frozenset())
                 ])

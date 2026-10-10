@@ -74,13 +74,13 @@ class DashboardActions:
             await anyio.to_thread.run_sync(LaunchAgent.install)
         except subprocess.CalledProcessError as e:
             self._update_status(
-                f"[$warning]Couldn't schedule the background job ({e.returncode}).[/] "
+                f"[$warning]Couldn't start the background job ({e.returncode}).[/] "
                 "[dim]Try `cc-sentiment install` manually.[/]"
             )
             return
         self.view.set_schedule_available(False)
         self._update_status(
-            "[$success]Scheduled.[/] cc-sentiment will run daily. "
+            "[$success]Running in the background.[/] New sessions are scored as they finish. "
             "[dim]Undo with `cc-sentiment uninstall`.[/]"
         )
 
